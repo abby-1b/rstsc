@@ -16,7 +16,12 @@ Due to its lack of a type system, const enums are not supported, with no future 
 - [x] Class method/variable differentiation
 - [x] Enum transformation
 - [ ] String literal support (using them causes errors for the moment!)
-- [ ] Correctly parsing explicit generics (eg `fnCall<Type>(arg1)`)
+- [x] Correctly parsing explicit generics (eg `fnCall<Type>(arg1)`)
+- [ ] Arrow functions
 - [ ] Adding tests
 - [ ] Source maps
 - [ ] Building an AST
+
+Order:
+ - Expressions
+ - 

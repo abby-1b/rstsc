@@ -42,8 +42,8 @@ pub mod emitter;
 const SOURCE: &str = include_str!("../test.ts");
 
 // const SOURCE: &str = "
-// enum A {
-//     nice = 1
+// class A<T> implements Test<number> {
+//     private v: T = 123;
 // }
 // ";
 

@@ -102,7 +102,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, &'static str> {
                 &mut tokens,
                 &mut token,
                 token_index,
-                TokenType::String
+                token_type
             );
 
             let string_type = character; // the initial quote character
