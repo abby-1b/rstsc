@@ -2,7 +2,7 @@
 const CHARS_NAME: &str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$";
 const CHARS_NUMBER: &str = "0123456789";
 const CHARS_SPACE: &str = " \n\t";
-const CHARS_STRING_DELIMITER: &str = "'\"";
+const CHARS_STRING_DELIMITER: &str = "'\"`";
 const CHARS_BRACKETS: &str = "()[]{}";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -14,7 +14,6 @@ pub enum TokenType {
     Spacing,
     LineTerminator,
     String,
-    StringTemplate,
     Comment,
     GeneratedCode,
 }
@@ -42,6 +41,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, &'static str> {
             c.unwrap()
         };
         if CHARS_SPACE.contains(character) {
+            // Spaces
             if character == '\n' {
                 finalize_token(
                     &mut tokens,
@@ -71,6 +71,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, &'static str> {
                 token_type = TokenType::Spacing;
             }
         } else if CHARS_NAME.contains(character) {
+            // Name tokens
             if !matches!(token_type, TokenType::Name) {
                 finalize_token(
                     &mut tokens, &mut token, token_index, token_type
@@ -80,6 +81,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, &'static str> {
             token.push(character);
             token_type = TokenType::Name;
         } else if CHARS_NUMBER.contains(character) {
+            // Numbers
             if matches!(token_type, TokenType::Name) {
                 token.push(character);
             } else if matches!(token_type, TokenType::Number) {
@@ -95,8 +97,11 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, &'static str> {
                 token_type = TokenType::Number;
             }
         } else if character == '.' && matches!(token_type, TokenType::Number) {
+            // A dot in a number is part of the number.
             token.push(character);
         } else if CHARS_STRING_DELIMITER.contains(character) {
+            // Start of a string
+
             // Finalize the previous token
             finalize_token(
                 &mut tokens,
@@ -146,7 +151,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, &'static str> {
             // Finalize the token
             finalize_token(&mut tokens, &mut token, curr_index, TokenType::String);
             token_type = TokenType::Unset;
-            // TODO: Implement template strings
+            // TODO: implement proper template strings
         } else {
             // Any other symbols...
             if token == "/" && character == '/' {
@@ -179,6 +184,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, &'static str> {
                 }
                 token_type = TokenType::Unset;
             } else if token == "/" && character == '*' {
+                let mut block_comment_is_line_terminator = false;
                 token.push('*');
                 loop {
                     let c = char_iterator.next();
@@ -187,6 +193,8 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, &'static str> {
                     if character == '/' && token.ends_with("*") {
                         token.push('/');
                         break;
+                    } else if character == '\n' {
+                        block_comment_is_line_terminator = true;
                     }
                     token.push(character);
                 }
@@ -194,7 +202,11 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, &'static str> {
                     &mut tokens,
                     &mut token,
                     curr_index,
-                    TokenType::Comment
+                    if block_comment_is_line_terminator {
+                        TokenType::LineTerminator
+                    } else {
+                        TokenType::Comment
+                    }
                 );
                 token_type = TokenType::Unset;
             } else if !(

@@ -15,13 +15,17 @@ Due to its lack of a type system, const enums are not supported, with no future 
 - [x] Interface removal
 - [x] Class method/variable differentiation
 - [x] Enum transformation
-- [ ] String literal support (using them causes errors for the moment!)
+- [ ] String literal support
+	- [x] Basic support
+	- [ ] Types inside of string literals
 - [x] Correctly parsing explicit generics (eg `fnCall<Type>(arg1)`)
-- [ ] Arrow functions
+- [x] Arrow functions
+- [x] Ternaries (eg `condition ? value_if_true : value_if_false`)
+- [x] Conditional chaining (eg `potentially_undefined_val?.some_method(...)`)
+- [x] Non-null assertion removal (currently they're left in)
+- [ ] Automatic semicolon insertion (ASI)
+	- [x] VERY basic support (and a slightly general base)
+	- [ ] Context-based
 - [ ] Adding tests
 - [ ] Source maps
 - [ ] Building an AST
-
-Order:
- - Expressions
- - 

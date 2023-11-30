@@ -1,4 +1,5 @@
 use crate::tokenizer;
+use crate::asi;
 use crate::transformer;
 // use crate::emitter;
 
@@ -8,10 +9,8 @@ pub fn compile(source: &str) -> Result<String, &'static str> {
         return Err(tokens_result.err().unwrap())
     }
     let mut tokens = tokens_result.unwrap();
-    transformer::transform(&mut tokens);
-
-    let _parts: Vec<String> = tokens.into_iter().map(|x| x.token).collect();
-    // println!("{:?}", parts);
+    tokens = asi::insert_semicolons(tokens);
+    tokens = transformer::transform(tokens);
 
     return Err("Compile returned nothing!"); // Ok(emitter::emit(tokens_result.unwrap()));
 }

@@ -1,6 +1,15 @@
 use crate::tokenizer::{Token, TokenType};
 
-const VARIABLE_DEFINITION: [&str; 3] = ["const", "let", "var"];
+const SINGLE_EXPRESSION_KEYWORDS: [&str; 6] = [
+	"continue",
+	"break",
+	"return",
+	"throw",
+	"yield",
+	"debugger"
+];
+
+const VARIABLE_DEFINITION: [&str; 3] = [ "const", "let", "var" ];
 const REMOVE_KEYWORDS: [&str; 4] = [
 	"private",
 	"public",
@@ -8,6 +17,8 @@ const REMOVE_KEYWORDS: [&str; 4] = [
 	"protected"
 ];
 const CLOSING_BRACKETS: &'static str = ")]}";
+
+const VISIBILITY_MODIFIERS: [&str; 1] = [ "export" ];
 
 #[derive(Debug, Clone)]
 enum FrameType {
@@ -20,6 +31,12 @@ enum FrameType {
 	FunctionOptionalReturnType,
 	FunctionBody,
 
+	/// For Loops ///
+	// When the `for` keyword is found
+	ForLoopDeclaration,
+	// When we reach the inner parenthesis of the for loop
+	ForLoopInsides,
+
 	/// Variables ///
 	VariableName,
 	VariableAfterName,
@@ -31,6 +48,7 @@ enum FrameType {
 	TypeTupleOrIndex,
 	TypeInfoEndOrSeparator,
 	TypeIndexSignature,
+	TypeDeclarationPotential { start: usize },
 
 	/// Interfaces ///
 	InterfaceHeader,
@@ -53,14 +71,40 @@ enum FrameType {
 	ClassHeader,
 	ClassBody,
 
+	/// Statements ///
+	StatementSoft,
+	StatementHard,
+
 	/// Expressions ///
 	Expr,
 	// An expression that stops being read at the end of the line
 	// Used in cases like `return 1\n+1;`
-	ExprEndAtNewline,
+	ExprSoft { ends_at: String },
 	ExprArray,
 	ExprDict,
+
+	/// Ternary + Conditional Chaining ///
+	TernaryOrConditionalChaining,
 }
+
+impl PartialEq for FrameType {
+	fn eq(&self, other: &Self) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
+}
+
+/// Frames where only expressions are allowed (blocks are dicts, variables don't work, etc.)
+const EXPRESSION_FRAMES: [FrameType; 4] = [
+	FrameType::Expr,
+	FrameType::ExprSoft { ends_at: String::new() },
+	FrameType::ExprArray,
+	FrameType::ExprDict
+];
+
+/// Frames that are exited as soon as another is entered
+const SOFT_FRAMES: [FrameType; 1] = [
+	FrameType::StatementSoft
+];
 
 fn is_whitespace(t: &TokenType) -> bool {
 	matches!(t, TokenType::Spacing) ||
@@ -68,7 +112,16 @@ fn is_whitespace(t: &TokenType) -> bool {
 	matches!(t, TokenType::LineTerminator)
 }
 
-pub fn transform(tokens: &mut Vec<Token>) {
+fn is_expr_soft_and_has(e: &FrameType, c: &str) -> bool {
+	match e {
+		FrameType::ExprSoft { ends_at } => {
+			ends_at.contains(c)
+		},
+		_ => false
+	}
+}
+
+pub fn transform(tokens: Vec<Token>) -> Vec<Token> {
 	let mut insert_tokens: Vec<(usize, Token)> = vec![];
 	let mut remove_tokens: Vec<usize> = vec![];
 	let mut index: usize = usize::MAX;
@@ -80,6 +133,14 @@ pub fn transform(tokens: &mut Vec<Token>) {
 		let token = &tokens[index]; // Actual token
 		let token_str: &str = token.token.as_str(); // Token string
 		let token_is_whitespace = is_whitespace(&token.t);
+
+		// let token_second = if index == 0 {
+		// 	token
+		// } else {
+		// 	&tokens[index - 1]
+		// };
+		// let token_second_str = token_second.token.as_str();
+
 		let stack_len = stack.len();
 		let top_stack = stack.last()
 			.unwrap_or(&FrameType::TopLevel).clone(); // The level we're on
@@ -89,22 +150,28 @@ pub fn transform(tokens: &mut Vec<Token>) {
 			&stack[stack_len - 2]
 		});
 
+		if SOFT_FRAMES.contains(&top_stack_second) {
+			let top = stack.pop();
+			stack.pop();
+			stack.push(top.unwrap());
+		}
+
 		// Print (for debugging)
 		let token_str_escaped = token_str.escape_debug().to_string();
-		if token_str_escaped.len() <= 20 {
-			println!(
-				"`{}` -{}- Stack: {:?}",
-				token_str_escaped,
-				"-".repeat(20 - token_str_escaped.len()),
-				stack
-			);
-		} else {
-			println!(
-				"`{}` - Stack: {:?}",
-				token_str_escaped,
-				stack
-			);
-		}
+		// if token_str_escaped.len() <= 20 {
+		// 	println!(
+		// 		"`{}` -{}- Stack: {:?}",
+		// 		token_str_escaped,
+		// 		"-".repeat(20 - token_str_escaped.len()),
+		// 		stack
+		// 	);
+		// } else {
+		// 	println!(
+		// 		"`{}` - Stack: {:?}",
+		// 		token_str_escaped,
+		// 		stack
+		// 	);
+		// }
 
 		// Remove some tokens immediately
 		if REMOVE_KEYWORDS.contains(&token_str) {
@@ -135,6 +202,15 @@ pub fn transform(tokens: &mut Vec<Token>) {
 			&mut remove_tokens
 		) { continue; }
 
+		else if transform_for(
+			&mut stack,
+			&top_stack,
+			&mut index,
+			&token_str,
+			token_is_whitespace,
+			&mut remove_tokens
+		) { continue; }
+
 		// Types
 		else if transform_type(
 			&mut stack,
@@ -146,6 +222,28 @@ pub fn transform(tokens: &mut Vec<Token>) {
 			&token.t,
 			token_is_whitespace,
 			&mut remove_tokens
+		) { continue; }
+
+		// Interfaces
+		else if transform_interface(
+			&mut stack,
+			&top_stack,
+			&mut index,
+			&token_str,
+			&mut remove_tokens
+		) { continue; }
+
+		// Enums
+		else if transform_enum(
+			&mut stack,
+			&top_stack,
+			&mut index,
+			&tokens,
+			&token_str,
+			&token.t,
+			token_is_whitespace,
+			&mut remove_tokens,
+			&mut insert_tokens,
 		) { continue; }
 
 		// Match classes
@@ -160,62 +258,158 @@ pub fn transform(tokens: &mut Vec<Token>) {
 			&mut remove_tokens
 		) { continue; }
 
-		// Match expressions
+		else if SINGLE_EXPRESSION_KEYWORDS.contains(&token_str) {
+			stack.push(FrameType::ExprSoft { ends_at: String::from(";\n") });
+		}
+
+		// Match arrow functions
+		else if token_str == "=>" {
+			stack.push(FrameType::StatementSoft);
+		}
+
+		// Match different expressions
 		else if token_str == "(" {
 			stack.push(FrameType::Expr);
-		} else if matches!(top_stack, FrameType::Expr)
-			|| matches!(top_stack, FrameType::ExprEndAtNewline)
-			|| matches!(top_stack, FrameType::ExprArray)
-			|| matches!(top_stack, FrameType::ExprDict) {
-			if token_is_whitespace {
-				// Whitespace in expressions doesn't do anything
-				continue;
-			} else if token_str == "(" {
-				stack.push(FrameType::Expr);
-			} else if token_str == "[" {
-				stack.push(FrameType::ExprArray);
-			} else if token_str == "{" {
+		} else if token_str == "[" {
+			stack.push(FrameType::ExprArray);
+		} else if token_str == "{" {
+			if EXPRESSION_FRAMES.contains(&top_stack) {
+				// A `{` in an expression means a dict
 				stack.push(FrameType::ExprDict);
-			} else if token_str == "\n" && matches!(top_stack, FrameType::ExprEndAtNewline) {
-				stack.pop();
-			} else if ";".contains(&token_str) {
-				stack.pop();
-			} else if CLOSING_BRACKETS.contains(token_str) {
-				// index -= 1;
-				stack.pop();
+			} else {
+				// A `{` in a non-expression means a block
+				stack.push(FrameType::Block);
 			}
+		} else if is_expr_soft_and_has(&top_stack, token_str) {
+			stack.pop();
+		} else if token_str == "as" {
+			remove_tokens.push(index);
+			stack.push(FrameType::Type);
+		} else if token_str == ":" {
+			if matches!(top_stack, FrameType::ExprDict) {
+				// A `:` in a dict means we're now in a soft expression!
+				// stack.push(FrameType::ExprSoft { endsat_newline: false, endsat_comma: true });
+				stack.push(FrameType::ExprSoft { ends_at: String::from(",") });
+			} else {
+				// A `:` outside a dict means a type!
+				remove_tokens.push(index);
+				stack.push(FrameType::Type);
+			}
+		} else if CLOSING_BRACKETS.contains(token_str) {
+			if matches!(top_stack, FrameType::ExprSoft { .. }) {
+				index -= 1;
+			}
+			stack.pop();
+		} else if (
+			matches!(top_stack, FrameType::Expr) ||
+			matches!(top_stack, FrameType::ExprSoft { .. })
+		) && ";".contains(&token_str) {
+			index -= 1;
+			// End some expressions when `;` is encountered
+			stack.pop();
+		}
+		
+		// Deal with hard statements (statements ended with `;`)
+		else if matches!(top_stack, FrameType::StatementHard) && ";".contains(&token_str) {
+			// End hard statements when `;` is encountered
+			stack.pop();
+		}
+
+		else if EXPRESSION_FRAMES.contains(&top_stack) {
+			
+		}
+
+		// Ternary + conditional chaining
+		else if token_str == "?" {
+			stack.push(FrameType::TernaryOrConditionalChaining);
+		} else if transform_ternary_and_conditional_chaining(
+			&mut stack,
+			&top_stack,
+			&mut index,
+			&token_str,
+			token_is_whitespace,
+		) { continue; }
+
+		// Non-null assertion
+		else if token_str == "!" {
+			if index == 0 { continue; }
+			let last_token = &tokens[index - 1];
+			if matches!(last_token.t,
+				TokenType::Name | TokenType::Number | TokenType::String
+			) || CLOSING_BRACKETS.contains(last_token.token.as_str()) {
+				remove_tokens.push(index);
+			}
+		}
+
+		// Return statement
+		else if token_str == "return" {
+			stack.push(FrameType::ExprSoft { ends_at: String::from("\n") });
 		}
 
 		// Type Declaration
 		else if token_str == "type" {
-			if index == tokens.len() || !matches!(tokens[index + 1].t, TokenType::Name) {
-				// If we're at the end, or the following token isn't a name,
-				// ignore this token.
-			} else {
-				// Since a `type` declaration is just [type] = [type], we can
-				// push ::Type twice!
-				remove_tokens.push(index);
+			if index == tokens.len() - 1 {
+				// If we're at the end, ignore this token
+				continue;
+			}
+
+			stack.push(FrameType::TypeDeclarationPotential { start: index });
+		} else if matches!(top_stack, FrameType::TypeDeclarationPotential { .. }) {
+			if token_is_whitespace && token_str != "\n" {
+				continue;
+			} else if matches!(token.t, TokenType::Name) {
+				// It's an actual type!
+				stack.pop();
+				// Since a `type` declaration is just `type [type] = [type]``,
+				// we can push ::Type twice! (and don't forget to ignore the =)
+				if let FrameType::TypeDeclarationPotential {
+					start
+				} = top_stack {
+					remove_potential_visibility_modifier(
+						&tokens,
+						start - 1,
+						&mut remove_tokens,
+					);
+					let mut i = start;
+					while i < index {
+						remove_tokens.push(i);
+						i += 1;
+					}
+				}
+				index -= 1;
 				stack.push(FrameType::Type);
 				stack.push(FrameType::IgnoreToken);
 				stack.push(FrameType::Type);
+			} else {
+				// Set the index back to right after the `type` keyword
+				if let FrameType::TypeDeclarationPotential {
+					start
+				} = top_stack {
+					index = start;
+				}
+				stack.pop();
 			}
 		}
 
 		// Interfaces (entry point)
 		else if token_str == "interface" {
+			remove_potential_visibility_modifier(
+				&tokens,
+				index - 1,
+				&mut remove_tokens,
+			);
 			remove_tokens.push(index);
 			stack.push(FrameType::InterfaceHeader);
-		} else if transform_interface(
-			&mut stack,
-			&top_stack,
-			&mut index,
-			&token_str,
-			&mut remove_tokens
-		) { continue; }
+		}
 		
 		// Functions (entry point)
 		else if token_str == "function" {
 			stack.push(FrameType::FunctionName);
+		}
+
+		// For loops!
+		else if token_str == "for" {
+			stack.push(FrameType::ForLoopDeclaration);
 		}
 
 		// Variables
@@ -235,17 +429,7 @@ pub fn transform(tokens: &mut Vec<Token>) {
 		else if token_str == "enum" {
 			remove_tokens.push(index);
 			stack.push(FrameType::EnumHeader { name: None });
-		} else if transform_enum(
-			&mut stack,
-			&top_stack,
-			&mut index,
-			&tokens,
-			&token_str,
-			&token.t,
-			token_is_whitespace,
-			&mut remove_tokens,
-			&mut insert_tokens,
-		) { continue; }
+		}
 
 		// Type casting!
 		else if token_str == "as" {
@@ -258,17 +442,13 @@ pub fn transform(tokens: &mut Vec<Token>) {
 			if token_str == "<" {
 				println!("Getting generic range!");
 				let generic_opt =
-					get_generic_range(tokens, index);
+					get_generic_range(&tokens, index);
 				if let Some(generic) = generic_opt {
 					println!("Found generic range!!!");
 					for i in generic.start_index..generic.end_index {
 						remove_tokens.push(i);
 					}
 				}
-			} else if token_str == "{" {
-				stack.push(FrameType::Block);
-			} else if token_str == "}" {
-				stack.pop();
 			}
 		}
 
@@ -289,6 +469,32 @@ pub fn transform(tokens: &mut Vec<Token>) {
 		}
 	}
 	println!();
+
+	return tokens;
+}
+
+fn remove_potential_visibility_modifier(
+	tokens: &Vec<Token>,
+	index: usize,
+	remove_tokens: &mut Vec<usize>,
+) {
+	// Get the first name token behind the current one
+	let mut i = index;
+	while is_whitespace(&tokens[i].t) {
+		if i == 0 { return; }
+		i -= 1;
+	}
+	let token_str = tokens[i].token.as_str();
+
+	// Stop if it's not a visibility modifier
+	if !VISIBILITY_MODIFIERS.contains(&token_str) {
+		return;
+	}
+
+	while i != index {
+		remove_tokens.push(i);
+		i += 1;
+	}
 }
 
 struct GenericPosInfo {
@@ -429,6 +635,7 @@ fn transform_variable_definition(
 				stack.push(FrameType::Type);
 			} else if token_str == "=" {
 				stack.pop();
+				stack.push(FrameType::Expr);
 			}
 		},
 		_ => { return false; }
@@ -606,7 +813,10 @@ fn transform_class(
 				return true;
 			}
 			// Once we find a non-whitespace, non JS thing, decide what to do!
-			if token_str == ":" {
+			else if token_str == "?" {
+				// Match nullable properties
+				remove_tokens.push(*index);
+			} if token_str == ":" {
 				// Match property types
 				remove_tokens.push(*index);
 				stack.push(FrameType::Type);
@@ -665,7 +875,7 @@ fn transform_function(
 				// Default values aren't TypeScript code!
 				// this makes `function fname(a = {v: 123})` possible
 				//                                  ^^^^^
-				stack.push(FrameType::Expr);
+				stack.push(FrameType::ExprSoft { ends_at: String::from(",") });
 			} else if token_str == ")" {
 				stack.pop();
 				stack.push(FrameType::FunctionOptionalReturnType);
@@ -715,6 +925,7 @@ fn transform_type(
 			stack.pop();
 			if token_str == "(" {
 				// Type in parenthesis (ex: `(Type<Something>)`)
+				stack.push(FrameType::TypeAfter); // Match the stuff after
 				stack.push(FrameType::IgnoreToken); // Match the outer paren
 				stack.push(FrameType::Type); // Match the following type
 			} if token_str == "{" {
@@ -742,6 +953,10 @@ fn transform_type(
 			// This runs *after* a type. It makes sure that anything 
 			if token_is_whitespace {
 				remove_tokens.push(*index);
+			} else if token_str == "=>" {
+				remove_tokens.push(*index);
+				stack.pop();
+				stack.push(FrameType::Type);
 			} else if token_str == "<" {
 				remove_tokens.push(*index);
 				stack.push(FrameType::TypeInfoEndOrSeparator);
@@ -822,6 +1037,78 @@ fn transform_type(
 				stack.pop();
 				stack.push(FrameType::Type);
 				stack.push(FrameType::IgnoreToken);
+			}
+		},
+		_ => { return false; }
+	}
+	return true;
+}
+
+fn transform_ternary_and_conditional_chaining(
+	stack: &mut Vec<FrameType>,
+	top_stack: &FrameType,
+	index: &mut usize,
+	token_str: &str,
+	token_is_whitespace: bool,
+) -> bool {
+	match top_stack {
+		FrameType::TernaryOrConditionalChaining => {
+			if token_is_whitespace {
+				return true;
+			} else if token_str == "." {
+				// It's conditional chaining, so leave it alone.
+				*index -= 1;
+				stack.pop();
+			} else {
+				// It's actually a ternary expression! That's just a soft
+				// expression (ended with ":") and a normal expression after!
+				*index -= 1;
+				stack.pop();
+				stack.push(FrameType::Expr);
+				stack.push(FrameType::ExprSoft { ends_at: String::from(":") });
+			}
+		}
+		_ => { return false; }
+	}
+	return true;
+}
+
+fn transform_for(
+	stack: &mut Vec<FrameType>,
+	top_stack: &FrameType,
+	index: &mut usize,
+	token_str: &str,
+	token_is_whitespace: bool,
+	remove_tokens: &mut Vec<usize>
+) -> bool {
+	match top_stack {
+		FrameType::ForLoopDeclaration => {
+			if token_str == "(" {
+				stack.pop();
+				stack.push(FrameType::ForLoopInsides);
+			}
+		},
+		FrameType::ForLoopInsides => {
+			if token_is_whitespace {
+				return true;
+			} else if token_str == ":" {
+				// Normal for loop (let i: type = x; i < x; i++)
+				remove_tokens.push(*index);
+				stack.pop();
+				stack.push(FrameType::StatementHard);
+				stack.push(FrameType::StatementHard);
+				stack.push(FrameType::StatementHard);
+				stack.push(FrameType::Expr);
+				stack.push(FrameType::Type)
+			} else if token_str == "=" {
+				stack.pop();
+				stack.push(FrameType::StatementHard);
+				stack.push(FrameType::StatementHard);
+				stack.push(FrameType::StatementHard);
+				stack.push(FrameType::Expr);
+			} else if token_str == "of" || token_str == "in" {
+				stack.pop();
+				stack.push(FrameType::Expr);
 			}
 		},
 		_ => { return false; }
