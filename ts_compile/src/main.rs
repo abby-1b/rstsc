@@ -1,28 +1,23 @@
 #![feature(linked_list_cursors)]
 
 mod compiler;
+pub mod server;
 pub mod tokenizer;
 pub mod asi;
 pub mod transformer;
 pub mod emitter;
 
-// const SOURCE: &str = include_str!("../test.ts");
-
-// const a = (hey: number): number => return 123;
-// const b = true ? undefined : 'some str';
-// const c = b?.split(' ')
-
-const SOURCE: &str = "
-let a = {
-    'key': 'value'
-};
-";
+use server::start_server;
 
 fn main() {
-    let output = compiler::compile(SOURCE);
-    if output.is_err() {
-        println!("Error: {}", output.err().unwrap());
-    } else {
-        println!("{}", output.unwrap());
-    }
+    // let output = compiler::compile("
+    // const a: () => void = 123;
+    // ");
+    // if output.is_err() {
+    //     println!("Error: {}", output.err().unwrap());
+    // } else {
+    //     println!("{}", output.unwrap());
+    // }
+
+    start_server();
 }

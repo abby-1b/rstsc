@@ -1,7 +1,7 @@
 use crate::tokenizer;
 use crate::asi;
 use crate::transformer;
-// use crate::emitter;
+use crate::emitter;
 
 pub fn compile(source: &str) -> Result<String, &'static str> {
     let tokens_result = tokenizer::tokenize(source);
@@ -12,5 +12,6 @@ pub fn compile(source: &str) -> Result<String, &'static str> {
     tokens = asi::insert_semicolons(tokens);
     tokens = transformer::transform(tokens);
 
-    return Err("Compile returned nothing!"); // Ok(emitter::emit(tokens_result.unwrap()));
+    // Err("Compile returned nothing!")
+    Ok(emitter::emit(tokens))
 }
