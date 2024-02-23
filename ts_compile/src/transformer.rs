@@ -25,23 +25,23 @@ enum FrameType {
 	TopLevel,
 	Block,
 
-	/// Functions ///
+	// Functions //
 	FunctionName,
 	FunctionParams,
 	FunctionOptionalReturnType,
 	FunctionBody,
 
-	/// For Loops ///
-	// When the `for` keyword is found
+	// For Loops //
+	/// When the `for` keyword is found
 	ForLoopDeclaration,
-	// When we reach the inner parenthesis of the for loop
+	/// When we reach the inner parenthesis of the for loop
 	ForLoopInsides,
 
-	/// Variables ///
+	// Variables //
 	VariableName,
 	VariableAfterName,
 
-	/// Types ///
+	// Types //
 	Type,
 	TypeAfter,
 	TypeDict,
@@ -50,11 +50,11 @@ enum FrameType {
 	TypeIndexSignature,
 	TypeDeclarationPotential { start: usize },
 
-	/// Interfaces ///
+	// Interfaces //
 	InterfaceHeader,
 	InterfaceBody,
 
-	/// Enums ///
+	// Enums //
 	EnumHeader { name: Option<String> },
 	EnumBody {
 		name: String,
@@ -62,23 +62,31 @@ enum FrameType {
 		curr_name: String,
 	},
 
-	/// Something that is immediately ignored (and deleted) ///
+	// Declarations //
+	/// Immediately after the `declaration` keyword
+	DeclarationHeader,
+	/// Immediately after a dot is found in the declaration header
+	DeclarationHeaderIgnoreAfterDot,
+	/// Everything (getting ignored) until the end of the declaration
+	DeclarationBody { simple: bool, start_index: usize },
+
+	/// Something that is immediately ignored (and deleted)
 	IgnoreToken,
-	// Something that is immediately ignores (not deleted)
+	/// Something that is immediately ignored (not deleted)
 	IgnoreTokenNoDelete,
 
-	/// Classes ///
+	// Classes //
 	ClassHeader,
 	ClassBody,
 
-	/// Statements ///
+	// Statements //
 	StatementSoft,
 	StatementHard,
 
-	/// Expressions ///
+	// Expressions //
 	Expr,
-	// An expression that stops being read at the end of the line
-	// Used in cases like `return 1\n+1;`
+	/// An expression that stops being read at the end of the line
+	/// Used in cases like `return 1\n+1;`
 	ExprSoft { ends_at: String },
 	ExprArray,
 	ExprDict,
@@ -158,20 +166,20 @@ pub fn transform(tokens: Vec<Token>) -> Vec<Token> {
 
 		// Print (for debugging)
 		let token_str_escaped = token_str.escape_debug().to_string();
-		// if token_str_escaped.len() <= 20 {
-		// 	println!(
-		// 		"`{}` -{}- Stack: {:?}",
-		// 		token_str_escaped,
-		// 		"-".repeat(20 - token_str_escaped.len()),
-		// 		stack
-		// 	);
-		// } else {
-		// 	println!(
-		// 		"`{}` - Stack: {:?}",
-		// 		token_str_escaped,
-		// 		stack
-		// 	);
-		// }
+		if token_str_escaped.len() <= 20 {
+			println!(
+				"`{}` -{}- Stack: {:?}",
+				token_str_escaped,
+				"-".repeat(20 - token_str_escaped.len()),
+				stack
+			);
+		} else {
+			println!(
+				"`{}` - Stack: {:?}",
+				token_str_escaped,
+				stack
+			);
+		}
 
 		// Remove some tokens immediately
 		if REMOVE_KEYWORDS.contains(&token_str) {
@@ -191,6 +199,15 @@ pub fn transform(tokens: Vec<Token>) -> Vec<Token> {
 				stack.pop();
 			}
 		}
+
+		// Declarations
+		else if transform_declaration(
+			&mut stack,
+			&top_stack,
+			&mut index,
+			&token_str,
+			&mut remove_tokens
+		) { continue; }
 
 		// If we're already parsing a function...
 		else if transform_function(
@@ -346,6 +363,13 @@ pub fn transform(tokens: Vec<Token>) -> Vec<Token> {
 			stack.push(FrameType::ExprSoft { ends_at: String::from("\n") });
 		}
 
+		// Switch statement
+		else if [ "case", "default" ].contains(&token_str) {
+			// Basically ignore the ':' as a type
+			// Very sketchy workaround but it works!
+			stack.push(FrameType::ExprSoft { ends_at: String::from(":") });
+		}
+
 		// Type Declaration
 		else if token_str == "type" {
 			if index == tokens.len() - 1 {
@@ -391,13 +415,32 @@ pub fn transform(tokens: Vec<Token>) -> Vec<Token> {
 			}
 		}
 
+		// Declare
+		else if token_str == "declare" {
+			if index > 0 {
+				remove_potential_visibility_modifier(
+					&tokens,
+					index - 1,
+					&mut remove_tokens,
+				);
+			}
+			remove_tokens.push(index);
+			if [ "module", "namespace" ].contains(&tokens[index + 1].token.as_str()) {
+				index += 1;
+				remove_tokens.push(index);
+			}
+			stack.push(FrameType::DeclarationHeader);
+		}
+
 		// Interfaces (entry point)
 		else if token_str == "interface" {
-			remove_potential_visibility_modifier(
-				&tokens,
-				index - 1,
-				&mut remove_tokens,
-			);
+			if index > 0 {
+				remove_potential_visibility_modifier(
+					&tokens,
+					index - 1,
+					&mut remove_tokens,
+				);
+			}
 			remove_tokens.push(index);
 			stack.push(FrameType::InterfaceHeader);
 		}
@@ -454,23 +497,29 @@ pub fn transform(tokens: Vec<Token>) -> Vec<Token> {
 
 	}
 
+	let mut out_tokens: Vec<Token> = Vec::with_capacity(
+		tokens.len() - remove_tokens.len() + insert_tokens.len()
+	);
+
 	let mut insert_index = 0;
 	for i in 0..tokens.len() {
 		let t = &tokens[i];
 		if remove_tokens.contains(&i) {
 			// print!("[{}]", t.token);
 		} else {
-			print!("{}", t.token);
+			out_tokens.push(t.clone());
+			// print!("{}", t.token);
 		}
 		while insert_index != insert_tokens.len() &&
 			i == insert_tokens[insert_index].0 {
-			print!("{}", insert_tokens[insert_index].1.token);
+			out_tokens.push(insert_tokens[insert_index].1.clone());
+			// print!("{}", insert_tokens[insert_index].1.token);
 			insert_index += 1;
 		}
 	}
-	println!();
+	// println!();
 
-	return tokens;
+	return out_tokens;
 }
 
 fn remove_potential_visibility_modifier(
@@ -575,7 +624,7 @@ fn transform_interface(
 	match top_stack {
 		FrameType::InterfaceHeader => {
 			remove_tokens.push(*index);
-			if ["extends", "implements"].contains(&token_str) {
+			if [ "extends", "implements" ].contains(&token_str) {
 				stack.push(FrameType::Type);
 			} else if token_str == "{" {
 				stack.pop();
@@ -588,6 +637,82 @@ fn transform_interface(
 				stack.push(FrameType::InterfaceBody);
 			} else if token_str == "}" {
 				stack.pop();
+			}
+		},
+		_ => { return false; }
+	}
+	return true;
+}
+
+fn transform_declaration(
+	stack: &mut Vec<FrameType>,
+	top_stack: &FrameType,
+	index: &mut usize,
+	token_str: &str,
+	remove_tokens: &mut Vec<usize>,
+) -> bool {
+	match top_stack {
+		FrameType::DeclarationHeader => {
+			remove_tokens.push(*index);
+			if token_str == "." {
+				// If we find a dot, go into this special state...
+				stack.pop();
+				stack.push(FrameType::DeclarationHeaderIgnoreAfterDot);
+			} else if token_str == "{" {
+				// Simple declaration bodies just exit after their first nest
+				// a.k.a. `declaration global {}` exits after the closing `}`
+				stack.pop();
+				stack.push(FrameType::DeclarationBody {
+					simple: true,
+					start_index: 0,
+				});
+			} else if VARIABLE_DEFINITION.contains(&token_str)
+				|| token_str == "function" {
+				// We'll remove this token later!
+				remove_tokens.pop();
+				*index -= 1;
+
+				stack.pop();
+				stack.push(FrameType::DeclarationBody {
+					simple: false,
+					start_index: *index,
+				});
+			}
+		},
+		FrameType::DeclarationHeaderIgnoreAfterDot => {
+			remove_tokens.push(*index);
+			if token_str == "{" {
+				stack.pop();
+				stack.push(FrameType::DeclarationBody {
+					simple: true,
+					start_index: 0,
+				});
+			}
+		},
+		FrameType::DeclarationBody { simple, start_index } => {
+			if *simple {
+				remove_tokens.push(*index);
+				if token_str == "{" {
+					stack.push(FrameType::DeclarationBody {
+						simple: true,
+						start_index: 0,
+					});
+				} else if token_str == "}" {
+					stack.pop();
+				}
+			} else {
+				if *index > *start_index + 1 {
+					// Ignore all the removed tokens, as we'll be adding them in ourselves
+					let start_removing_from = *start_index + 1;
+					while remove_tokens.len() > 0 && *unsafe {
+						remove_tokens.last().unwrap_unchecked()
+					} > start_removing_from { remove_tokens.pop(); }
+					for i in start_removing_from..=*index {
+						remove_tokens.push(i);
+					}
+					stack.pop();
+				}
+				return false;
 			}
 		},
 		_ => { return false; }
@@ -947,6 +1072,9 @@ fn transform_type(
 			} else if matches!(token_type, TokenType::Name) {
 				// Word (ex: `Type<Inner>`, `Type`)
 				stack.push(FrameType::TypeAfter);
+			} else if token_str == ")" {
+				// Apparently the type ended immediately! (ex: `() => void`)
+				*index -= 1;
 			}
 		},
 		FrameType::TypeAfter => {
