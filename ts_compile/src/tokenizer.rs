@@ -3,7 +3,7 @@ const CHARS_NAME: &str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$
 const CHARS_NUMBER: &str = "0123456789";
 const CHARS_SPACE: &str = " \n\t";
 const CHARS_STRING_DELIMITER: &str = "'\"`";
-const CHARS_BRACKETS: &str = "()[]{}";
+const CHARS_BRACKETS: &str = "()[]{}<>";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TokenType {

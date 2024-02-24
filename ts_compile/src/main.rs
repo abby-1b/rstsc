@@ -10,14 +10,15 @@ pub mod emitter;
 use server::start_server;
 
 fn main() {
-    // let output = compiler::compile("
-    // const a: () => void = 123;
-    // ");
-    // if output.is_err() {
-    //     println!("Error: {}", output.err().unwrap());
-    // } else {
-    //     println!("{}", output.unwrap());
-    // }
+    let output = compiler::compile("
+    import { SomeType } from './some';
+    const a: SomeType = 0;
+    ");
+    if output.is_err() {
+        println!("Error: {}", output.err().unwrap());
+    } else {
+        println!("{}", output.unwrap());
+    }
 
-    start_server();
+    // start_server();
 }

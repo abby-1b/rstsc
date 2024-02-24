@@ -332,8 +332,16 @@ pub fn transform(tokens: Vec<Token>) -> Vec<Token> {
 			stack.pop();
 		}
 
-		else if EXPRESSION_FRAMES.contains(&top_stack) {
-			
+		// Non-null assertion
+		else if token_str == "!" {
+			if index == 0 { continue; }
+			let last_token = &tokens[index - 1];
+			println!("Non-null attempt: {:?}", last_token.t);
+			if matches!(last_token.t,
+				TokenType::Name | TokenType::Number | TokenType::String
+			) || CLOSING_BRACKETS.contains(last_token.token.as_str()) {
+				remove_tokens.push(index);
+			}
 		}
 
 		// Ternary + conditional chaining
@@ -347,16 +355,11 @@ pub fn transform(tokens: Vec<Token>) -> Vec<Token> {
 			token_is_whitespace,
 		) { continue; }
 
-		// Non-null assertion
-		else if token_str == "!" {
-			if index == 0 { continue; }
-			let last_token = &tokens[index - 1];
-			if matches!(last_token.t,
-				TokenType::Name | TokenType::Number | TokenType::String
-			) || CLOSING_BRACKETS.contains(last_token.token.as_str()) {
-				remove_tokens.push(index);
-			}
+		else if EXPRESSION_FRAMES.contains(&top_stack) {
+			// Do nothing below when inside any expression frame
 		}
+
+		// EVERYTHING BELOW DOESN'T APPLY INSIDE EXPRESSIONS!
 
 		// Return statement
 		else if token_str == "return" {
@@ -472,12 +475,6 @@ pub fn transform(tokens: Vec<Token>) -> Vec<Token> {
 		else if token_str == "enum" {
 			remove_tokens.push(index);
 			stack.push(FrameType::EnumHeader { name: None });
-		}
-
-		// Type casting!
-		else if token_str == "as" {
-			remove_tokens.push(index);
-			stack.push(FrameType::Type);
 		}
 
 		// Anything else!
