@@ -14,6 +14,7 @@ Due to its lack of a type system, const enums are not supported, with no future 
 - [x] Type declaration removal
 	- [x] Test
 - [x] Type/Generic arguments (eg `Record<string, number>`)
+	- [x] Test
 - [x] Typed dictionaries
 - [x] Interface removal
 - [x] Class method/variable differentiation
@@ -28,7 +29,9 @@ Due to its lack of a type system, const enums are not supported, with no future 
 	- [x] Types
 - [x] Ternaries (eg `condition ? value_if_true : value_if_false`)
 - [x] Conditional chaining (eg `potentially_undefined_val?.some_method(...)`)
-- [x] Non-null assertion removal (currently they're left in)
+- [x] Non-null assertion removal
+	- [x] When the last token is a name, number, or string
+	- [x] When the last token is a closing bracket
 - [x] Switch statements (fix due to tagging of case body as type)
 - [x] Declarations
 	- [x] `declare namespace ... { ... }`
@@ -39,12 +42,20 @@ Due to its lack of a type system, const enums are not supported, with no future 
 	- [x] `declare class { ... }`
 	- [x] `declare function ...`
 	- [x] `declare const/let/var ...`
+- [ ] Variable scope (necessary for correct module import removal)
+	- [ ] When a variable is declared, add it to the scope
+		- [ ] Maybe also add its type?
+	- [ ] When the scope is over, delete the variables in this level from scope
+- [ ] Module import removal (eg `import { Type } from '...'; const a: Type;`)
+	- [ ] Mark all module imports for removal
+	- [ ] Un-mark them (set them to 0) when they're used
 - [ ] Automatic semicolon insertion (ASI)
 	- [x] VERY basic support (and a slightly general base)
 	- [ ] Context-based
 - [ ] Adding tests
 	- [x] Test base! (directory, helper functions)
-	- [ ] 
+	- [x] Partial coverage
+	- [ ] Full coverage
 - [ ] Source maps
 - [ ] Building an AST
 	- [ ] Hi! Sorry, uhh I just saw this and ***WHAT???***
