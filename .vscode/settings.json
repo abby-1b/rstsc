@@ -1,0 +1,8 @@
+{
+	"workbench.iconTheme": "vs-seti",
+	"deno.enablePaths": [
+		"./test"
+	],
+	"deno.unstable": true,
+	"editor.insertSpaces": true
+}
