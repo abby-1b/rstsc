@@ -52,7 +52,7 @@ fn infer_type_from_node(node: &ASTNode) -> Type {
 
 /// Infers the return type of a function, and annotates it with the type
 pub fn infer_return_type(node: &mut ASTNode) {
-    match node {
+    match &node {
         ASTNode::FunctionDefinition {
             modifiers,
             name,

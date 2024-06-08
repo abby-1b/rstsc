@@ -36,6 +36,9 @@ pub enum Type {
 
     Object(Vec<(String, Type)>),
 
+    /// Used for type guards `x is string`
+    Guard(String, Box<Type>),
+
     // TODO: dicts, extends, all of the complex stuff...
 }
 
@@ -131,51 +134,77 @@ pub fn get_type(tokens: &mut TokenList) -> Result<Type, String> {
                 }
                 Type::Tuple(tuple_parts)
             } else {
-                println!("Unexpected symbol when fetching type: {:?}", start_token);
-                Type::Any
+                // Unexpected token
+                return Err(format!(
+                    "Unexpected token when fetching type: {:?}",
+                    start_token
+                ));
             }
         }
         _ => {
             // Unexpected token
-            println!("Unexpected token when fetching type: {:?}", start_token);
-            Type::Any
+            return Err(format!(
+                "Unexpected token when fetching type: {:?}",
+                start_token
+            ));
         }
     };
 
-    tokens.ignore_whitespace();
-    match tokens.peek_str() {
-        "|" => {
-            // Union type
-            tokens.skip_unchecked();
-            let right_type = get_type(tokens)?;
-            start_type = combine_types(&start_type, &right_type);
-        }
-        "<" => {
-            // Arguments to the type
-            tokens.skip_unchecked();
-            let mut args = vec![];
-
-            while tokens.peek_str() != ">" && !tokens.is_done() {
-                args.push(get_type(tokens)?);
-                tokens.ignore_whitespace();
-                if tokens.peek_str() == "," {
-                    tokens.skip_unchecked();
-                }
-                tokens.ignore_whitespace();
+    loop {
+        tokens.ignore_whitespace();
+        match tokens.peek_str() {
+            "|" => {
+                // Union type
+                tokens.skip_unchecked();
+                let right_type = get_type(tokens)?;
+                start_type = combine_types(&start_type, &right_type);
             }
-            tokens.skip(&[ ">" ])?;
+            "<" => {
+                // Arguments to the type
+                tokens.skip_unchecked();
+                let mut args = vec![];
 
-            start_type = Type::WithArgs(Box::new(start_type), args);
-        }
-        "[" => {
-            // Array type
-            tokens.skip_unchecked();
-            tokens.ignore_whitespace();
-            tokens.skip(&[ "]" ])?;
+                while tokens.peek_str() != ">" && !tokens.is_done() {
+                    args.push(get_type(tokens)?);
+                    tokens.ignore_whitespace();
+                    if tokens.peek_str() == "," {
+                        tokens.skip_unchecked();
+                    }
+                    tokens.ignore_whitespace();
+                }
+                tokens.skip(&[ ">" ])?;
 
-            start_type = Type::Array(Box::new(start_type));
+                start_type = Type::WithArgs(Box::new(start_type), args);
+            }
+            "[" => {
+                // Array type
+                tokens.skip_unchecked();
+                tokens.ignore_whitespace();
+                tokens.skip(&[ "]" ])?;
+
+                start_type = Type::Array(Box::new(start_type));
+            }
+            "is" => {
+                // Type guard
+                tokens.skip_unchecked();
+                tokens.ignore_whitespace();
+                match start_type {
+                    Type::Custom(var_name) => {
+                        start_type = Type::Guard(
+                            var_name,
+                            Box::new(get_type(tokens)?)
+                        )
+                    }
+                    other => {
+                        return Err(format!(
+                            "Type guard expected Type::Custom(...), found {:?}",
+                            other
+                        ))
+                    }
+                };
+            }
+            _ => { break; }
         }
-        _ => {}
     }
 
     Ok(start_type)

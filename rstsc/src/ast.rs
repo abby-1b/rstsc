@@ -125,7 +125,8 @@ impl Debug for ModifierList {
 pub struct NamedDeclaration {
     pub name: String,
     pub typ: Option<Type>,
-    pub value: Option<ASTNode>
+    pub value: Option<ASTNode>,
+    pub conditional: bool
 }
 
 #[derive(Debug, Clone)]
@@ -138,6 +139,9 @@ pub enum ASTNode {
     Declaration {
         on: Box<ASTNode>,
         typ: Type,
+
+        // Whether or not this declaration has the `?` sign before its type
+        conditional: bool
     },
 
     /// A `var`, `let` or `const` variable definition

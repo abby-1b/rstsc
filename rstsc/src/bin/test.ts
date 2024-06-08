@@ -37,7 +37,15 @@
 
 // console.log(weirdOperation());
 
-function lol() {
-    let a = 123;
-    return a;
+// function lol() {
+//     let a = 123;
+//     return a;
+// }
+
+// function log(message: string, userId?: string) {
+//     console.log(message);
+// }
+
+function isString(x: any): x is string {
+    return typeof x === 'string';
 }

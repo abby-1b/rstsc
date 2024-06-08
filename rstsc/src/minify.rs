@@ -16,12 +16,12 @@ fn step_combine(node: &mut ASTNode) {
         ASTNode::Block { nodes } => {
             nodes.iter_mut().for_each(step_combine);
             // TODO: combine variable declarations
-        },
+        }
         ASTNode::VariableDeclaration { defs, .. } => {
             defs.iter_mut().for_each(|def| {
                 def.value.as_mut().map(step_combine);
             });
-        },
+        }
         ASTNode::StatementIf { condition, body, alternate } => {
             // Combine children
             step_combine(condition);
@@ -51,20 +51,20 @@ fn step_combine(node: &mut ASTNode) {
                 }
                 _ => {}
             }
-        },
-        // ASTNode::StatementWhile { .. } => {},
-        // ASTNode::StatementFor { .. } => {},
+        }
+        // ASTNode::StatementWhile { .. } => {}
+        // ASTNode::StatementFor { .. } => {}
         ASTNode::StatementReturn { value } => {
             value.as_deref_mut().map(step_combine);
-        },
-        // ASTNode::StatementBreak { .. } => {},
-        // ASTNode::StatementContinue { .. } => {},
+        }
+        // ASTNode::StatementBreak { .. } => {}
+        // ASTNode::StatementContinue { .. } => {}
         ASTNode::FunctionDefinition { body, .. } => {
             // TODO: minify parameter defaults
             body.as_deref_mut().map(step_combine);
-        },
-        // ASTNode::ArrowFunctionDefinition { .. } => {},
-        // ASTNode::PotentialParameter { .. } => {},
+        }
+        // ASTNode::ArrowFunctionDefinition { .. } => {}
+        // ASTNode::PotentialParameter { .. } => {}
         ASTNode::Parenthesis { nodes } => {
             // Minify children
             nodes.iter_mut().for_each(step_combine);
@@ -78,8 +78,8 @@ fn step_combine(node: &mut ASTNode) {
             } else {
                 // TODO: take care of `(1, 2)` => `(2)`
             }
-        },
-        // ASTNode::Array { .. } => {},
+        }
+        // ASTNode::Array { .. } => {}
         ASTNode::Dict { properties } => {
             properties.iter_mut().for_each(|property| {
                 match property {
@@ -92,11 +92,11 @@ fn step_combine(node: &mut ASTNode) {
                     ObjectProperty::Spread { argument } => step_combine(argument)
                 }
             });
-        },
-        ASTNode::ExprNumLiteral { .. } => {},
-        ASTNode::ExprStrLiteral { .. } => {},
-        ASTNode::ExprBoolLiteral { .. } => {},
-        ASTNode::ExprIdentifier { .. } => {},
+        }
+        ASTNode::ExprNumLiteral { .. } => {}
+        ASTNode::ExprStrLiteral { .. } => {}
+        ASTNode::ExprBoolLiteral { .. } => {}
+        ASTNode::ExprIdentifier { .. } => {}
         ASTNode::ExprFunctionCall { callee, arguments } => {
             // Minify parts
             step_combine(callee);
@@ -109,9 +109,11 @@ fn step_combine(node: &mut ASTNode) {
                     }
                 }
             }
-        },
-        // ASTNode::ExprIndexing { .. } => {},
-        // ASTNode::PrefixOpr { .. } => {},
+        }
+        // ASTNode::ExprIndexing { .. } => {}
+        ASTNode::PrefixOpr { opr, expr } => {
+            step_combine(expr);
+        }
         ASTNode::InfixOpr { left, opr, right } => {
             // Combine children
             step_combine(left);
@@ -143,12 +145,12 @@ fn step_combine(node: &mut ASTNode) {
                     replace_node(node, new_node);
                 }
             }
-        },
-        ASTNode::PostfixOpr { expr, .. } => { step_combine(expr); },
+        }
+        ASTNode::PostfixOpr { expr, .. } => { step_combine(expr); }
         ASTNode::ExprAs { value, .. } => {
             step_combine(value);
-        },
-        // ASTNode::ExprTypeAssertion { .. } => {},
+        }
+        // ASTNode::ExprTypeAssertion { .. } => {}
         ASTNode::Empty { .. } => {},
         node => {
             panic!("Not implemented in combine step: {:?}", node);
