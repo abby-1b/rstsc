@@ -1,23 +1,11 @@
-use minify::minify_ast;
-use tokenizer::TokenList;
-use parser::get_block;
-use emit::emit_code;
+/// This file is used for less rigorous testing during development.
 
-mod tokenizer;
-mod operations;
-mod types;
-mod ast;
-mod type_checking;
-mod ft;
-mod parser;
-mod minify;
-mod emit;
+use rstsc::minify::minify_ast;
+use rstsc::tokenizer::TokenList;
+use rstsc::parser::get_block;
+use rstsc::emit::emit_code;
 
 const SOURCE_TEST: &str = include_str!("./test.ts");
-
-pub extern "C" fn lmao() -> usize {
-    42069
-}
 
 fn main() {
     let mut tokens = TokenList::from(SOURCE_TEST);

@@ -111,8 +111,8 @@ pub fn get_operator_binding_power(
         (ExprType::Infx,  "?"   ) => Some((5, 4)),
         (ExprType::Infx,  "=>"  ) => Some((5, 4)),
 
-        (ExprType::Prefx, "yield") => Some((2, 3)),
-        (ExprType::Prefx, "..."  ) => Some((2, 3)),
+        (ExprType::Prefx, "yield" ) => Some((2, 3)),
+        (ExprType::Prefx, "..."   ) => Some((2, 3)),
 
         (ExprType::Infx, ",") => Some((0, 1)),
 

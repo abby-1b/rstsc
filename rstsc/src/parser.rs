@@ -156,12 +156,14 @@ fn convert_to_typed_declarations(
                 Ok(NamedDeclaration {
                     name,
                     typ: None,
-                    value: None
+                    value: None,
+                    conditional: false
                 })
             }
-            ASTNode::Declaration { on, typ } => {
+            ASTNode::Declaration { on, typ, conditional } => {
                 let mut decl = deconstruct_ast_declaration(*on)?;
                 decl.typ = Some(typ);
+                decl.conditional = conditional;
                 Ok(decl)
             }
             ASTNode::InfixOpr { left, opr, right } => {
@@ -347,7 +349,7 @@ fn handle_function_declaration(
         tokens.ignore_whitespace();
         let header = get_expression(tokens, 0)?;
 
-        if let ASTNode::Declaration { on, typ } = header {
+        if let ASTNode::Declaration { on, typ, conditional: _ } = header {
             // Parameters with return type
             (
                 convert_to_typed_declarations(*on)?,
@@ -553,11 +555,11 @@ fn parse_infix(
             ASTNode::Parenthesis { .. } => {
                 (convert_to_typed_declarations(left)?, None)
             },
-            ASTNode::Declaration { on, typ } => {
+            ASTNode::Declaration { on, typ, conditional } => {
                 (convert_to_typed_declarations(*on)?, Some(typ))
             }
             ASTNode::ExprIdentifier { name } => {
-                (vec![ NamedDeclaration { name, typ: None, value: None } ], None)
+                (vec![ NamedDeclaration { name, typ: None, value: None, conditional: false } ], None)
             }
             other => {
                 return Err(format!(
@@ -580,16 +582,30 @@ fn parse_infix(
         });
     } else if opr == ":" {
         // `:` here means what's coming up is a type, not an expression
-        tokens.skip_unchecked();
         let typ = get_type(tokens)?;
         tokens.ignore_whitespace();
         return Ok(ASTNode::Declaration {
             on: Box::new(left),
             typ,
+            conditional: false
         });
     } else if opr == "?" {
-        // Ternary
-        tokens.skip_unchecked();
+        // Ternary (eg. `condition ? true : false`)
+        // Or maybe a conditional type (eg. `let a?: string;`)
+
+        tokens.ignore_whitespace();
+        if tokens.peek_str() == ":" {
+            // Conditional type!
+            tokens.skip_unchecked();
+
+            // Get the type
+            let typ = get_type(tokens)?;
+            return Ok(ASTNode::Declaration {
+                on: Box::new(left),
+                typ,
+                conditional: true
+            })
+        }
 
         // Get the first part, up until the `:`
         let colon_precedence = get_operator_binding_power(ExprType::Infx, ":").unwrap();
@@ -664,15 +680,19 @@ fn get_expression(
         match next.typ {
             TokenType::Number => parse_number(tokens),
             TokenType::String => parse_string(tokens),
-            TokenType::Identifier => parse_name(tokens)?,
-            TokenType::Symbol => {
+            TokenType::Symbol | TokenType::Identifier => {
                 let binding_power = get_operator_binding_power(
                     ExprType::Prefx,
                     next.value
                 );
                 if let Some(binding_power) = binding_power {
+                    // Some operator!
                     parse_prefix(tokens, binding_power.1)?
+                } else if matches!(next.typ, TokenType::Identifier) {
+                    // Could be a name...
+                    parse_name(tokens)?
                 } else {
+                    // Not a name & no matching operators.
                     return Err(format!(
                         "Prefix operator not found: {:?}",
                         tokens.peek()

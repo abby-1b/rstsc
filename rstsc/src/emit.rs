@@ -284,6 +284,15 @@ fn emit_single(
         }
         ASTNode::PrefixOpr { opr, expr } => {
             emitter.out(&opr, true);
+
+            // Identifier operators (like `typeof` and `yield`) need a space!
+            let first_char = unsafe {
+                *((&opr[0..1] as *const str) as *const u8)
+            } as char;
+            if first_char.is_ascii_alphabetic() {
+                emitter.out(" ", false);
+            }
+
             emit_single(*expr, emitter);
         }
         ASTNode::InfixOpr { left, opr, right } => {

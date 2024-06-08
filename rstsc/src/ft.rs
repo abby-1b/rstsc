@@ -6,6 +6,7 @@ pub struct NamedDeclaration {
     pub name: String,
     pub typ: Type,
     pub value: Option<ASTNode>,
+    pub conditional: bool
 }
 
 impl NamedDeclaration {
@@ -13,7 +14,8 @@ impl NamedDeclaration {
         NamedDeclaration {
             name: n.name.clone(),
             typ: n.typ.clone().unwrap_or(Type::Unknown),
-            value: n.value.as_ref().map(ASTNode::from)
+            value: n.value.as_ref().map(ASTNode::from),
+            conditional: n.conditional
         }
     }
 }
@@ -145,7 +147,7 @@ impl ASTNode {
             ast::ASTNode::Block { nodes } => ASTNode::Block {
                 nodes: nodes.iter().map(ASTNode::from).collect(),
             },
-            ast::ASTNode::Declaration { on, typ } => ASTNode::Declaration {
+            ast::ASTNode::Declaration { on, typ, conditional } => ASTNode::Declaration {
                 on: Box::new(ASTNode::from(on)),
                 typ: typ.clone(),
             },
