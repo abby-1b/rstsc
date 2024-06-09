@@ -85,11 +85,12 @@ pub enum ASTNode {
     StatementReturn { value: Option<Box<ASTNode>> },
     StatementBreak { value: Option<Box<ASTNode>> },
     StatementContinue { value: Option<Box<ASTNode>> },
+    StatementThrow { value: Option<Box<ASTNode>> },
 
     FunctionDefinition {
         modifiers: ast::ModifierList,
         name: Option<String>,
-        generics: Option<Vec<Type>>,
+        generics: Option<Vec<(Type, Option<Type>)>>,
         params: Vec<NamedDeclaration>,
         return_type: Type,
         body: Option<Box<ASTNode>>
@@ -135,6 +136,11 @@ pub enum ASTNode {
     ExprTypeAssertion {
         cast_type: Type,
         value: Box<ASTNode>,
+    },
+
+    TypeDeclaration {
+        first_typ: Type,
+        equals_typ: Type
     },
 
     Empty
@@ -191,6 +197,9 @@ impl ASTNode {
                 value: value.as_ref().map(|a| Box::new(ASTNode::from(&a))),
             },
             ast::ASTNode::StatementContinue { value } => ASTNode::StatementContinue {
+                value: value.as_ref().map(|a| Box::new(ASTNode::from(&a))),
+            },
+            ast::ASTNode::StatementThrow { value } => ASTNode::StatementThrow {
                 value: value.as_ref().map(|a| Box::new(ASTNode::from(&a))),
             },
             ast::ASTNode::FunctionDefinition {
@@ -284,6 +293,10 @@ impl ASTNode {
             ast::ASTNode::ExprTypeAssertion { cast_type, value } => ASTNode::ExprTypeAssertion {
                 cast_type: cast_type.clone(),
                 value: Box::new(ASTNode::from(value)),
+            },
+            ast::ASTNode::TypeDeclaration { first_typ, equals_typ } => ASTNode::TypeDeclaration {
+                first_typ: first_typ.clone(),
+                equals_typ: equals_typ.clone(),
             },
             ast::ASTNode::Empty => ASTNode::Empty,
         }

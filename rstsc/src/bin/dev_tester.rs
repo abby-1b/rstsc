@@ -16,10 +16,10 @@ fn main() {
         return;
     }
 
-    let mut ast = ast.unwrap();
+    let ast = ast.unwrap();
     
-    minify_ast(&mut ast);
-    dbg!(&ast);
+    // minify_ast(&mut ast);
+    // dbg!(&ast);
 
     let out = emit_code(ast, false);
     println!("{}", out);
