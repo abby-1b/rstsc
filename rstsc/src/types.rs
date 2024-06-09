@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, fmt::Display};
 
 use crate::tokenizer::{TokenList, TokenType};
 
@@ -19,6 +19,8 @@ pub enum Type {
 
     Unknown,
 
+    Void,
+
     /// A union (eg. `string | number`)
     Union(Vec<Type>),
 
@@ -34,12 +36,132 @@ pub enum Type {
     /// Array type (eg. `number[]`)
     Array(Box<Type>),
 
+    /// A typed object (dict)
     Object(Vec<(String, Type)>),
 
     /// Used for type guards `x is string`
     Guard(String, Box<Type>),
 
-    // TODO: dicts, extends, all of the complex stuff...
+    /// A typed declaration (used inside arrow functions)
+    ColonDeclaration {
+        name: String,
+        typ: Box<Type>,
+        conditional: bool
+    },
+
+    /// A function (eg. `let a: (x: number) => void = x => x * 2`)
+    Function {
+        args: Vec<Type>,
+        return_type: Box<Type>
+    }
+}
+
+impl Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Type::Any => { f.write_str("any") },
+
+            Type::Number => { f.write_str("number") },
+            Type::NumberLiteral(number) => {
+                f.write_str(&f64::from_bits(*number).to_string())
+            },
+
+            Type::String => { f.write_str("string") },
+            Type::StringLiteral(string) => {
+                f.write_str(string)
+            },
+
+            Type::Boolean => { f.write_str("boolean") },
+            Type::BooleanLiteral(boolean) => {
+                f.write_str(if *boolean {
+                    "true"
+                } else {
+                    "false"
+                })
+            },
+
+            Type::Unknown => { f.write_str("unknown") },
+            Type::Void => { f.write_str("void") },
+
+            Type::Union(types) => {
+                f.write_str(
+                    &types.iter()
+                        .map(|t| t.to_string()).collect::<Vec<String>>()
+                        .join(" | ")
+                )
+            },
+
+            Type::Custom(name) => { f.write_str(&name) },
+
+            Type::WithArgs(typ, args) => {
+                f.write_str(&typ.to_string())?;
+                f.write_str(
+                    &args.iter()
+                        .map(|t| t.to_string()).collect::<Vec<String>>()
+                        .join(" | ")
+                )
+            },
+
+            Type::Tuple(inner_types) => {
+                f.write_str("[")?;
+                f.write_str(
+                    &inner_types.iter()
+                        .map(|t| t.to_string()).collect::<Vec<String>>()
+                        .join(", ")
+                )?;
+                f.write_str("]")
+            },
+
+            Type::Array(typ) => {
+                f.write_str(&typ.to_string())?;
+                f.write_str("[]")
+            },
+
+            Type::Object(kv_pairs) => {
+                f.write_str("{")?;
+                f.write_str(
+                    &kv_pairs.iter()
+                        .map(|kv| {
+                            kv.0.clone() + " " + &kv.1.to_string()
+                        }).collect::<Vec<String>>()
+                        .join(", ")
+                )?;
+                f.write_str("}")
+            },
+
+            Type::Guard(name, typ) => {
+                f.write_str(name)?;
+                f.write_str(" is ")?;
+                f.write_str(&typ.to_string())
+            },
+
+            Type::ColonDeclaration {
+                name,
+                typ,
+                conditional
+            } => {
+                f.write_str(name)?;
+                if *conditional { f.write_str("?")?; }
+                f.write_str(": ")?;
+                f.write_str(&typ.to_string())
+            },
+
+            Type::Function {
+                args,
+                return_type
+            } => {
+                f.write_str("(")?;
+                f.write_str(
+                    &args.iter()
+                        .map(|arg| arg.to_string())
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                )?;
+                f.write_str(") => ")?;
+                f.write_str(&return_type.to_string())
+            }
+        }
+    }
 }
 
 /// Gets a type, regardless of whether it starts with `:` or not.
@@ -62,10 +184,11 @@ pub fn get_type(tokens: &mut TokenList) -> Result<Type, String> {
             "any" => Type::Any,
             "number" => Type::Number,
             "string" => Type::String,
-            "unknown" => Type::Unknown,
             "boolean" => Type::Boolean,
             "true" => Type::BooleanLiteral(true),
             "false" => Type::BooleanLiteral(false),
+            "void" => Type::Void,
+            "asserts" => get_type(tokens)?,
             _ => { Type::Custom(start_token.value.to_string()) }
         },
         TokenType::Number => {
@@ -133,6 +256,41 @@ pub fn get_type(tokens: &mut TokenList) -> Result<Type, String> {
                     }
                 }
                 Type::Tuple(tuple_parts)
+            } else if start_token.value == "(" {
+                // Parenthesized type!
+                // This could be an arrow function, too.
+
+                let mut inner_types = vec![];
+                loop {
+                    tokens.ignore_whitespace();
+                    if tokens.peek_str() == "," {
+                        tokens.consume();
+                    } else if tokens.peek_str() == ")" {
+                        tokens.consume();
+                        break;
+                    }
+
+                    inner_types.push(get_type(tokens)?);
+                }
+
+                tokens.ignore_whitespace();
+                if tokens.peek_str() == "=>" {
+                    // Function
+                    tokens.skip_unchecked();
+                    let return_type = get_type(tokens)?;
+                    Type::Function {
+                        args: inner_types,
+                        return_type: Box::new(return_type)
+                    }
+                } else if inner_types.len() != 1 {
+                    return Err(format!(
+                        "Found multiple types in a single parenthesis! {:?}",
+                        inner_types
+                    ));
+                } else {
+                    // Simple parenthesis, remove the type from inside
+                    inner_types.pop().unwrap()
+                }
             } else {
                 // Unexpected token
                 return Err(format!(
@@ -202,6 +360,22 @@ pub fn get_type(tokens: &mut TokenList) -> Result<Type, String> {
                         ))
                     }
                 };
+            }
+            ":" => {
+                tokens.skip_unchecked();
+                tokens.ignore_whitespace();
+                let conditional = if tokens.peek_str() == "?" {
+                    tokens.skip_unchecked();
+                    true
+                } else {
+                    false
+                };
+                let typ = get_type(tokens)?;
+                start_type = Type::ColonDeclaration {
+                    name: start_type.to_string(),
+                    typ: Box::new(typ),
+                    conditional
+                }
             }
             _ => { break; }
         }
