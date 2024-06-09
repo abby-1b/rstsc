@@ -2,7 +2,7 @@ mod common;
 use common::test_multiple;
 
 #[test]
-fn run_all_tests() {
+fn other_tests() {
     test_multiple(&[
 
 "
@@ -330,7 +330,7 @@ let funcUnion: FunctionUnion = (x: any) => x.toString();
 function assertIsString(val: any): asserts val is string {
     if (typeof val !== 'string') throw new Error('Not a string');
 }
-let maybeString: any = 'I'm a string';
+let maybeString: any = 'I\\'m a string';
 assertIsString(maybeString);
 ",
 "
@@ -441,7 +441,7 @@ let funcUnion: FunctionUnion = (x: any) => x.toString();
 function assertIsString(val: any): asserts val is string {
     if (typeof val !== 'string') throw new Error('Not a string');
 }
-let maybeString: any = 'I'm a string';
+let maybeString: any = 'I\\'m a string';
 assertIsString(maybeString);
 ",
 "
@@ -574,6 +574,9 @@ const typedBothTrailingA = (x: number, ): number => x;
 const typedBothTrailingB = (x: number | number, y: number | number, ): number => x + y;
 const typedBothTrailingC = (x: number | number, y: number | number ,): number => x + y;
 const typedBothTrailingD = (x: number | number, y: number | number , ): number => x + y;
+",
+"
+let test1: () => void, test2: (x: number) => void, test3: (string | number)[], test4: (x: number, y: number) => void;
 "
 
     ], common::WhiteSpace::IgnoreAll);

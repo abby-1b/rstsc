@@ -58,7 +58,7 @@ fn tsc_compile(code: &str) -> Result<String, String> {
 
 /// Tests TypeScript code, compiling it with TSC and checking the two strings.
 /// Ignores leading and trailing whitespace and semicolons.
-fn test_code(code: &str, whitespace: &WhiteSpace) {
+fn test_code(code: &str, whitespace: &WhiteSpace) -> Result<(), String> {
 	let mut code_string = code.to_string();
 	code_string += "\n ";
 	let code = code_string.as_str();
@@ -99,7 +99,7 @@ fn test_code(code: &str, whitespace: &WhiteSpace) {
 	}
 
 	if actual != expect {
-		panic!(
+		Err(format!(
 			concat!(
 				"Input code:\x1b[32m\n{}\x1b[0m\n",
 				"Expected output:\n\x1b[33m{}\x1b[0m\n",
@@ -108,7 +108,9 @@ fn test_code(code: &str, whitespace: &WhiteSpace) {
 			code,
 			expect_untransformed,
 			actual_untransformed,
-		);
+		))
+	} else {
+		Ok(())
 	}
 }
 
@@ -117,7 +119,31 @@ pub fn test_multiple(
 	input_snippets: &[&str],
 	whitespace: WhiteSpace
 ) {
+	let mut fails = vec![];
+
+	let mut count_failed: usize = 0;
+	let mut count_correct: usize = 0;
+
 	for snippet in input_snippets {
-		test_code(snippet, &whitespace);
+		if let Err(fail_message) = test_code(snippet, &whitespace) {
+			fails.push(fail_message);
+			count_failed += 1;
+		} else {
+			count_correct += 1;
+		}
+	}
+
+	if !fails.is_empty() {
+		// Some fails
+		for fail in fails {
+			println!("{}", fail);
+		}
+
+		panic!(
+			"{} correct, {} failed ({:.2}% passed)",
+			count_correct,
+			count_failed,
+			(count_correct as f64 / (count_correct + count_failed) as f64) * 100.0
+		);
 	}
 }

@@ -2,7 +2,7 @@ mod common;
 use common::test_multiple;
 
 #[test]
-fn run_all_tests() {
+fn basic_variables() {
     test_multiple(&[
 
 "

@@ -2,7 +2,7 @@ mod common;
 use common::test_multiple;
 
 #[test]
-fn run_all_tests() {
+fn basic_functions() {
     test_multiple(&[
 
 "
@@ -94,7 +94,7 @@ let hasPropertyResult = hasProperty({ a: 1, b: 2 }, 'a');
 function assertIsString(val: any): asserts val is string {
     if (typeof val !== 'string') throw new Error('Not a string');
 }
-let maybeString: any = 'I'm a string';
+let maybeString: any = 'I\\'m a string';
 assertIsString(maybeString);
 ",
 "
