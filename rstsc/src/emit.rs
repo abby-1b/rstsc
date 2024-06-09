@@ -176,13 +176,31 @@ fn emit_single(
         ASTNode::StatementReturn { value } => {
             emitter.out("return", true);
             if let Some(value) = value {
-                // TODO: remove space here when in compact mode, but only if the next token is a symbol
                 emitter.out(" ", false);
                 emit_single(*value, emitter);
             }
         }
-        // ASTNode::StatementBreak { .. } => "StatementBreak"
-        // ASTNode::StatementContinue { .. } => "StatementContinue"
+        ASTNode::StatementBreak { value } => {
+            emitter.out("break", true);
+            if let Some(value) = value {
+                emitter.out(" ", false);
+                emit_single(*value, emitter);
+            }
+        }
+        ASTNode::StatementContinue { value } => {
+            emitter.out("continue", true);
+            if let Some(value) = value {
+                emitter.out(" ", false);
+                emit_single(*value, emitter);
+            }
+        }
+        ASTNode::StatementThrow { value } => {
+            emitter.out("throw", true);
+            if let Some(value) = value {
+                emitter.out(" ", false);
+                emit_single(*value, emitter);
+            }
+        }
         ASTNode::FunctionDefinition { modifiers, name, params, body, .. } => {
             if let Some(body) = body {
                 // Head
@@ -313,6 +331,7 @@ fn emit_single(
         }
         ASTNode::ExprAs { value, .. } => { emit_single(*value, emitter); }
         ASTNode::ExprTypeAssertion { value, .. } => { emit_single(*value, emitter); }
+        ASTNode::TypeDeclaration { .. } => {}
         ASTNode::Empty { .. } => {}
         other => {
             emitter.out(&format!("[ {} ]", other.name()), true);
@@ -325,6 +344,9 @@ fn emit_named_declarations(
     emitter: &mut Emitter
 ) {
     emitter.emit_vec(decls, |decl, emitter| {
+        if decl.spread {
+            emitter.out("...", false);
+        }
         emitter.out(&decl.name, true);
         if let Some(value) = decl.value {
             emitter.out_diff(" = ", "=", false);

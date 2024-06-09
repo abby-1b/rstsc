@@ -126,7 +126,14 @@ pub struct NamedDeclaration {
     pub name: String,
     pub typ: Option<Type>,
     pub value: Option<ASTNode>,
-    pub conditional: bool
+
+    /// True when this declaration is conditional
+    /// (eg. `someVar?: string`)
+    pub conditional: bool,
+
+    /// True when this declaration starts with a spread
+    /// (eg. `(...args)`)
+    pub spread: bool
 }
 
 #[derive(Debug, Clone)]
@@ -170,11 +177,12 @@ pub enum ASTNode {
     StatementReturn { value: Option<Box<ASTNode>> },
     StatementBreak { value: Option<Box<ASTNode>> },
     StatementContinue { value: Option<Box<ASTNode>> },
+    StatementThrow { value: Option<Box<ASTNode>> },
 
     FunctionDefinition {
         modifiers: ModifierList,
         name: Option<String>,
-        generics: Option<Vec<Type>>,
+        generics: Option<Vec<(Type, Option<Type>)>>,
         params: Vec<NamedDeclaration>,
         return_type: Option<Type>,
         body: Option<Box<ASTNode>>
@@ -226,6 +234,11 @@ pub enum ASTNode {
         value: Box<ASTNode>,
     },
 
+    TypeDeclaration {
+        first_typ: Type,
+        equals_typ: Type
+    },
+
     /// Used in situations like `[ 1, 2, ]` where there's an empty expression
     Empty
 }
@@ -243,6 +256,7 @@ impl ASTNode {
             ASTNode::StatementReturn { .. } => "StatementReturn",
             ASTNode::StatementBreak { .. } => "StatementBreak",
             ASTNode::StatementContinue { .. } => "StatementContinue",
+            ASTNode::StatementThrow { .. } => "StatementThrow",
             ASTNode::FunctionDefinition { .. } => "FunctionDefinition",
             ASTNode::ArrowFunctionDefinition { .. } => "ArrowFunctionDefinition",
             ASTNode::Parenthesis { .. } => "Parenthesis",
@@ -260,6 +274,7 @@ impl ASTNode {
             ASTNode::PostfixOpr { .. } => "PostfixOpr",
             ASTNode::ExprAs { .. } => "ExprAs",
             ASTNode::ExprTypeAssertion { .. } => "ExprTypeAssertion",
+            ASTNode::TypeDeclaration { .. } => "TypeDeclaration",
             ASTNode::Empty { .. } => "Empty",
         }.to_string()
     }

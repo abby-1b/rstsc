@@ -59,7 +59,8 @@ fn get_single_statement(tokens: &mut TokenList) -> Result<ASTNode, String> {
             handle_control_flow(tokens, &mut nodes)? ||
             handle_function_declaration(tokens, &mut nodes)? ||
             handle_modifiers(tokens, &mut nodes)? ||
-            handle_other_statements(tokens, &mut nodes)?
+            handle_other_statements(tokens, &mut nodes)? ||
+            handle_type_declaration(tokens, &mut nodes)?
         {
             continue;
         }
@@ -157,7 +158,8 @@ fn convert_to_typed_declarations(
                     name,
                     typ: None,
                     value: None,
-                    conditional: false
+                    conditional: false,
+                    spread: false
                 })
             }
             ASTNode::Declaration { on, typ, conditional } => {
@@ -176,6 +178,15 @@ fn convert_to_typed_declarations(
                         "Expected `=`, found {}",
                         opr
                     ));
+                }
+            }
+            ASTNode::PrefixOpr { opr, expr } => {
+                if opr == "..." {
+                    let mut decl = deconstruct_ast_declaration(*expr)?;
+                    decl.spread = true;
+                    Ok(decl)
+                } else {
+                    return Err(format!("Expected `...`, found {}", opr));
                 }
             }
             other => {
@@ -273,12 +284,17 @@ fn handle_control_flow(
     Ok(true)
 }
 
-/// Handles `return`, `break`, and `continue`
+/// Handles `return`, `break`, `continue`, and `throw`
 fn handle_other_statements(
     tokens: &mut TokenList,
     out: &mut Vec<ASTNode>,
 ) -> Result<bool, String> {
-    const STATEMENT_NAMES: &[&str] = &[ "return", "break", "continue" ];
+    const STATEMENT_NAMES: &[&str] = &[
+        "return",
+        "break",
+        "continue",
+        "throw"
+    ];
     if !STATEMENT_NAMES.contains(&tokens.peek_str()) {
         return Ok(false);
     }
@@ -296,6 +312,7 @@ fn handle_other_statements(
         "return" => ASTNode::StatementReturn { value },
         "break" => ASTNode::StatementBreak { value },
         "continue" => ASTNode::StatementContinue { value },
+        "throw" => ASTNode::StatementThrow { value },
         other => { panic!("Statement not implemented: {}", other); }
     });
 
@@ -328,7 +345,7 @@ fn handle_function_declaration(
     if tokens.peek_str() == "<" {
         tokens.skip_unchecked();
         loop {
-            generics.push(get_type(tokens)?);
+            let new_type = get_type(tokens)?;
 
             // Skip comma
             tokens.ignore_whitespace();
@@ -336,6 +353,17 @@ fn handle_function_declaration(
                 tokens.skip_unchecked();
                 tokens.ignore_whitespace();
             }
+
+            let default = if tokens.peek_str() == "=" {
+                // Generic default
+                tokens.skip_unchecked();
+                Some(get_type(tokens)?)
+            } else {
+                None
+            };
+
+            // Add the type
+            generics.push((new_type, default));
 
             if tokens.peek_str() == ">" {
                 break;
@@ -411,6 +439,34 @@ fn handle_modifiers(
     let mut node_after_modifiers = get_single_statement(tokens)?;
     node_after_modifiers.apply_modifiers(modifiers)?;
     out.push(node_after_modifiers);
+
+    Ok(true)
+}
+
+fn handle_type_declaration(
+    tokens: &mut TokenList,
+    out: &mut Vec<ASTNode>,
+) -> Result<bool, String> {
+    if tokens.peek_str() != "type" {
+        return Ok(false);
+    }
+
+    tokens.skip_unchecked(); // Skip `type`
+
+    // Get the first type
+    let first_typ = get_type(tokens)?;
+
+    // Consume `=`
+    tokens.ignore_whitespace();
+    tokens.skip(&[ "=" ])?;
+
+    // Get the second type
+    let equals_typ = get_type(tokens)?;
+
+    out.push(ASTNode::TypeDeclaration {
+        first_typ,
+        equals_typ
+    });
 
     Ok(true)
 }
@@ -555,11 +611,17 @@ fn parse_infix(
             ASTNode::Parenthesis { .. } => {
                 (convert_to_typed_declarations(left)?, None)
             },
-            ASTNode::Declaration { on, typ, conditional } => {
+            ASTNode::Declaration { on, typ, .. } => {
                 (convert_to_typed_declarations(*on)?, Some(typ))
             }
             ASTNode::ExprIdentifier { name } => {
-                (vec![ NamedDeclaration { name, typ: None, value: None, conditional: false } ], None)
+                (vec![ NamedDeclaration {
+                    name,
+                    typ: None,
+                    value: None,
+                    conditional: false,
+                    spread: false
+                } ], None)
             }
             other => {
                 return Err(format!(

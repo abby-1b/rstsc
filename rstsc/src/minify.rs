@@ -151,6 +151,7 @@ fn step_combine(node: &mut ASTNode) {
             step_combine(value);
         }
         // ASTNode::ExprTypeAssertion { .. } => {}
+        ASTNode::TypeDeclaration { .. } => {}
         ASTNode::Empty { .. } => {},
         node => {
             panic!("Not implemented in combine step: {:?}", node);

@@ -46,6 +46,20 @@
 //     console.log(message);
 // }
 
-function isString(x: any): x is string {
-    return typeof x === 'string';
+// type Some = 123;
+// function isString(x: any): x is string {
+//     return typeof x === 'string';
+// }
+
+// let test1: () => void, test2: (x: number) => void, test3: (string | number)[], test4: (x: number, y: number) => void;
+
+// function doLog(message: any, ...optionalParams: any[]) {
+//     console.log(message, ...optionalParams);
+// }
+// doLog('Message', 1, 2, 3);
+
+function assertIsString(val: any): asserts val is string {
+    if (typeof val !== 'string') throw new Error('Not a string');
 }
+let maybeString: any = 'I\'m a string';
+assertIsString(maybeString);
