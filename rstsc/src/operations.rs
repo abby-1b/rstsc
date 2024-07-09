@@ -120,6 +120,33 @@ pub fn get_operator_binding_power(
     }
 }
 
+pub fn get_type_operator_binding_power(
+    expr_type: ExprType, opr: &str
+) -> Option<(u8, u8)> {
+    match (&expr_type, opr) {
+
+        (ExprType::Prefx, "{") => Some((12, 13)),
+        (ExprType::Prefx, "(") => Some((12, 13)),
+        (ExprType::Prefx, "<") => Some((12, 13)),
+        (ExprType::Prefx, "[") => Some((12, 13)),
+
+        (ExprType::Infx, "[") => Some((10, 11)),
+        (ExprType::Infx, "<") => Some((10, 11)),
+
+        (ExprType::Prefx, "keyof"  ) => Some((8, 9)),
+        (ExprType::Prefx, "asserts") => Some((8, 9)),
+
+        (ExprType::Infx, "&") => Some((6, 7)),
+
+        (ExprType::Infx, "|") => Some((4, 5)),
+
+        (ExprType::Infx, "is") => Some((2, 3)),
+        (ExprType::Infx, ":" ) => Some((0, 1)),
+
+        _ => { None }
+    }
+}
+
 pub fn get_operator_binding_power_from_node(node: &ASTNode) -> Option<(u8, u8)> {
     if let Some(opr_type) = ExprType::from(node) {
         get_operator_binding_power(opr_type, match node {

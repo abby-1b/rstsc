@@ -1,4 +1,4 @@
-use crate::{ft::ASTNode, types::{combine_types, Type}};
+use crate::{ft::ASTNode, types::Type};
 
 // const ASSIGNMENT_OPERATORS: &[&str] = &[
 //     "=", "+=", "-=", "**=", "*=", "/=", "%=", "<<=", ">>=", ">>>=", "&=", "^=",
@@ -29,11 +29,14 @@ fn infer_type_from_node(node: &ASTNode) -> Type {
                 if nodes.is_empty() {
                     Type::Unknown
                 } else {
-                    nodes
+                    let mut inferred_types = nodes
                         .iter()
-                        .map(infer_type_from_node)
-                        .reduce(|a, b| combine_types(&a, &b))
-                        .unwrap_or(Type::Unknown)
+                        .map(infer_type_from_node);
+                    let mut union_type = inferred_types.next().unwrap_or(Type::Unknown);
+                    for typ in inferred_types {
+                        union_type.union(typ);
+                    }
+                    union_type
                 }
             ))
         },

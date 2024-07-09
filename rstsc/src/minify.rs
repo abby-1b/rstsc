@@ -1,4 +1,4 @@
-use crate::{ast, ft::{self, ASTNode, ObjectProperty}, operations::{get_operator_binding_power, get_operator_binding_power_from_node, get_operator_binding_power_from_node_typed, ExprType}};
+use crate::{ast, ft::{self, ASTNode, ObjectProperty}, operations::{get_operator_binding_power, get_operator_binding_power_from_node_typed, ExprType}};
 
 /// Minifies an AST node, modifying it in the process.
 pub fn minify_ast(node: &mut ast::ASTNode) {
