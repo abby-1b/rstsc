@@ -117,6 +117,18 @@ impl<'a> TokenList<'a> {
         ret
     }
 
+    /// Skips a single character in the currently-loaded token
+    pub fn consume_single_character(&mut self) -> &str {
+        // Get character
+        let single_character = &self.next_token.value[0..1];
+
+        // Skip character in source string
+        self.next_token.value = &self.next_token.value[1..];
+
+        // Return
+        single_character
+    }
+
     pub fn skip(&mut self, candidates: &[&str]) -> Result<(), String> {
         if candidates.contains(&self.peek_str()) {
             self.skip_unchecked();

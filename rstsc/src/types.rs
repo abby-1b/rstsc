@@ -426,7 +426,23 @@ fn parse_infix(
                 }
             }
 
-            tokens.skip(&[ &group_end ])?;
+            if group_start == "<" && tokens.peek_str().len() != 1 {
+                // Some bunched-up closing brackets (eg. `>>`)
+                // This happens due to bit-shifting using this token.
+
+                let first_char = tokens.consume_single_character();
+                if first_char == ">" {
+                    // Skipped!
+                } else {
+                    // Wrong character!
+                    return Err(format!(
+                        "Expected `<`, found {:?}",
+                        first_char
+                    ));
+                }
+            } else {
+                tokens.skip(&[ &group_end ])?;
+            }
 
             if group_start == "[" {
                 if arguments.len() == 0 {
