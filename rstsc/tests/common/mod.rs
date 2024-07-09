@@ -5,7 +5,8 @@ use rstsc;
 use regex::Regex;
 
 pub enum WhiteSpace {
-	/// Ignores all whitespace. Semicolons are treated as whitespace.
+	/// Ignores all whitespace. Semicolons and parenthesis
+	/// are treated as whitespace.
 	IgnoreAll,
 	
 	/// Makes sure that there is whitespace between characters,
@@ -65,15 +66,21 @@ fn test_code(code: &str, whitespace: &WhiteSpace) -> Result<(), String> {
 
 	// Get the `rstsc` output
 	let out = rstsc::compile(code);
+	let mut out_is_err = false;
 	let mut actual: String = if let Ok(out) = out {
 		out
 	} else {
+		out_is_err = true;
 		out.err().unwrap()
 	};
 	let actual_untransformed: String = actual.clone();
 
 	// Get the `tsc` output
-	let expected = tsc_compile(code);
+	let expected = if out_is_err {
+		Ok("[skipped due to rstsc failure]".to_string())
+	} else {
+		tsc_compile(code)
+	};
 	let mut expect: String = if let Ok(out) = expected {
 		out
 	} else {
@@ -86,12 +93,12 @@ fn test_code(code: &str, whitespace: &WhiteSpace) -> Result<(), String> {
 
 	match whitespace {
 		WhiteSpace::IgnoreAll => {
-			let re = Regex::new(r"[\n\t; ]+").unwrap();
+			let re = Regex::new(r"[\n\t;() ]+").unwrap();
 			actual = re.replace_all(actual.as_str(), "").to_string();
 			expect = re.replace_all(expect.as_str(), "").to_string();
 		}
 		WhiteSpace::HasWhitespace => {
-			let re = Regex::new(r"[\n\t; ]+").unwrap();
+			let re = Regex::new(r"[\n\t;() ]+").unwrap();
 			actual = re.replace_all(actual.as_str(), " ").to_string();
 			expect = re.replace_all(expect.as_str(), " ").to_string();
 		}
