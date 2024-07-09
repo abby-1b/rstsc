@@ -1,8 +1,21 @@
+use phf::phf_map;
 use crate::{
     ast::{ASTNode, Modifier, ModifierList, NamedDeclaration, ObjectProperty, VariableDefType, MODIFIERS},
     operations::{get_operator_binding_power, ExprType},
     tokenizer::{TokenList, TokenType},
-    types::get_type
+    types::{get_type, Type}
+};
+
+pub static INVERSE_GROUPINGS: phf::Map<&'static str, &'static str> = phf_map! {
+    "(" => ")",
+    "[" => "]",
+    "{" => "}",
+    "<" => ">",
+    
+    ")" => "(",
+    "]" => "[",
+    "}" => "{",
+    ">" => "<",
 };
 
 /// Parses a single block. Consumes the ending token!
@@ -60,7 +73,8 @@ fn get_single_statement(tokens: &mut TokenList) -> Result<ASTNode, String> {
             handle_function_declaration(tokens, &mut nodes)? ||
             handle_modifiers(tokens, &mut nodes)? ||
             handle_other_statements(tokens, &mut nodes)? ||
-            handle_type_declaration(tokens, &mut nodes)?
+            handle_type_declaration(tokens, &mut nodes)? ||
+            handle_interface(tokens, &mut nodes)?
         {
             continue;
         }
@@ -115,7 +129,7 @@ fn handle_vars(
     };
 
     // Get the variable definitions
-    let defs = get_typed_declarations(tokens)?;
+    let defs = get_named_declarations(tokens)?;
 
     out.push(ASTNode::VariableDeclaration {
         modifiers: Default::default(),
@@ -126,14 +140,14 @@ fn handle_vars(
     Ok(true)
 }
 
-/// Gets typed declarations, with or without values
+/// Gets typed declarations, with or without values. Stops when it encounters a semicolon.
 /// 
 /// Examples (in square brackets):
 /// 
 /// `let [a: number = 123, b: string];`
 /// 
 /// `function some([a: number, b: string = '123']) { ... }`
-fn get_typed_declarations(
+fn get_named_declarations(
     tokens: &mut TokenList
 ) -> Result<Vec<NamedDeclaration>, String> {
     let declaration_node = get_expression(tokens, 0)?;
@@ -471,6 +485,92 @@ fn handle_type_declaration(
     Ok(true)
 }
 
+fn handle_interface(
+    tokens: &mut TokenList,
+    out: &mut Vec<ASTNode>
+) -> Result<bool, String> {
+    if tokens.peek_str() != "interface" {
+        return Ok(false);
+    }
+
+    tokens.skip_unchecked();
+
+    // Get the interface name
+    let name = get_type(tokens)?;
+
+    // TODO: extends, implements, etc.
+
+    tokens.ignore_whitespace();
+    tokens.skip(&[ "{" ])?;
+
+    let mut interface_type = Type::Intersection(vec![]);
+    let mut interface_named_parts: Vec<NamedDeclaration> = vec![];
+
+    loop {
+        tokens.ignore_whitespace();
+        let next = tokens.peek_str();
+        if next == "}" {
+            tokens.skip_unchecked();
+            break;
+        }
+
+        if next == "(" {
+            // Function
+            let function = get_type(tokens)?;
+            interface_type.intersection(function);
+        } else if next == "[" {
+            // TODO: `[key: string]: number`
+            todo!();
+        } else {
+            // Normal named declaration (no type)
+            let named_decl = get_type(tokens)?;
+            match named_decl {
+                Type::ColonDeclaration { name, typ, conditional } => {
+                    interface_named_parts.push(NamedDeclaration {
+                        name,
+                        typ: Some(*typ),
+                        value: None,
+                        conditional,
+                        spread: false
+                    })
+                }
+                Type::Custom(name) => {
+                    interface_named_parts.push(NamedDeclaration {
+                        name,
+                        typ: Some(Type::Unknown),
+                        value: None,
+                        conditional: false,
+                        spread: false
+                    })
+                },
+                other => {
+                    return Err(format!(
+                        "Expected type declaration, found {:?}",
+                        other
+                    ))
+                }
+            }
+        }
+
+        tokens.ignore_whitespace();
+        while [ ";", "," ].contains(&tokens.peek_str()) {
+            tokens.skip_unchecked();
+            tokens.ignore_whitespace();
+        }
+    }
+
+    dbg!(interface_type);
+    dbg!(interface_named_parts);
+    // interface_type.combine(named_declarations_to_type(interface_named_parts)?);
+
+    out.push(ASTNode::TypeDeclaration {
+        first_typ: name,
+        equals_typ: Type::Any
+    });
+
+    Ok(true)
+}
+
 /// Handles expressions. Basically a soft wrapper around `get_expression`
 fn handle_expression(
     tokens: &mut TokenList,
@@ -732,7 +832,6 @@ fn get_expression(
     // Get left (or sometimes only) side (which can be the prexfix!)
     let mut left = {
         let next = tokens.peek();
-        // println!("Handling prefix {:?}", next);
 
         if [ ")", "]", "}", ",", ";" ].contains(&next.value) {
             // End it here!
@@ -748,7 +847,8 @@ fn get_expression(
                     next.value
                 );
                 if let Some(binding_power) = binding_power {
-                    // Some operator!
+                    // These prefix operators include what you might expect
+                    // (+, -, ~), along with arrays, dicts, among other things!
                     parse_prefix(tokens, binding_power.1)?
                 } else if matches!(next.typ, TokenType::Identifier) {
                     // Could be a name...
@@ -822,6 +922,8 @@ fn get_expression(
         };
 
         if [ "(", "[" ].contains(&next.value) {
+            // TODO: move this entire if statement inside `parse_infix`
+
             // Function calls & indexing get special treatment!
             let group_type = tokens.consume().value.to_string();
 
@@ -829,7 +931,7 @@ fn get_expression(
             let arguments = separate_commas(
                 get_expression(tokens, 0)?
             );
-            tokens.skip_unchecked();
+            tokens.skip(&[ &INVERSE_GROUPINGS[&group_type] ])?; // Skip trailing group
 
             left = match group_type.as_str() {
                 "(" => ASTNode::ExprFunctionCall { callee: Box::new(left), arguments },
@@ -838,7 +940,7 @@ fn get_expression(
             };
             continue;
         } else {
-            // Otherwise, append to the left operator
+            // Otherwise, it's infix
             left = parse_infix(left, tokens, binding_power.1)?;
         }
 
