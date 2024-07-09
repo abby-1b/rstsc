@@ -3,7 +3,7 @@ use core::fmt::Debug;
 
 use crate::types::Type;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum VariableDefType {
     Var,
     Let,
@@ -19,7 +19,7 @@ impl VariableDefType {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ObjectProperty {
     Property {
         computed: bool,
@@ -31,7 +31,7 @@ pub enum ObjectProperty {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, PartialEq)]
 /// A list of modifier flags
 pub struct ModifierList {
     /// A list of bit flags (lowest to highest) detailing:
@@ -121,7 +121,7 @@ impl Debug for ModifierList {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NamedDeclaration {
     pub name: String,
     pub typ: Option<Type>,
@@ -136,7 +136,7 @@ pub struct NamedDeclaration {
     pub spread: bool
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ASTNode {
     /// A block of code
     Block { nodes: Vec<ASTNode> },
