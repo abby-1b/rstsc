@@ -58,8 +58,61 @@
 // }
 // doLog('Message', 1, 2, 3);
 
-function assertIsString(val: any): asserts val is string {
-    if (typeof val !== 'string') throw new Error('Not a string');
-}
-let maybeString: any = 'I\'m a string';
-assertIsString(maybeString);
+// function assertIsString(val: any): asserts val is string {
+//     if (typeof val !== 'string') throw new Error('Not a string');
+// }
+// let maybeString: any = 'I\'m a string';
+// assertIsString(maybeString);
+
+
+// interface TestFn {
+//     (x: number, y: number);
+// }
+
+// let a: TestFn = (x: number) => x;
+
+// interface TestProps {
+//     a: number;
+//     b: string,
+//     c: number | string
+//     d: TestFn
+//     e
+// }
+
+
+// type A = { some: number } | { lol: string } & { other: boolean }
+// type B = { some: number } & { lol: string } | { other: boolean }
+// const a: A = { some: 123 };
+// const b: A = { lol: 'ok', other: true };
+// const c: B = { some: 123, lol: 'ok' };
+// const d: string | number & boolean = 'hello!';
+
+// type SOME = {
+//     someVoid: void,
+//     someUndf: undefined
+// };
+// const a: SOME['someVoid'] = void 0;
+// const b: SOME['someVoid'] = undefined;
+// const c: SOME['someUndf'] = void 0;
+// const d: SOME['someUndf'] = undefined;
+
+// function assertIsString(val: any): asserts val is string {
+//     if (typeof val !== 'string') throw new Error('Not a string');
+// }
+// let maybeString: any = 'I\'m a string';
+// assertIsString(maybeString);
+
+// type A = number;
+// type B = string;
+// let a: () => number;
+
+// type RecursiveConditional<T> = T extends (infer U)[] ? RecursiveConditional<U> : T;
+// let deepArrayValue: RecursiveConditional<number[][][][]> = 42;
+
+// type ValueOf<T> = T[keyof T];
+// type ObjectWithValues = { a: number; b: string; c: boolean };
+// let valueOfObject: ValueOf<ObjectWithValues> = true;
+
+
+let some: true extends true ? true : false;
+// let nestedConditional: true extends (true extends false ? true : false) ? true : false = false;
