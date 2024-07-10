@@ -1,10 +1,30 @@
 use phf::phf_map;
 use crate::{
-    ast::{ASTNode, Modifier, ModifierList, NamedDeclaration, ObjectProperty, VariableDefType, MODIFIERS},
+    ast::{
+        ASTNode, Modifier, ModifierList, NamedDeclaration,
+        ObjectProperty, VariableDefType, MODIFIERS
+    },
+    error_type::CompilerError,
     operations::{get_operator_binding_power, ExprType},
-    tokenizer::{TokenList, TokenType},
+    tokenizer::{TokenList, TokenType, EOF_TOKEN},
     types::{get_type, Type}
 };
+
+
+
+// pub struct SomeStruct<'a> {
+//     name: &'a str
+// }
+
+// pub fn test_fn<'a, 'b>(
+//     some_structure: &'a mut SomeStruct<'b>
+// ) where 'a: 'b {
+//     other_fn(some_structure);
+//     println!("{}", some_structure.name);
+// }
+
+// pub fn other_fn<'a, 'b>(some_structure: &'a mut SomeStruct<'b>) {}
+
 
 pub static INVERSE_GROUPINGS: phf::Map<&'static str, &'static str> = phf_map! {
     "(" => ")",
@@ -19,7 +39,7 @@ pub static INVERSE_GROUPINGS: phf::Map<&'static str, &'static str> = phf_map! {
 };
 
 /// Parses a single block. Consumes the ending token!
-pub fn get_block(tokens: &mut TokenList) -> Result<ASTNode, String> {
+pub fn get_block<'a>(tokens: &mut TokenList<'a>) -> Result<ASTNode, CompilerError<'a>> {
     let mut nodes = vec![];
 
     // Go through the tokens list
@@ -46,7 +66,9 @@ pub fn get_block(tokens: &mut TokenList) -> Result<ASTNode, String> {
 /// Gets a single statement, until it reaches either a `;` or a group end
 /// (eg. `)]}`). Only consumes semicolons, not group ends. If a group start is
 /// reached (eg. `([{`), calls the corresponding function for said group.
-fn get_single_statement(tokens: &mut TokenList) -> Result<ASTNode, String> {
+fn get_single_statement<'a, 'b>(
+    tokens: &'b mut TokenList<'a>
+) -> Result<ASTNode, CompilerError<'a>> where 'a: 'b {
     let mut nodes = vec![];
 
     // Go through the tokens list
@@ -94,10 +116,10 @@ fn get_single_statement(tokens: &mut TokenList) -> Result<ASTNode, String> {
 }
 
 /// Handles blocks in the middle of nowhere
-fn handle_blocks(
-    tokens: &mut TokenList,
+fn handle_blocks<'a>(
+    tokens: &mut TokenList<'a>,
     out: &mut Vec<ASTNode>,
-) -> Result<bool, String> {
+) -> Result<bool, CompilerError<'a>> {
     if tokens.peek_str() != "{" {
         return Ok(false);
     }
@@ -109,24 +131,16 @@ fn handle_blocks(
 }
 
 /// Handles variable initialization
-fn handle_vars(
-    tokens: &mut TokenList,
+fn handle_vars<'a, 'b>(
+    tokens: &'b mut TokenList<'a>,
     out: &mut Vec<ASTNode>,
-) -> Result<bool, String> {
+) -> Result<bool, CompilerError<'a>> where 'a: 'b {
     const VARIABLE_DECLARATIONS: &[&str] = &[ "var", "let", "const" ];
     if !VARIABLE_DECLARATIONS.contains(&tokens.peek_str()) {
         return Ok(false);
     }
 
-    // Get the header
-    let def_type = match tokens.consume().value {
-        "var"   => VariableDefType::Var,
-        "let"   => VariableDefType::Let,
-        "const" => VariableDefType::Const,
-        other => {
-            return Err(format!("Unexpected var declaration: {}", other));
-        }
-    };
+    let def_type = get_variable_def_type(tokens)?;
 
     // Get the variable definitions
     let defs = get_named_declarations(tokens)?;
@@ -140,6 +154,24 @@ fn handle_vars(
     Ok(true)
 }
 
+fn get_variable_def_type<'b>(
+    tokens: &mut TokenList<'b>
+) -> Result<VariableDefType, CompilerError<'b>> {
+    // Get the header
+    let header_token = tokens.consume();
+    match header_token.value {
+        "var"   => Ok(VariableDefType::Var),
+        "let"   => Ok(VariableDefType::Let),
+        "const" => Ok(VariableDefType::Const),
+        other => {
+            return Err(CompilerError {
+                message: format!("Unexpected var declaration: {}", other),
+                token: header_token
+            })
+        }
+    }
+}
+
 /// Gets typed declarations, with or without values. Stops when it encounters a semicolon.
 /// 
 /// Examples (in square brackets):
@@ -147,16 +179,16 @@ fn handle_vars(
 /// `let [a: number = 123, b: string];`
 /// 
 /// `function some([a: number, b: string = '123']) { ... }`
-fn get_named_declarations(
-    tokens: &mut TokenList
-) -> Result<Vec<NamedDeclaration>, String> {
+fn get_named_declarations<'a, 'b>(
+    tokens: &'b mut TokenList<'a>
+) -> Result<Vec<NamedDeclaration>, CompilerError<'a>> where 'a: 'b {
     let declaration_node = get_expression(tokens, 0)?;
     convert_to_typed_declarations(declaration_node)
 }
 
 fn convert_to_typed_declarations(
     node: ASTNode,
-) -> Result<Vec<NamedDeclaration>, String> {
+) -> Result<Vec<NamedDeclaration>, CompilerError<'static>> {
     let ast_declarations = if let ASTNode::Parenthesis { nodes } = node {
         // Already split (by parenthesis node)
         nodes
@@ -165,7 +197,7 @@ fn convert_to_typed_declarations(
         separate_commas(node)
     };
 
-    fn deconstruct_ast_declaration(d: ASTNode) -> Result<NamedDeclaration, String> {
+    fn deconstruct_ast_declaration(d: ASTNode) -> Result<NamedDeclaration, CompilerError<'static>> {
         match d {
             ASTNode::ExprIdentifier { name } => {
                 Ok(NamedDeclaration {
@@ -188,10 +220,13 @@ fn convert_to_typed_declarations(
                     decl.value = Some(*right);
                     Ok(decl)
                 } else {
-                    return Err(format!(
-                        "Expected `=`, found {}",
-                        opr
-                    ));
+                    Err(CompilerError {
+                        message: format!(
+                            "Expected `=`, found {}",
+                            opr
+                        ),
+                        token: EOF_TOKEN.clone()
+                    })
                 }
             }
             ASTNode::PrefixOpr { opr, expr } => {
@@ -200,14 +235,20 @@ fn convert_to_typed_declarations(
                     decl.spread = true;
                     Ok(decl)
                 } else {
-                    return Err(format!("Expected `...`, found {}", opr));
+                    Err(CompilerError {
+                        message: format!("Expected `...`, found {}", opr),
+                        token: EOF_TOKEN.clone()
+                    })
                 }
             }
             other => {
-                return Err(format!(
-                    "Expected declaration, found {:?}",
-                    other
-                ));
+                Err(CompilerError {
+                    message: format!(
+                        "Expected declaration, found {:?}",
+                        other
+                    ),
+                    token: EOF_TOKEN.clone()
+                })
             }
         }
     }
@@ -223,10 +264,10 @@ fn convert_to_typed_declarations(
 }
 
 /// Handles control flow, like `if`, `while`, and `for`
-fn handle_control_flow(
-    tokens: &mut TokenList,
+fn handle_control_flow<'a>(
+    tokens: &mut TokenList<'a>,
     out: &mut Vec<ASTNode>,
-) -> Result<bool, String> {
+) -> Result<bool, CompilerError<'a>> {
     const CONTROL_FLOW: &[&str] = &[ "if", "while", "for", "switch" ];
     if !CONTROL_FLOW.contains(&tokens.peek_str()) {
         return Ok(false);
@@ -238,10 +279,10 @@ fn handle_control_flow(
     out.push(match control_flow_type.as_str() {
         "if" | "while" => {
             // Get condition
-            tokens.skip(&[ "(" ])?;
+            tokens.skip("(")?;
             let condition = get_expression(tokens, 0)?;
             tokens.ignore_whitespace();
-            tokens.skip(&[ ")" ])?;
+            tokens.skip(")")?;
 
             tokens.ignore_whitespace();
             
@@ -275,11 +316,11 @@ fn handle_control_flow(
             // TODO: handle `for async`
 
             // Get header
-            tokens.skip(&[ "(" ])?;
+            tokens.skip("(")?;
             let init = get_single_statement(tokens)?;
             let condition = get_single_statement(tokens)?;
             let update = get_single_statement(tokens)?;
-            tokens.skip(&[ ")" ])?;
+            tokens.skip(")")?;
 
             // Get body
             let body = get_single_statement(tokens)?;
@@ -299,10 +340,10 @@ fn handle_control_flow(
 }
 
 /// Handles `return`, `break`, `continue`, and `throw`
-fn handle_other_statements(
-    tokens: &mut TokenList,
+fn handle_other_statements<'a>(
+    tokens: &mut TokenList<'a>,
     out: &mut Vec<ASTNode>,
-) -> Result<bool, String> {
+) -> Result<bool, CompilerError<'a>> {
     const STATEMENT_NAMES: &[&str] = &[
         "return",
         "break",
@@ -333,10 +374,10 @@ fn handle_other_statements(
     Ok(true)
 }
 
-fn handle_function_declaration(
-    tokens: &mut TokenList,
+fn handle_function_declaration<'a, 'b>(
+    tokens: &'b mut TokenList<'a>,
     out: &mut Vec<ASTNode>,
-) -> Result<bool, String> {
+) -> Result<bool, CompilerError<'a>> where 'a: 'b {
     if tokens.peek_str() != "function" {
         return Ok(false);
     }
@@ -412,7 +453,7 @@ fn handle_function_declaration(
         // No body! This means it's just a declaration.
         None
     } else {
-        tokens.skip(&[ "{" ])?;
+        tokens.skip("{")?;
         Some(get_block(tokens)?)
     };
 
@@ -428,10 +469,10 @@ fn handle_function_declaration(
     Ok(true)
 }
 
-fn handle_modifiers(
-    tokens: &mut TokenList,
+fn handle_modifiers<'a>(
+    tokens: &mut TokenList<'a>,
     out: &mut Vec<ASTNode>,
-) -> Result<bool, String> {
+) -> Result<bool, CompilerError<'a>> {
     if !MODIFIERS.contains(&tokens.peek_str()) {
         return Ok(false);
     }
@@ -450,17 +491,19 @@ fn handle_modifiers(
         tokens.ignore_whitespace();
     }
 
+    // Get the node that goes after the modifiers
     let mut node_after_modifiers = get_single_statement(tokens)?;
+
     node_after_modifiers.apply_modifiers(modifiers)?;
     out.push(node_after_modifiers);
 
     Ok(true)
 }
 
-fn handle_type_declaration(
-    tokens: &mut TokenList,
+fn handle_type_declaration<'a>(
+    tokens: &mut TokenList<'a>,
     out: &mut Vec<ASTNode>,
-) -> Result<bool, String> {
+) -> Result<bool, CompilerError<'a>> {
     if tokens.peek_str() != "type" {
         return Ok(false);
     }
@@ -472,7 +515,7 @@ fn handle_type_declaration(
 
     // Consume `=`
     tokens.ignore_whitespace();
-    tokens.skip(&[ "=" ])?;
+    tokens.skip("=")?;
 
     // Get the second type
     let equals_typ = get_type(tokens)?;
@@ -485,10 +528,10 @@ fn handle_type_declaration(
     Ok(true)
 }
 
-fn handle_interface(
-    tokens: &mut TokenList,
+fn handle_interface<'a>(
+    tokens: &mut TokenList<'a>,
     out: &mut Vec<ASTNode>
-) -> Result<bool, String> {
+) -> Result<bool, CompilerError<'a>> {
     if tokens.peek_str() != "interface" {
         return Ok(false);
     }
@@ -501,7 +544,7 @@ fn handle_interface(
     // TODO: extends, implements, etc.
 
     tokens.ignore_whitespace();
-    tokens.skip(&[ "{" ])?;
+    tokens.skip("{")?;
 
     let mut interface_type = Type::Intersection(vec![]);
     let mut interface_named_parts: Vec<NamedDeclaration> = vec![];
@@ -544,10 +587,13 @@ fn handle_interface(
                     })
                 },
                 other => {
-                    return Err(format!(
-                        "Expected type declaration, found {:?}",
-                        other
-                    ))
+                    return Err(CompilerError {
+                        message: format!(
+                            "Expected type declaration, found {:?}",
+                            other
+                        ),
+                        token: EOF_TOKEN.clone()
+                    });
                 }
             }
         }
@@ -572,10 +618,10 @@ fn handle_interface(
 }
 
 /// Handles expressions. Basically a soft wrapper around `get_expression`
-fn handle_expression(
-    tokens: &mut TokenList,
+fn handle_expression<'a>(
+    tokens: &mut TokenList<'a>,
     out: &mut Vec<ASTNode>,
-) -> Result<(), String> {
+) -> Result<(), CompilerError<'a>> {
     out.push(get_expression(tokens, 0)?);
     Ok(())
 }
@@ -592,7 +638,9 @@ fn parse_string(tokens: &mut TokenList) -> ASTNode {
     }
 }
 
-fn parse_name(tokens: &mut TokenList) -> Result<ASTNode, String> {
+fn parse_name<'a>(
+    tokens: &mut TokenList<'a>
+) -> Result<ASTNode, CompilerError<'a>> {
     if tokens.peek_str() == "function" {
         // Handle inline functions
         let mut function_container = vec![];
@@ -607,10 +655,10 @@ fn parse_name(tokens: &mut TokenList) -> Result<ASTNode, String> {
     }
 }
 
-fn parse_prefix(
-    tokens: &mut TokenList,
+fn parse_prefix<'a>(
+    tokens: &mut TokenList<'a>,
     precedence: u8
-) -> Result<ASTNode, String> {
+) -> Result<ASTNode, CompilerError<'a>> {
     let prefix_start = tokens.consume().value.to_string();
 
     let is_grouping = [ "(", "[" ].contains(&prefix_start.as_str());
@@ -624,7 +672,8 @@ fn parse_prefix(
                 panic!("Grouping not implemented: {}", unknown_grouping);
             }
         };
-        tokens.skip(&[ ")", "]" ])?; // Skip grouping close ")" or "]"
+        let group_end = INVERSE_GROUPINGS[prefix_start.as_str()];
+        tokens.skip(group_end)?; // Skip grouping close ")" or "]"
         Ok(ret)
     } else if prefix_start == "{" {
         // Dicts get even more special treatment!
@@ -656,18 +705,21 @@ fn parse_prefix(
                         let inner_key = get_expression(tokens, 0)?;
     
                         tokens.ignore_whitespace();
-                        tokens.skip(&[ "]" ])?;
+                        tokens.skip("]")?;
     
                         (true, inner_key)
                     },
                     other => {
-                        return Err(format!("Expected key, found {:?}", other));
+                        return Err(CompilerError {
+                            message: format!("Expected key, found {:?}", other),
+                            token: key_token.clone()
+                        });
                     }
                 };
     
                 // Skip ":"
                 tokens.ignore_whitespace();
-                tokens.skip(&[ ":" ])?;
+                tokens.skip(":")?;
     
                 // Get value
                 let value = get_expression(tokens, 1)?;
@@ -698,11 +750,11 @@ fn parse_prefix(
 }
 
 /// Parses an infix operator. Ran when the current token is known to be infix.
-fn parse_infix(
+fn parse_infix<'a>(
     left: ASTNode,
-    tokens: &mut TokenList,
+    tokens: &mut TokenList<'a>,
     precedence: u8
-) -> Result<ASTNode, String> {
+) -> Result<ASTNode, CompilerError<'a>> {
     let opr = tokens.consume().value.to_string();
 
     if opr == "=>" {
@@ -724,10 +776,13 @@ fn parse_infix(
                 } ], None)
             }
             other => {
-                return Err(format!(
-                    "Arrow function expected parenthesis or identifier, found {:?}",
-                    other
-                ));
+                return Err(CompilerError {
+                    message: format!(
+                        "Arrow function expected parenthesis or identifier, found {:?}",
+                        other
+                    ),
+                    token: EOF_TOKEN.clone()
+                })
             }
         };
 
@@ -774,7 +829,10 @@ fn parse_infix(
         let mut if_true = get_expression(tokens, colon_precedence.1)?;
         while tokens.peek_str() != ":" {
             if tokens.is_done() {
-                return Err("Ternary not closed!".to_string());
+                return Err(CompilerError {
+                    message: "Ternary not closed!".to_string(),
+                    token: tokens.consume()
+                });
             }
             if_true = parse_infix(
                 if_true,
@@ -823,10 +881,10 @@ fn separate_commas(node: ASTNode) -> Vec<ASTNode> {
 }
 
 /// Gets a single expression
-fn get_expression(
-    tokens: &mut TokenList,
+fn get_expression<'a>(
+    tokens: &mut TokenList<'a>,
     precedence: u8
-) -> Result<ASTNode, String> {
+) -> Result<ASTNode, CompilerError<'a>> {
     tokens.ignore_whitespace();
     
     // Get left (or sometimes only) side (which can be the prexfix!)
@@ -855,17 +913,23 @@ fn get_expression(
                     parse_name(tokens)?
                 } else {
                     // Not a name & no matching operators.
-                    return Err(format!(
-                        "Prefix operator not found: {:?}",
-                        tokens.peek()
-                    ));
+                    return Err(CompilerError {
+                        message: format!(
+                            "Prefix operator not found: {:?}",
+                            tokens.peek()
+                        ),
+                        token: tokens.consume()
+                    });
                 }
             },
             _ => {
-                return Err(format!(
-                    "Unexpected token when parsing expression: {:?}",
-                    next
-                ));
+                return Err(CompilerError {
+                    message: format!(
+                        "Unexpected token when parsing expression: {:?}",
+                        next
+                    ),
+                    token: tokens.consume()
+                });
             },
         }
     };
@@ -931,7 +995,8 @@ fn get_expression(
             let arguments = separate_commas(
                 get_expression(tokens, 0)?
             );
-            tokens.skip(&[ &INVERSE_GROUPINGS[&group_type] ])?; // Skip trailing group
+            let group_end = INVERSE_GROUPINGS[group_type.as_str()];
+            tokens.skip(group_end)?; // Skip trailing group
 
             left = match group_type.as_str() {
                 "(" => ASTNode::ExprFunctionCall { callee: Box::new(left), arguments },

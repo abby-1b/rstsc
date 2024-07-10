@@ -1,5 +1,7 @@
 use std::str::Chars;
 
+use crate::error_type::CompilerError;
+
 fn should_chain(left: char, right: char) -> bool {
     match (left, right) {
         // Equality checking
@@ -55,17 +57,24 @@ impl<'a> Token<'a> {
     pub fn is_whitespace(&self) -> bool {
         matches!(self.typ, TokenType::Spacing | TokenType::LineTerminator)
     }
+
+    pub fn from(value: &str) -> Token {
+        Token {
+            typ: TokenType::EndOfFile,
+            value
+        }
+    }
 }
 
 /// The `End of File` token, which indicates the file has ended
-static EOF_TOKEN: Token = Token {
+pub static EOF_TOKEN: Token = Token {
     typ: TokenType::EndOfFile,
     value: "",
 };
 
 
 pub struct TokenList<'a> {
-    source: &'a str,
+    pub source: &'a str,
 
     /// The upcoming token, which can be peeked at or consumed
     next_token: Token<'a>,
@@ -77,6 +86,7 @@ pub struct TokenList<'a> {
 }
 
 impl<'a> TokenList<'a> {
+
     pub fn from(source: &str) -> TokenList {
         let mut token_list = TokenList {
             source,
@@ -96,13 +106,19 @@ impl<'a> TokenList<'a> {
         token_list
     }
 
+    /// Gets a token that points at the first index of the target file, but has
+    /// a length of zero. Used for returning general file errors.
+    pub fn null_token<'b>(&self) -> Token<'b> where 'a: 'b {
+        Token::from(&self.source[0..0])
+    }
+
     /// Checks if the token list is over
     pub fn is_done(&self) -> bool {
         matches!(self.peek().typ, TokenType::EndOfFile)
     }
 
     /// Peeks at the next token without consuming it
-    pub fn peek(&self) -> &Token {
+    pub fn peek<'b>(&self) -> &Token<'b> where 'a: 'b {
         &self.next_token
     }
 
@@ -111,14 +127,14 @@ impl<'a> TokenList<'a> {
     }
 
     /// Consumes the next token
-    pub fn consume(&mut self) -> Token {
+    pub fn consume<'b>(&mut self) -> Token<'b> where 'a: 'b {
         let ret = self.next_token.clone();
         self.queue_token();
         ret
     }
 
     /// Skips a single character in the currently-loaded token
-    pub fn consume_single_character(&mut self) -> &str {
+    pub fn consume_single_character<'b>(&mut self) -> &'b str where 'a: 'b {
         // Get character
         let single_character = &self.next_token.value[0..1];
 
@@ -129,15 +145,18 @@ impl<'a> TokenList<'a> {
         single_character
     }
 
-    pub fn skip(&mut self, candidates: &[&str]) -> Result<(), String> {
-        if candidates.contains(&self.peek_str()) {
+    pub fn skip(&mut self, candidate: &str) -> Result<(), CompilerError<'a>> {
+        if candidate == self.peek_str() {
             self.skip_unchecked();
             Ok(())
         } else {
-            Err(format!(
-                "Tried skipping {:?}, found {:?}",
-                candidates, self.peek()
-            ))
+            Err(CompilerError {
+                message: format!(
+                    "Expected {:?}, found {:?}",
+                    candidate, self.peek_str()
+                ),
+                token: self.peek().clone(),
+            })
         }
     }
 
