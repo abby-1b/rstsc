@@ -2,9 +2,10 @@ use std::collections::hash_map::DefaultHasher;
 use std::fmt::{Display, Debug};
 use std::hash::{Hash, Hasher};
 
+use crate::error_type::CompilerError;
 use crate::operations::{get_type_operator_binding_power, ExprType};
 use crate::parser::INVERSE_GROUPINGS;
-use crate::tokenizer::{TokenList, TokenType};
+use crate::tokenizer::{Token, TokenList, TokenType};
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct TypedNamedDeclaration {
@@ -101,16 +102,25 @@ pub enum Type {
         property: Box<Type>
     },
 
-    KeyOf {
-        callee: Box<Type>,
-    },
+    /// Specifies that this type is a key of the given type
+    KeyOf(Box<Type>),
 
+    /// Conditionals are in the shape `left extends right ? if_true : if_false`
     Conditional {
         cnd_left: Box<Type>,
         cnd_right: Box<Type>,
         if_true: Box<Type>,
         if_false: Box<Type>
     },
+
+    /// A single `extends`, not inside a conditional!
+    Extends(Box<Type>, Box<Type>),
+
+    /// Infers the type at this position, naming it after this.
+    Infer(String),
+
+    /// A type marked as read-only
+    Readonly(Box<Type>),
 }
 
 impl Type {
@@ -329,9 +339,9 @@ impl Display for Type {
                 f.write_str(&property.to_string())?;
                 f.write_str("]")
             }
-            Type::KeyOf { callee } => {
+            Type::KeyOf(inner) => {
                 f.write_str("keyof ")?;
-                f.write_str(&callee.to_string())
+                std::fmt::Display::fmt(&inner, f)
             }
             Type::Conditional {
                 cnd_left, cnd_right,
@@ -345,12 +355,27 @@ impl Display for Type {
                 f.write_str(" : ")?;
                 f.write_str(&if_false.to_string())
             }
+            Type::Extends(left, right) => {
+                f.write_str(&left.to_string())?;
+                f.write_str(" extends ")?;
+                f.write_str(&right.to_string())
+            }
+            Type::Infer(name) => {
+                f.write_str("infer ")?;
+                f.write_str(name)
+            }
+            Type::Readonly(inner) => {
+                f.write_str("readonly ")?;
+                std::fmt::Display::fmt(&inner, f)
+            }
         }
     }
 }
 
 /// Gets a type, regardless of whether it starts with `:` or not.
-pub fn get_type(tokens: &mut TokenList) -> Result<Type, String> {
+pub fn get_type<'a, 'b>(
+    tokens: &'b mut TokenList<'a>
+) -> Result<Type, CompilerError<'a>> where 'a: 'b {
     if tokens.peek_str() == ":" {
         tokens.skip_unchecked();
     }
@@ -358,11 +383,11 @@ pub fn get_type(tokens: &mut TokenList) -> Result<Type, String> {
     return get_expression(tokens, 0);
 }
 
-fn parse_infix(
+fn parse_infix<'a, 'b>(
     mut left: Type,
-    tokens: &mut TokenList,
+    tokens: &'b mut TokenList<'a>,
     precedence: u8
-) -> Result<Type, String> {
+) -> Result<Type, CompilerError<'a>> where 'a: 'b {
     let infix_opr = tokens.consume();
     match infix_opr.value {
         "|" => {
@@ -377,20 +402,11 @@ fn parse_infix(
             // Type guard
             tokens.skip_unchecked();
             tokens.ignore_whitespace();
-            match left {
-                Type::Custom(var_name) => {
-                    Ok(Type::Guard(
-                        var_name,
-                        Box::new(get_expression(tokens, precedence)?)
-                    ))
-                }
-                other => {
-                    return Err(format!(
-                        "Type guard expected Type::Custom(...), found {:?}",
-                        other
-                    ))
-                }
-            }
+            Ok(Type::Guard(
+                // The left side of a type guard is a variable from the scope!
+                left.to_string(),
+                Box::new(get_expression(tokens, precedence)?)
+            ))
         }
         ":" => {
             tokens.skip_unchecked();
@@ -411,7 +427,7 @@ fn parse_infix(
         "[" | "<" => {
             // Type indexing and generics
             let group_start = infix_opr.value.to_string();
-            let group_end = INVERSE_GROUPINGS[&group_start];
+            let group_end = INVERSE_GROUPINGS[infix_opr.value];
 
             let mut arguments: Vec<Type> = vec![];
             tokens.ignore_whitespace();
@@ -435,13 +451,16 @@ fn parse_infix(
                     // Skipped!
                 } else {
                     // Wrong character!
-                    return Err(format!(
-                        "Expected `<`, found {:?}",
-                        first_char
-                    ));
+                    return Err(CompilerError {
+                        message: format!(
+                            "Expected `<`, found {:?}",
+                            first_char
+                        ),
+                        token: Token::from(first_char)
+                    });
                 }
             } else {
-                tokens.skip(&[ &group_end ])?;
+                tokens.skip(group_end)?;
             }
 
             if group_start == "[" {
@@ -454,21 +473,64 @@ fn parse_infix(
                         property: Box::new(arguments.pop().unwrap())
                     })
                 } else {
-                    Err(format!(
-                        "Type indices need exactly one argument, found {}",
-                        arguments.len()
-                    ))
+                    Err(CompilerError {
+                        message: format!(
+                            "Type indices need exactly one argument, found {}",
+                            arguments.len()
+                        ),
+                        token: infix_opr
+                    })
                 }
             } else {
                 // Generic arguments
                 Ok(Type::WithArgs(Box::new(left), arguments))
             }
         }
+        "extends" => {
+            // This could be a normal `extends` (like generics), or a conditional
+            let extends_precedence: u8 = get_type_operator_binding_power(
+                ExprType::Infx, "extends"
+            ).unwrap().0;
+
+            // Get the next type
+            let right_type = get_expression(
+                tokens,
+                extends_precedence
+            )?;
+
+            tokens.ignore_whitespace();
+            if tokens.peek_str() != "?" {
+                // Not a conditional! Just a normal `extends`
+                return Ok(Type::Extends(
+                    Box::new(left),
+                    Box::new(right_type)
+                ));
+            }
+            tokens.skip_unchecked(); // Skip "?"
+
+            let if_true = get_expression(tokens, extends_precedence)?;
+
+            // Skip ":"
+            tokens.ignore_whitespace();
+            tokens.skip(":")?;
+
+            let if_false = get_expression(tokens, extends_precedence)?;
+
+            Ok(Type::Conditional {
+                cnd_left: Box::new(left),
+                cnd_right: Box::new(right_type),
+                if_true: Box::new(if_true),
+                if_false: Box::new(if_false)
+            })
+        }
         other => {
-            Err(format!(
-                "Unexpected infix in type '{:?}'",
-                other
-            ))
+            Err(CompilerError {
+                message: format!(
+                    "Unexpected infix in type '{:?}'",
+                    other
+                ),
+                token: infix_opr
+            })
         }
     }
 }
@@ -488,11 +550,12 @@ fn parse_name(
     }
 }
 
-fn parse_prefix(
-    tokens: &mut TokenList,
+fn parse_prefix<'a, 'b>(
+    tokens: &'b mut TokenList<'a>,
     precedence: u8
-) -> Result<Type, String> {
-    match tokens.consume().value {
+) -> Result<Type, CompilerError<'a>> where 'a: 'b {
+    let prefix_opr = tokens.consume();
+    match prefix_opr.value {
         "{" => {
             // Dictionary object
             let mut obj_parts: Vec<TypedNamedDeclaration> = vec![];
@@ -542,9 +605,10 @@ fn parse_prefix(
                     if spread_idx != usize::MAX {
                         // Multiple spreads are not allowed
                         // eg. `let a: [boolean, ...number[], ...string[]]`
-                        return Err(
-                            "Can't have multiple spread elements in one tuple.".to_string()
-                        );
+                        return Err(CompilerError {
+                            message: "Can't have multiple spread elements in one tuple.".to_string(),
+                            token: tokens.consume()
+                        });
                     }
                     spread_idx = tuple_parts.len();
                     tokens.skip_unchecked(); // Skip "..."
@@ -606,23 +670,33 @@ fn parse_prefix(
             get_expression(tokens, precedence)
         }
         "keyof" => {
-            Ok(Type::KeyOf {
-                callee: Box::new(get_expression(tokens, precedence)?)
-            })
+            Ok(Type::KeyOf(Box::new(get_expression(tokens, precedence)?)))
+        }
+        "infer" => {
+            tokens.ignore_whitespace();
+            Ok(Type::Infer(tokens.consume().value.to_string()))
+        }
+        "readonly" => {
+            Ok(Type::Readonly(
+                Box::new(get_expression(tokens, precedence)?)
+            ))
         }
         other => {
-            Err(format!(
-                "Prefix operator not found: {:?}",
-                other
-            ))
+            Err(CompilerError {
+                message: format!(
+                    "Prefix operator not found: {:?}",
+                    other
+                ),
+                token: prefix_opr
+            })
         }
     }
 }
 
-fn get_expression(
-    tokens: &mut TokenList,
+fn get_expression<'a, 'b>(
+    tokens: &'b mut TokenList<'a>,
     precedence: u8
-) -> Result<Type, String> {
+) -> Result<Type, CompilerError<'a>> where 'a: 'b {
     tokens.ignore_whitespace();
 
     let mut left = {
@@ -657,17 +731,23 @@ fn get_expression(
                     // Could be a name...
                     parse_name(tokens)
                 } else {
-                    return Err(format!(
-                        "Prefix operator not found when fetching type: {:?}",
-                        next
-                    ))
+                    return Err(CompilerError {
+                        message: format!(
+                            "Prefix operator not found when fetching type: {:?}",
+                            next
+                        ),
+                        token: tokens.consume()
+                    })
                 }
             }
             other => {
-                return Err(format!(
-                    "Unexpected token when parsing type: {:?}",
-                    other
-                ));
+                return Err(CompilerError {
+                    message: format!(
+                        "Unexpected token when parsing type: {:?}",
+                        other
+                    ),
+                    token: tokens.consume()
+                });
             }
         }
     };

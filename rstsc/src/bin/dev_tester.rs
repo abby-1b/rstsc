@@ -12,14 +12,14 @@ fn main() {
 
     let ast = get_block(&mut tokens);
     if ast.is_err() {
-        dbg!(ast.err().unwrap());
+        ast.err().unwrap().throw();
         return;
     }
 
     let ast = ast.unwrap();
     
     // minify_ast(&mut ast);
-    // dbg!(&ast);
+    dbg!(&ast);
 
     let out = emit_code(ast, false);
     println!("{}", out);

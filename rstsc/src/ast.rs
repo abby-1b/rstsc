@@ -1,7 +1,7 @@
 
 use core::fmt::Debug;
 
-use crate::types::Type;
+use crate::{error_type::CompilerError, tokenizer::EOF_TOKEN, types::Type};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum VariableDefType {
@@ -289,7 +289,7 @@ impl ASTNode {
         }
     }
 
-    pub fn apply_modifiers(&mut self, new_modifiers: ModifierList) -> Result<(), String> {
+    pub fn apply_modifiers(&mut self, new_modifiers: ModifierList) -> Result<(), CompilerError<'static>> {
         match self {
             ASTNode::VariableDeclaration { modifiers, .. } => {
                 *modifiers = new_modifiers;
@@ -300,10 +300,13 @@ impl ASTNode {
                 Ok(())
             },
             _ => {
-                Err(format!(
-                    "{} can't have modifiers!",
-                    self.name()
-                ))
+                Err(CompilerError {
+                    message: format!(
+                        "{} can't have modifiers!",
+                        self.name()
+                    ),
+                    token: EOF_TOKEN.clone()
+                })
             }
         }
     }
