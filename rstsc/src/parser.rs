@@ -1,30 +1,13 @@
 use phf::phf_map;
 use crate::{
     ast::{
-        ASTNode, Modifier, ModifierList, NamedDeclaration,
-        ObjectProperty, VariableDefType, MODIFIERS
+        ASTNode, FunctionDefinition, Modifier, ModifierList, NamedDeclaration, ObjectProperty, VariableDefType, MODIFIERS
     },
     error_type::CompilerError,
     operations::{get_operator_binding_power, ExprType},
     tokenizer::{TokenList, TokenType, EOF_TOKEN},
     types::{get_type, Type}
 };
-
-
-
-// pub struct SomeStruct<'a> {
-//     name: &'a str
-// }
-
-// pub fn test_fn<'a, 'b>(
-//     some_structure: &'a mut SomeStruct<'b>
-// ) where 'a: 'b {
-//     other_fn(some_structure);
-//     println!("{}", some_structure.name);
-// }
-
-// pub fn other_fn<'a, 'b>(some_structure: &'a mut SomeStruct<'b>) {}
-
 
 pub static INVERSE_GROUPINGS: phf::Map<&'static str, &'static str> = phf_map! {
     "(" => ")",
@@ -37,6 +20,8 @@ pub static INVERSE_GROUPINGS: phf::Map<&'static str, &'static str> = phf_map! {
     "}" => "{",
     ">" => "<",
 };
+
+pub static ANONYMOUS_CLASS_NAME: &'static str = "\0";
 
 /// Parses a single block. Consumes the ending token!
 pub fn get_block<'a>(tokens: &mut TokenList<'a>) -> Result<ASTNode, CompilerError<'a>> {
@@ -93,6 +78,7 @@ fn get_single_statement<'a, 'b>(
             handle_vars(tokens, &mut nodes)? ||
             handle_control_flow(tokens, &mut nodes)? ||
             handle_function_declaration(tokens, &mut nodes)? ||
+            handle_class_declaration(tokens, &mut nodes)? ||
             handle_modifiers(tokens, &mut nodes)? ||
             handle_other_statements(tokens, &mut nodes)? ||
             handle_type_declaration(tokens, &mut nodes)? ||
@@ -393,7 +379,21 @@ fn handle_function_declaration<'a, 'b>(
         // Unnamed function
         None
     };
-    
+
+    out.push(ASTNode::FunctionDefinition {
+        inner: Box::new(get_function_after_name(
+            tokens,
+            name
+        )?)
+    });
+
+    Ok(true)
+}
+
+fn get_function_after_name<'a, 'b>(
+    tokens: &'b mut TokenList<'a>,
+    name: Option<String>
+) -> Result<FunctionDefinition, CompilerError<'a>> where 'a: 'b {
     // Get generics
     tokens.ignore_whitespace();
     let mut generics = vec![];
@@ -409,16 +409,17 @@ fn handle_function_declaration<'a, 'b>(
                 tokens.ignore_whitespace();
             }
 
-            let default = if tokens.peek_str() == "=" {
+            if tokens.peek_str() == "=" {
                 // Generic default
+                // Defaults are ignored! They're an artifact of TypeScript's
+                // older type inference, which couldn't infer a lot of the more
+                // complex types.
                 tokens.skip_unchecked();
-                Some(get_type(tokens)?)
-            } else {
-                None
-            };
+                get_type(tokens)?;
+            }
 
             // Add the type
-            generics.push((new_type, default));
+            generics.push(new_type);
 
             if tokens.peek_str() == ">" {
                 break;
@@ -457,13 +458,138 @@ fn handle_function_declaration<'a, 'b>(
         Some(get_block(tokens)?)
     };
 
-    out.push(ASTNode::FunctionDefinition {
+    Ok(FunctionDefinition {
         modifiers: Default::default(),
         name,
-        generics: if generics.is_empty() { None } else { Some(generics) },
+        generics,
         params,
         return_type,
         body: body.map(Box::new)
+    })
+}
+
+fn handle_class_declaration<'a, 'b>(
+    tokens: &'b mut TokenList<'a>,
+    out: &mut Vec<ASTNode>,
+) -> Result<bool, CompilerError<'a>> where 'a: 'b {
+    if tokens.peek_str() != "class" {
+        return Ok(false);
+    }
+    tokens.skip_unchecked(); // Skip "class"
+    tokens.ignore_whitespace();
+
+    fn deconstruct_class_header<'a>(
+        header_type: Type
+    ) -> Result<(Option<String>, Option<Vec<Type>>, Option<Type>), CompilerError<'a>> {
+        match header_type {
+            Type::Custom(name) => {
+                Ok((Some(name), None, None))
+            }
+            Type::WithArgs(name_type, generics) => {
+                let mut out = deconstruct_class_header(*name_type)?;
+                out.1 = Some(generics);
+                Ok(out)
+            }
+            Type::Extends(left, extends) => {
+                let mut out = deconstruct_class_header(*left)?;
+                out.2 = Some(*extends);
+                Ok(out)
+            }
+            other => {
+                Err(CompilerError {
+                    message: format!(
+                        "Expected class header, found {:?}",
+                        other
+                    ),
+                    token: EOF_TOKEN.clone()
+                })
+            }
+        }
+    }
+
+    // Get the class name and generics
+
+    // TODO: fix anonymous class generics `let a = class<T> {...}`
+    let (name, generics, extends) = deconstruct_class_header(get_type(tokens)?)?;
+    let name: String = name.unwrap_or(ANONYMOUS_CLASS_NAME.to_string());
+    let generics = generics.unwrap_or(vec![]);
+
+    // Classes change the way things are parsed!
+    let mut declarations = vec![];
+    let mut methods = vec![];
+
+    tokens.ignore_whitespace();
+    tokens.skip("{")?; // Skip body "{"
+    tokens.ignore_whitespace();
+
+    while tokens.peek_str() != "}" {
+        // Note: here, "property" refers to anything defined with "=", which is
+        // not inherently a function. "method" refers to things defined with
+        // parenthesis, making them *always* be a function (or its declaration)
+
+        // Get modifiers (if any)
+        let modifiers = fetch_modifier_list(tokens);
+
+        let checkpoint = tokens.get_checkpoint();
+
+        // Get the name (might be a property or a method, we don't know yet)
+        let name = tokens.consume();
+        if !matches!(name.typ, TokenType::Identifier) {
+            dbg!(declarations);
+            dbg!(methods);
+            return Err(CompilerError {
+                message: "Expected identifier in class body!".to_string(),
+                token: name
+            })
+        }
+        tokens.ignore_whitespace();
+
+        if [ ":", "=", ";" ].contains(&tokens.peek_str()) {
+            // `:`, `=`, and `;` mean it's a property
+            tokens.restore_checkpoint(checkpoint);
+
+            // Get the declaration
+            let gotten_declarations = get_named_declarations(tokens)?;
+
+            // Add the declaration
+            for declaration in gotten_declarations {
+                declarations.push((
+                    modifiers.clone(),
+                    declaration
+                ));
+            }
+        } else {
+            // Otherwise, it's a method
+            let mut function = get_function_after_name(
+                tokens,
+                Some(name.value.to_string())
+            )?;
+            if !function.modifiers.has(Modifier::Public) &&
+                !function.modifiers.has(Modifier::Private) &&
+                !function.modifiers.has(Modifier::Protected) {
+                function.modifiers.set(Modifier::Public);
+            }
+            methods.push(function);
+        }
+
+        tokens.ignore_whitespace();
+
+        // Skip ";" (if any)
+        if tokens.peek_str() == ";" {
+            tokens.skip_unchecked();
+        }
+
+        tokens.ignore_whitespace();
+    }
+    tokens.skip("}")?; // Skip body "}"
+
+    out.push(ASTNode::ClassDefinition {
+        modifiers: Default::default(),
+        name,
+        generics,
+        extends,
+        declarations,
+        methods
     });
 
     Ok(true)
@@ -477,19 +603,8 @@ fn handle_modifiers<'a>(
         return Ok(false);
     }
 
-    let mut modifiers: ModifierList = Default::default();
-    while MODIFIERS.contains(&tokens.peek_str()) {
-        match tokens.consume().value {
-            "export" => { modifiers.set(Modifier::Export); },
-            "async" => { modifiers.set(Modifier::Async); },
-            "public" => { modifiers.set(Modifier::Public); },
-            "private" => { modifiers.set(Modifier::Private); },
-            "protected" => { modifiers.set(Modifier::Protected); },
-            "static" => { modifiers.set(Modifier::Static); },
-            other => { panic!("Modifier not implemented: {:?}", other); }
-        };
-        tokens.ignore_whitespace();
-    }
+    // Get the modifiers
+    let modifiers = fetch_modifier_list(tokens);
 
     // Get the node that goes after the modifiers
     let mut node_after_modifiers = get_single_statement(tokens)?;
@@ -498,6 +613,25 @@ fn handle_modifiers<'a>(
     out.push(node_after_modifiers);
 
     Ok(true)
+}
+
+fn fetch_modifier_list(tokens: &mut TokenList) -> ModifierList {
+    let mut modifiers: ModifierList = Default::default();
+    while MODIFIERS.contains(&tokens.peek_str()) {
+        match tokens.consume().value {
+            "export" => { modifiers.set(Modifier::Export); },
+            "async" => { modifiers.set(Modifier::Async); },
+            "static" => { modifiers.set(Modifier::Static); },
+            "public" => { modifiers.set(Modifier::Public); },
+            "private" => { modifiers.set(Modifier::Private); },
+            "protected" => { modifiers.set(Modifier::Protected); },
+            "readonly" => { modifiers.set(Modifier::Readonly); },
+            "abstract" => { modifiers.set(Modifier::Abstract); },
+            other => { panic!("Modifier not implemented: {:?}", other); }
+        };
+        tokens.ignore_whitespace();
+    }
+    modifiers
 }
 
 fn handle_type_declaration<'a>(
@@ -605,8 +739,9 @@ fn handle_interface<'a>(
         }
     }
 
-    dbg!(interface_type);
-    dbg!(interface_named_parts);
+    // dbg!(interface_type);
+    // dbg!(interface_named_parts);
+    // TODO: finish interface typing
     // interface_type.combine(named_declarations_to_type(interface_named_parts)?);
 
     out.push(ASTNode::TypeDeclaration {
@@ -900,6 +1035,13 @@ fn get_expression<'a>(
             TokenType::Number => parse_number(tokens),
             TokenType::String => parse_string(tokens),
             TokenType::Symbol | TokenType::Identifier => {
+                // `class` can be used inside an expression, but calling it a
+                // prefix feels strange... I'm going to handle it here
+                // TODO: fix class expressions
+                // if next.value == "class" {
+                //     handle_class_declaration(tokens, out)
+                // }
+
                 let binding_power = get_operator_binding_power(
                     ExprType::Prefx,
                     next.value

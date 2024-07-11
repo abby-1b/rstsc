@@ -59,9 +59,9 @@ fn step_combine(node: &mut ASTNode) {
         }
         // ASTNode::StatementBreak { .. } => {}
         // ASTNode::StatementContinue { .. } => {}
-        ASTNode::FunctionDefinition { body, .. } => {
+        ASTNode::FunctionDefinition { inner } => {
             // TODO: minify parameter defaults
-            body.as_deref_mut().map(step_combine);
+            inner.body.as_deref_mut().map(step_combine);
         }
         // ASTNode::ArrowFunctionDefinition { .. } => {}
         // ASTNode::PotentialParameter { .. } => {}
@@ -104,8 +104,8 @@ fn step_combine(node: &mut ASTNode) {
 
             if let ASTNode::Parenthesis { nodes } = &**callee {
                 if nodes.len() == 1 {
-                    if let ASTNode::FunctionDefinition { modifiers, name, generics, params, return_type, body } = &nodes[0] {
-
+                    if let ASTNode::FunctionDefinition { inner } = &nodes[0] {
+                        // TODO: minify parenthesis properly
                     }
                 }
             }

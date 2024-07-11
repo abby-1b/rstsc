@@ -52,6 +52,16 @@ impl ObjectProperty {
 }
 
 #[derive(Debug, Clone)]
+pub struct FunctionDefinition {
+    pub modifiers: ast::ModifierList,
+    pub name: Option<String>,
+    pub generics: Vec<Type>,
+    pub params: Vec<NamedDeclaration>,
+    pub return_type: Type,
+    pub body: Option<Box<ASTNode>>
+}
+
+#[derive(Debug, Clone)]
 pub enum ASTNode {
     Block { nodes: Vec<ASTNode> },
 
@@ -88,12 +98,7 @@ pub enum ASTNode {
     StatementThrow { value: Option<Box<ASTNode>> },
 
     FunctionDefinition {
-        modifiers: ast::ModifierList,
-        name: Option<String>,
-        generics: Option<Vec<(Type, Option<Type>)>>,
-        params: Vec<NamedDeclaration>,
-        return_type: Type,
-        body: Option<Box<ASTNode>>
+        inner: FunctionDefinition
     },
 
     ArrowFunctionDefinition {
@@ -203,22 +208,18 @@ impl ASTNode {
                 value: value.as_ref().map(|a| Box::new(ASTNode::from(&a))),
             },
             ast::ASTNode::FunctionDefinition {
-                modifiers,
-                name,
-                generics,
-                params,
-                return_type,
-                body,
+                inner
             } => {
-                let body = body.as_ref().map(|a| Box::new(ASTNode::from(&a)));
-                let mut ret = ASTNode::FunctionDefinition {
-                    modifiers: modifiers.clone(),
-                    name: name.clone(),
-                    generics: generics.clone(),
-                    params: params.iter().map(NamedDeclaration::from).collect(),
-                    return_type: return_type.clone().unwrap_or(Type::Unknown),
+                let body = inner.body.as_ref().map(|a| Box::new(ASTNode::from(&a)));
+                let ret_inner = FunctionDefinition {
+                    modifiers: inner.modifiers.clone(),
+                    name: inner.name.clone(),
+                    generics: inner.generics.clone(),
+                    params: inner.params.iter().map(NamedDeclaration::from).collect(),
+                    return_type: inner.return_type.clone().unwrap_or(Type::Unknown),
                     body,
                 };
+                let mut ret = ASTNode::FunctionDefinition { inner: ret_inner };
                 infer_return_type(&mut ret);
                 ret
             },
@@ -299,6 +300,9 @@ impl ASTNode {
                 equals_typ: equals_typ.clone(),
             },
             ast::ASTNode::Empty => ASTNode::Empty,
+
+            // TODO: finish all missing nodes
+            _ => { ASTNode::Empty } // For debugging
         }
     }
 
