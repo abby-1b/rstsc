@@ -44,6 +44,9 @@ pub enum TokenType {
     Spacing,
     LineTerminator,
     EndOfFile,
+
+    /// Used when explicitly creating Tokens from a string.
+    Unknown
 }
 
 #[derive(Debug, Clone)]
@@ -60,7 +63,7 @@ impl<'a> Token<'a> {
 
     pub fn from(value: &str) -> Token {
         Token {
-            typ: TokenType::EndOfFile,
+            typ: TokenType::Unknown,
             value
         }
     }
@@ -83,6 +86,12 @@ pub struct TokenList<'a> {
     find_index: usize,
 
     char_iter: CustomCharIterator<'a>,
+}
+
+pub struct TokenListCheckpoint<'a> {
+    next_token: Token<'a>,
+    find_index: usize,
+    char_iter: CustomCharIterator<'a>
 }
 
 impl<'a> TokenList<'a> {
@@ -141,6 +150,11 @@ impl<'a> TokenList<'a> {
         // Skip character in source string
         self.next_token.value = &self.next_token.value[1..];
 
+        if self.next_token.value.len() == 0 {
+            // Make sure we aren't left with an empty string!
+            self.queue_token();
+        }
+
         // Return
         single_character
     }
@@ -169,6 +183,22 @@ impl<'a> TokenList<'a> {
         while self.next_token.is_whitespace() {
             self.queue_token();
         }
+    }
+
+    /// Saves a checkpoint of the TokenList, so it can be returned to
+    pub fn get_checkpoint<'b>(&self) -> TokenListCheckpoint<'b> where 'a: 'b {
+        TokenListCheckpoint {
+            find_index: self.find_index,
+            next_token: self.next_token.clone(),
+            char_iter: self.char_iter.clone()
+        }
+    }
+
+    /// Loads a checkpoint of the TokenList, leaving it as it was
+    pub fn restore_checkpoint(&mut self, checkpoint: TokenListCheckpoint<'a>) {
+        self.next_token = checkpoint.next_token;
+        self.find_index = checkpoint.find_index;
+        self.char_iter = checkpoint.char_iter;
     }
 
     /// Queues `self.next_token`
@@ -293,6 +323,7 @@ impl<'a> TokenList<'a> {
     }
 }
 
+#[derive(Clone)]
 struct CustomCharIterator<'a> {
     inner_iter: Chars<'a>,
     queue: [Option<char>; 2]

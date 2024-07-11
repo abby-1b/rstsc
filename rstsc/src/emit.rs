@@ -1,4 +1,4 @@
-use crate::ast::{ASTNode, NamedDeclaration, ObjectProperty};
+use crate::ast::{ASTNode, FunctionDefinition, NamedDeclaration, ObjectProperty};
 
 struct Emitter {
     output: String,
@@ -132,10 +132,14 @@ fn emit_single(
             emitter.unindent();
             emitter.out("}", false);
         }
+        ASTNode::Declaration { on, .. } => {
+            emit_single(*on, emitter);
+        }
         ASTNode::VariableDeclaration { modifiers, def_type, defs } => {
             emitter.out(&modifiers.emit(true), false);
             emitter.out(&def_type.emit(), false);
             emit_named_declarations(defs, emitter);
+            emitter.out("", true);
         }
         ASTNode::StatementIf { condition, body, alternate } => {
             let start_line = emitter.curr_line();
@@ -201,24 +205,13 @@ fn emit_single(
                 emit_single(*value, emitter);
             }
         }
-        ASTNode::FunctionDefinition { modifiers, name, params, body, .. } => {
-            if let Some(body) = body {
-                // Head
-                emitter.out(&modifiers.emit(true), false);
-                emitter.out("function", false);
-                if let Some(name) = name {
-                    emitter.out(" ", false);
-                    emitter.out(&name, false);
-                }
-
-                // Params
-                emitter.out("(", false);
-                emit_named_declarations(params, emitter);
-                emitter.out_diff(") ", ")", false);
-
-                // Body
-                emit_single(*body, emitter);
-                emitter.out("", true);
+        ASTNode::FunctionDefinition { inner } => {
+            if inner.body.is_some() {
+                emit_function_definition(
+                    *inner,
+                    true,
+                    emitter
+                );
             }
         }
         ASTNode::ArrowFunctionDefinition { params, body, .. } => {
@@ -236,6 +229,40 @@ fn emit_single(
 
             // Body
             emit_single(*body, emitter);
+        }
+        ASTNode::ClassDefinition {
+            modifiers,
+            name,
+            extends,
+            declarations,
+            methods,
+            ..
+        } => {
+            emitter.out(&modifiers.emit(true), false);
+            emitter.out("class ", false);
+            emitter.out(&name, false);
+            if let Some(extends) = extends {
+                emitter.out(" extends ", false);
+                emitter.out(&extends.get_single_name(), false);
+            }
+            emitter.out_diff(" {", "{", false);
+            emitter.endline();
+            emitter.indent();
+
+            for (decl_modifiers, declaration) in declarations {
+                emitter.out(&decl_modifiers.emit(true), false);
+                emit_named_declaration(declaration, emitter);
+                emitter.endline();
+            }
+            for method in methods {
+                if method.body.is_none() { continue; }
+                emit_function_definition(method, false, emitter);
+                emitter.endline();
+            }
+
+            emitter.endline();
+            emitter.unindent();
+            emitter.out("}", false)
         }
         // ASTNode::PotentialParameter { .. } => "PotentialParameter",
         // ASTNode::ArrowFunctionHeader { .. } => "ArrowFunctionHeader",
@@ -316,6 +343,7 @@ fn emit_single(
         ASTNode::InfixOpr { left, opr, right } => {
             let can_have_spaces = match opr.as_str() {
                 "." => (false, false),
+                "?." => (false, false),
                 "," => (false, true),
                 _ => (true, true)
             };
@@ -344,13 +372,46 @@ fn emit_named_declarations(
     emitter: &mut Emitter
 ) {
     emitter.emit_vec(decls, |decl, emitter| {
-        if decl.spread {
-            emitter.out("...", false);
-        }
-        emitter.out(&decl.name, true);
-        if let Some(value) = decl.value {
-            emitter.out_diff(" = ", "=", false);
-            emit_single(value, emitter);
-        }
+        emit_named_declaration(decl, emitter);
     }, ", ", ",");
+}
+
+#[inline]
+fn emit_named_declaration(
+    declaration: NamedDeclaration,
+    emitter: &mut Emitter
+) {
+    if declaration.spread {
+        emitter.out("...", false);
+    }
+    emitter.out(&declaration.name, true);
+    if let Some(value) = declaration.value {
+        emitter.out_diff(" = ", "=", false);
+        emit_single(value, emitter);
+    }
+}
+
+fn emit_function_definition(
+    function: FunctionDefinition,
+    function_statement: bool,
+    emitter: &mut Emitter
+) {
+    // Head
+    emitter.out(&function.modifiers.emit(true), false);
+    if function_statement {
+        emitter.out("function ", false);
+    }
+    if let Some(name) = function.name {
+        emitter.out(&name, false);
+    }
+
+    // Params
+    emitter.out("(", false);
+    emit_named_declarations(function.params, emitter);
+    emitter.out_diff(") ", ")", false);
+
+    // Body
+    if let Some(body) = function.body {
+        emit_single(*body, emitter);
+    }
 }

@@ -57,14 +57,9 @@ fn infer_type_from_node(node: &ASTNode) -> Type {
 pub fn infer_return_type(node: &mut ASTNode) {
     match &node {
         ASTNode::FunctionDefinition {
-            modifiers,
-            name,
-            generics,
-            params,
-            return_type,
-            body
+            inner
         } => {
-
+            // TODO: infer function return type
         }
         ASTNode::ArrowFunctionDefinition {
             params,

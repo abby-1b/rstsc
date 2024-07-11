@@ -41,6 +41,7 @@ pub struct ModifierList {
     ///  - public
     ///  - private
     ///  - protected
+    ///  - readonly
     pub flags: u8,
 }
 
@@ -48,13 +49,17 @@ pub const MODIFIERS: &[&str] = &[
     "export",
     "async",
     "public", "private", "protected",
-    "static"
+    "static",
+    "readonly",
+    "abstract"
 ];
 pub const MODIFIER_IS_JS: &[bool] = &[
     true,
     true,
     false, false, false,
-    true
+    true,
+    false,
+    false
 ];
 
 #[derive(Clone)]
@@ -66,6 +71,8 @@ pub enum Modifier {
     Public,
     Private,
     Protected,
+    Readonly,
+    Abstract,
 }
 impl Modifier {
     pub fn as_flag(&self) -> u8 {
@@ -76,6 +83,8 @@ impl Modifier {
             Modifier::Public => 1 << 3,
             Modifier::Private => 1 << 4,
             Modifier::Protected => 1 << 5,
+            Modifier::Readonly => 1 << 6,
+            Modifier::Abstract => 1 << 7,
         }
     }
 }
@@ -137,6 +146,17 @@ pub struct NamedDeclaration {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct FunctionDefinition {
+    pub modifiers: ModifierList,
+    pub name: Option<String>,
+
+    pub generics: Vec<Type>,
+    pub params: Vec<NamedDeclaration>,
+    pub return_type: Option<Type>,
+    pub body: Option<Box<ASTNode>>
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum ASTNode {
     /// A block of code
     Block { nodes: Vec<ASTNode> },
@@ -179,19 +199,26 @@ pub enum ASTNode {
     StatementContinue { value: Option<Box<ASTNode>> },
     StatementThrow { value: Option<Box<ASTNode>> },
 
-    FunctionDefinition {
-        modifiers: ModifierList,
-        name: Option<String>,
-        generics: Option<Vec<(Type, Option<Type>)>>,
-        params: Vec<NamedDeclaration>,
-        return_type: Option<Type>,
-        body: Option<Box<ASTNode>>
-    },
+    FunctionDefinition { inner: Box<FunctionDefinition> },
 
     ArrowFunctionDefinition {
         params: Vec<NamedDeclaration>,
         return_type: Option<Type>,
         body: Box<ASTNode>
+    },
+
+    // TODO: box this entire variant
+    ClassDefinition {
+        modifiers: ModifierList,
+        name: String,
+        generics: Vec<Type>,
+        extends: Option<Type>,
+
+        /// Named declarations
+        declarations: Vec<(ModifierList, NamedDeclaration)>,
+
+        /// Functions
+        methods: Vec<FunctionDefinition>
     },
 
     // Used for expressions
@@ -259,6 +286,7 @@ impl ASTNode {
             ASTNode::StatementThrow { .. } => "StatementThrow",
             ASTNode::FunctionDefinition { .. } => "FunctionDefinition",
             ASTNode::ArrowFunctionDefinition { .. } => "ArrowFunctionDefinition",
+            ASTNode::ClassDefinition { .. } => "ClassDefinition",
             ASTNode::Parenthesis { .. } => "Parenthesis",
             ASTNode::Array { .. } => "Array",
             ASTNode::Dict { .. } => "Dict",
@@ -293,21 +321,23 @@ impl ASTNode {
         match self {
             ASTNode::VariableDeclaration { modifiers, .. } => {
                 *modifiers = new_modifiers;
-                Ok(())
-            },
-            ASTNode::FunctionDefinition { modifiers, .. } => {
-                *modifiers = new_modifiers;
-                Ok(())
-            },
+            }
+            ASTNode::FunctionDefinition { inner } => {
+                inner.modifiers = new_modifiers;
+            }
+            ASTNode::ClassDefinition { modifiers, .. } => {
+                *modifiers = new_modifiers
+            }
             _ => {
-                Err(CompilerError {
+                return Err(CompilerError {
                     message: format!(
                         "{} can't have modifiers!",
                         self.name()
                     ),
                     token: EOF_TOKEN.clone()
-                })
+                });
             }
         }
+        Ok(())
     }
 }

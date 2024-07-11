@@ -138,6 +138,7 @@ pub fn get_type_operator_binding_power(
         (ExprType::Prefx, "asserts" ) => Some((10, 11)),
         (ExprType::Prefx, "infer"   ) => Some((10, 11)),
         (ExprType::Prefx, "readonly") => Some((10, 11)),
+        (ExprType::Prefx, "unique"  ) => Some((10, 11)),
 
         (ExprType::Infx, "&") => Some((8, 9)),
 

@@ -213,6 +213,57 @@ impl Type {
             }
         }
     }
+
+    pub fn get_single_name(&self) -> String {
+        match &self {
+            Type::Any => { "any".to_string() },
+
+            Type::Number => { "number".to_string() },
+            Type::NumberLiteral(_) => { "".to_string() },
+
+            Type::String => { "string".to_string() },
+            Type::StringLiteral(string) => { string.clone() },
+
+            Type::Boolean => { "boolean".to_string() },
+            Type::BooleanLiteral(boolean) => {
+                if *boolean {
+                    "true".to_string()
+                } else {
+                    "false".to_string()
+                }
+            },
+
+            Type::Unknown => { "unknown".to_string() },
+            Type::Void => { "void".to_string() },
+
+            Type::Union(_) => { "".to_string() },
+            Type::Intersection(_) => { "".to_string() },
+
+            Type::Custom(name) => { name.to_string() },
+
+            Type::WithArgs(typ, _) => { typ.get_single_name() },
+
+            Type::Tuple(_, _) => {
+                "".to_string()
+            },
+
+            Type::Array(typ) => { typ.to_string() },
+
+            Type::Object(_) => { "".to_string() },
+
+            Type::Guard(_, _) => { "".to_string() },
+
+            Type::ColonDeclaration { .. } => { "".to_string() },
+
+            Type::Function { .. } => { "".to_string() }
+            Type::Index { .. } => { "".to_string() }
+            Type::KeyOf(_) => { "".to_string() }
+            Type::Conditional { .. } => { "".to_string() }
+            Type::Extends(_, _) => { "".to_string() }
+            Type::Infer(_) => { "".to_string() }
+            Type::Readonly(_) => { "".to_string() }
+        }
+    }
 }
 
 impl Display for Type {
@@ -666,7 +717,8 @@ fn parse_prefix<'a, 'b>(
                 Ok(inner_types.pop().unwrap())
             }
         }
-        "asserts" => {
+        "asserts" | "unique" => {
+            // These types are ignored
             get_expression(tokens, precedence)
         }
         "keyof" => {
