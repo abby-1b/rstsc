@@ -42,8 +42,15 @@ impl Hash for CustomDouble {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
+pub struct KeyValueMap {
+    key: Type,
+    value: Type,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum Type {
     // Primitives
+    
     Any,
 
     Number,
@@ -72,13 +79,16 @@ pub enum Type {
     WithArgs(Box<Type>, Vec<Type>),
 
     /// Tuples (eg. `[string, number]`)
-    Tuple(Vec<Type>, usize),
+    Tuple { inner_types: Vec<Type>, spread_idx: usize },
 
     /// Array type (eg. `number[]`)
     Array(Box<Type>),
 
     /// A typed object (dict)
-    Object(Vec<TypedNamedDeclaration>),
+    Object {
+        key_value: Option<Box<KeyValueMap>>,
+        parts: Vec<TypedNamedDeclaration>
+    },
 
     /// Used for type guards `x is string`
     Guard(String, Box<Type>),
@@ -219,7 +229,6 @@ impl Type {
             Type::Any => { "any".to_string() },
 
             Type::Number => { "number".to_string() },
-            Type::NumberLiteral(_) => { "".to_string() },
 
             Type::String => { "string".to_string() },
             Type::StringLiteral(string) => { string.clone() },
@@ -236,32 +245,13 @@ impl Type {
             Type::Unknown => { "unknown".to_string() },
             Type::Void => { "void".to_string() },
 
-            Type::Union(_) => { "".to_string() },
-            Type::Intersection(_) => { "".to_string() },
-
             Type::Custom(name) => { name.to_string() },
 
             Type::WithArgs(typ, _) => { typ.get_single_name() },
 
-            Type::Tuple(_, _) => {
-                "".to_string()
-            },
-
             Type::Array(typ) => { typ.to_string() },
 
-            Type::Object(_) => { "".to_string() },
-
-            Type::Guard(_, _) => { "".to_string() },
-
-            Type::ColonDeclaration { .. } => { "".to_string() },
-
-            Type::Function { .. } => { "".to_string() }
-            Type::Index { .. } => { "".to_string() }
-            Type::KeyOf(_) => { "".to_string() }
-            Type::Conditional { .. } => { "".to_string() }
-            Type::Extends(_, _) => { "".to_string() }
-            Type::Infer(_) => { "".to_string() }
-            Type::Readonly(_) => { "".to_string() }
+            _ => { "".to_string() }
         }
     }
 }
@@ -319,9 +309,9 @@ impl Display for Type {
                 )
             },
 
-            Type::Tuple(inner_types, spread_idx) => {
+            Type::Tuple { inner_types, spread_idx } => {
                 let spread_idx = *spread_idx;
-                f.write_str("[")?;
+                f.write_str("[ ")?;
                 f.write_str(
                     &inner_types.iter().enumerate()
                         .map(|(index, typ)| {
@@ -333,7 +323,7 @@ impl Display for Type {
                         }).collect::<Vec<String>>()
                         .join(", ")
                 )?;
-                f.write_str("]")
+                f.write_str(" ]")
             },
 
             Type::Array(typ) => {
@@ -341,16 +331,23 @@ impl Display for Type {
                 f.write_str("[]")
             },
 
-            Type::Object(kv_pairs) => {
-                f.write_str("{")?;
+            Type::Object{ key_value, parts } => {
+                f.write_str("{ ")?;
+                if let Some(key_value) = key_value {
+                    f.write_str("[key: ")?;
+                    std::fmt::Display::fmt(&key_value.key, f)?;
+                    f.write_str("]: ")?;
+                    std::fmt::Display::fmt(&key_value.value, f)?;
+                    f.write_str(", ")?;
+                }
                 f.write_str(
-                    &kv_pairs.iter()
+                    &parts.iter()
                         .map(|kv| {
                             kv.name.clone() + " " + &kv.typ.to_string()
                         }).collect::<Vec<String>>()
                         .join(", ")
                 )?;
-                f.write_str("}")
+                f.write_str(" }")
             },
 
             Type::Guard(name, typ) => {
@@ -417,7 +414,7 @@ impl Display for Type {
             }
             Type::Readonly(inner) => {
                 f.write_str("readonly ")?;
-                std::fmt::Display::fmt(&inner, f)
+                std::fmt::Display::fmt(inner, f)
             }
         }
     }
@@ -432,6 +429,44 @@ pub fn get_type<'a, 'b>(
     }
 
     return get_expression(tokens, 0);
+}
+
+pub fn get_key_value<'a, 'b>(
+    tokens: &'b mut TokenList<'a>
+) -> Result<KeyValueMap, CompilerError<'a>> where 'a: 'b {
+    if tokens.peek_str() != "[" {
+        return Err(CompilerError {
+            message: "Expected key-value type!".to_string(),
+            token: tokens.consume()
+        });
+    }
+
+    tokens.skip_unchecked(); // Skip "["
+    tokens.ignore_whitespace();
+    
+    // Although this is usually "key", it can be any identifier!
+    let key_token = tokens.consume();
+    if !matches!(key_token.typ, TokenType::Identifier) {
+        return Err(CompilerError {
+            message: "Expected identifier for \"[key: type]: type\" declaration".to_string(),
+            token: key_token
+        });
+    }
+
+    tokens.ignore_whitespace();
+    tokens.skip(":")?;
+
+    let key_type = get_expression(tokens, 0)?;
+
+    tokens.ignore_whitespace();
+    tokens.skip("]")?;
+
+    tokens.ignore_whitespace();
+    tokens.skip(":")?;
+
+    let value_type = get_expression(tokens, 0)?;
+
+    Ok(KeyValueMap { key: key_type, value: value_type })
 }
 
 fn parse_infix<'a, 'b>(
@@ -504,7 +539,7 @@ fn parse_infix<'a, 'b>(
                     // Wrong character!
                     return Err(CompilerError {
                         message: format!(
-                            "Expected `<`, found {:?}",
+                            "Expected \"<\", found {:?}",
                             first_char
                         ),
                         token: Token::from(first_char)
@@ -610,6 +645,7 @@ fn parse_prefix<'a, 'b>(
         "{" => {
             // Dictionary object
             let mut obj_parts: Vec<TypedNamedDeclaration> = vec![];
+            let mut kv_type = None;
             loop {
                 // TODO: Handle `[key: string]: number`
 
@@ -617,6 +653,9 @@ fn parse_prefix<'a, 'b>(
                 if tokens.peek_str() == "}" {
                     tokens.skip_unchecked();
                     break;
+                } else if tokens.peek_str() == "[" {
+                    kv_type = Some(get_key_value(tokens)?);
+                    continue;
                 }
 
                 // Get property name
@@ -625,7 +664,7 @@ fn parse_prefix<'a, 'b>(
                 // Get property type (fallback to `any`)
                 tokens.ignore_whitespace();
                 let property_type = if tokens.peek_str() == ":" {
-                    tokens.skip_unchecked();
+                    tokens.skip_unchecked(); // Skip ":"
                     get_expression(tokens, precedence)?
                 } else {
                     Type::Any
@@ -644,11 +683,14 @@ fn parse_prefix<'a, 'b>(
                 }
             }
 
-            Ok(Type::Object(obj_parts))
+            Ok(Type::Object {
+                key_value: kv_type.map(Box::new),
+                parts: obj_parts,
+            })
         }
         "[" => {
             // Tuple
-            let mut tuple_parts: Vec<Type> = vec![];
+            let mut inner_types: Vec<Type> = vec![];
             let mut spread_idx = usize::MAX;
             loop {
                 if tokens.peek_str() == "..." {
@@ -661,10 +703,10 @@ fn parse_prefix<'a, 'b>(
                             token: tokens.consume()
                         });
                     }
-                    spread_idx = tuple_parts.len();
+                    spread_idx = inner_types.len();
                     tokens.skip_unchecked(); // Skip "..."
                 }
-                tuple_parts.push(get_expression(tokens, precedence)?);
+                inner_types.push(get_expression(tokens, precedence)?);
 
                 // Ignore commas
                 tokens.ignore_whitespace();
@@ -679,7 +721,7 @@ fn parse_prefix<'a, 'b>(
                     break;
                 }
             }
-            Ok(Type::Tuple(tuple_parts, spread_idx))
+            Ok(Type::Tuple { inner_types, spread_idx })
         }
         "(" => {
             // Parenthesized type!
@@ -776,6 +818,7 @@ fn get_expression<'a, 'b>(
                     ExprType::Prefx,
                     next.value
                 );
+                dbg!(next);
                 if let Some(binding_power) = binding_power {
                     // Prefix operators
                     parse_prefix(tokens, binding_power.1)?

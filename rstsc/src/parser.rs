@@ -1,12 +1,12 @@
 use phf::phf_map;
 use crate::{
     ast::{
-        ASTNode, FunctionDefinition, Modifier, ModifierList, NamedDeclaration, ObjectProperty, VariableDefType, MODIFIERS
+        ASTNode, ClassDefinition, FunctionDefinition, Modifier, ModifierList, NamedDeclaration, ObjectProperty, VariableDefType, MODIFIERS
     },
     error_type::CompilerError,
     operations::{get_operator_binding_power, ExprType},
     tokenizer::{TokenList, TokenType, EOF_TOKEN},
-    types::{get_type, Type}
+    types::{get_key_value, get_type, Type, TypedNamedDeclaration}
 };
 
 pub static INVERSE_GROUPINGS: phf::Map<&'static str, &'static str> = phf_map! {
@@ -583,14 +583,14 @@ fn handle_class_declaration<'a, 'b>(
     }
     tokens.skip("}")?; // Skip body "}"
 
-    out.push(ASTNode::ClassDefinition {
+    out.push(ASTNode::ClassDefinition { inner: Box::new(ClassDefinition {
         modifiers: Default::default(),
         name,
         generics,
         extends,
         declarations,
         methods
-    });
+    }) });
 
     Ok(true)
 }
@@ -674,14 +674,25 @@ fn handle_interface<'a>(
 
     // Get the interface name
     let name = get_type(tokens)?;
-
-    // TODO: extends, implements, etc.
-
     tokens.ignore_whitespace();
+
+    let extends = if tokens.peek_str() == "extends" {
+        tokens.skip_unchecked(); // Skip "extends"
+        Some(get_type(tokens)?)
+    } else {
+        None
+    };
+
     tokens.skip("{")?;
 
-    let mut interface_type = Type::Intersection(vec![]);
-    let mut interface_named_parts: Vec<NamedDeclaration> = vec![];
+    // TODO: IMPORTANT:
+    // Just uhh... get the interface as a type. Types can do everything that
+    // interfaces can do. It's pointless.
+
+    // Store the parts of the interface!
+    let mut function_types = Type::Intersection(vec![]);
+    let mut interface_named_parts: Vec<TypedNamedDeclaration> = vec![];
+    let mut key_value = None;
 
     loop {
         tokens.ignore_whitespace();
@@ -696,28 +707,21 @@ fn handle_interface<'a>(
             let function = get_type(tokens)?;
             interface_type.intersection(function);
         } else if next == "[" {
-            // TODO: `[key: string]: number`
-            todo!();
+            key_value = Some(get_key_value(tokens)?);
         } else {
             // Normal named declaration (no type)
             let named_decl = get_type(tokens)?;
             match named_decl {
                 Type::ColonDeclaration { name, typ, conditional } => {
-                    interface_named_parts.push(NamedDeclaration {
+                    interface_named_parts.push(TypedNamedDeclaration {
                         name,
-                        typ: Some(*typ),
-                        value: None,
-                        conditional,
-                        spread: false
+                        typ: *typ
                     })
                 }
                 Type::Custom(name) => {
-                    interface_named_parts.push(NamedDeclaration {
+                    interface_named_parts.push(TypedNamedDeclaration {
                         name,
-                        typ: Some(Type::Unknown),
-                        value: None,
-                        conditional: false,
-                        spread: false
+                        typ: Type::Unknown,
                     })
                 },
                 other => {
@@ -892,7 +896,26 @@ fn parse_infix<'a>(
 ) -> Result<ASTNode, CompilerError<'a>> {
     let opr = tokens.consume().value.to_string();
 
-    if opr == "=>" {
+    if opr == "(" || opr == "[" {
+        // Function call or property access (indexing)
+
+        // Get children
+        let inner = get_expression(tokens, 0)?;
+        let group_end = INVERSE_GROUPINGS[opr.as_str()];
+        tokens.skip(group_end)?; // Skip trailing group
+
+        match opr.as_str() {
+            "(" => return Ok(ASTNode::ExprFunctionCall {
+                callee: Box::new(left),
+                arguments: separate_commas(inner)
+            }),
+            "[" => return Ok(ASTNode::ExprIndexing {
+                callee: Box::new(left),
+                property: Box::new(inner)
+            }),
+            other => { panic!("Grouping not implemented: {}", other); }
+        };
+    } else if opr == "=>" {
         // Arrow functions get special treatment!
         let (params, return_type) = match left {
             ASTNode::Parenthesis { .. } => {
@@ -921,6 +944,7 @@ fn parse_infix<'a>(
             }
         };
 
+        tokens.ignore_whitespace();
         return Ok(ASTNode::ArrowFunctionDefinition {
             params,
             return_type,
@@ -1127,30 +1151,8 @@ fn get_expression<'a>(
             break;
         };
 
-        if [ "(", "[" ].contains(&next.value) {
-            // TODO: move this entire if statement inside `parse_infix`
-
-            // Function calls & indexing get special treatment!
-            let group_type = tokens.consume().value.to_string();
-
-            // Get children
-            let arguments = separate_commas(
-                get_expression(tokens, 0)?
-            );
-            let group_end = INVERSE_GROUPINGS[group_type.as_str()];
-            tokens.skip(group_end)?; // Skip trailing group
-
-            left = match group_type.as_str() {
-                "(" => ASTNode::ExprFunctionCall { callee: Box::new(left), arguments },
-                "[" => ASTNode::ExprIndexing { callee: Box::new(left), property: arguments },
-                other => { panic!("Grouping not implemented: {}", other); }
-            };
-            continue;
-        } else {
-            // Otherwise, it's infix
-            left = parse_infix(left, tokens, binding_power.1)?;
-        }
-
+        // It's infix
+        left = parse_infix(left, tokens, binding_power.1)?;
     }
     Ok(left)
 }

@@ -1,7 +1,7 @@
 
 use core::fmt::Debug;
 
-use crate::{error_type::CompilerError, tokenizer::EOF_TOKEN, types::Type};
+use crate::{error_type::CompilerError, tokenizer::EOF_TOKEN, types::{KeyValueMap, Type, TypedNamedDeclaration}};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum VariableDefType {
@@ -157,6 +157,27 @@ pub struct FunctionDefinition {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct ClassDefinition {
+    pub modifiers: ModifierList,
+    pub name: String,
+    pub generics: Vec<Type>,
+    pub extends: Option<Type>,
+
+    /// Named declarations
+    pub declarations: Vec<(ModifierList, NamedDeclaration)>,
+
+    /// Functions
+    pub methods: Vec<FunctionDefinition>
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct InterfaceDeclaration {
+    name: Type,
+    extends: Option<Type>,
+    equals_type: Type
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum ASTNode {
     /// A block of code
     Block { nodes: Vec<ASTNode> },
@@ -207,19 +228,7 @@ pub enum ASTNode {
         body: Box<ASTNode>
     },
 
-    // TODO: box this entire variant
-    ClassDefinition {
-        modifiers: ModifierList,
-        name: String,
-        generics: Vec<Type>,
-        extends: Option<Type>,
-
-        /// Named declarations
-        declarations: Vec<(ModifierList, NamedDeclaration)>,
-
-        /// Functions
-        methods: Vec<FunctionDefinition>
-    },
+    ClassDefinition { inner: Box<ClassDefinition> },
 
     // Used for expressions
 
@@ -235,7 +244,7 @@ pub enum ASTNode {
     ExprBoolLiteral { value: bool },
 
     ExprFunctionCall { callee: Box<ASTNode>, arguments: Vec<ASTNode> },
-    ExprIndexing { callee: Box<ASTNode>, property: Vec<ASTNode> },
+    ExprIndexing { callee: Box<ASTNode>, property: Box<ASTNode> },
 
     ExprTernary {
         condition: Box<ASTNode>,
@@ -265,6 +274,8 @@ pub enum ASTNode {
         first_typ: Type,
         equals_typ: Type
     },
+
+    InterfaceDeclaration { inner: InterfaceDeclaration },
 
     /// Used in situations like `[ 1, 2, ]` where there's an empty expression
     Empty
@@ -304,6 +315,7 @@ impl ASTNode {
             ASTNode::ExprTypeAssertion { .. } => "ExprTypeAssertion",
             ASTNode::TypeDeclaration { .. } => "TypeDeclaration",
             ASTNode::Empty { .. } => "Empty",
+            ASTNode::InterfaceDeclaration { .. } => "InterfaceDeclaration"
         }.to_string()
     }
 
@@ -325,8 +337,8 @@ impl ASTNode {
             ASTNode::FunctionDefinition { inner } => {
                 inner.modifiers = new_modifiers;
             }
-            ASTNode::ClassDefinition { modifiers, .. } => {
-                *modifiers = new_modifiers
+            ASTNode::ClassDefinition { inner } => {
+                inner.modifiers = new_modifiers;
             }
             _ => {
                 return Err(CompilerError {

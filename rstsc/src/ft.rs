@@ -121,7 +121,7 @@ pub enum ASTNode {
     ExprBoolLiteral { value: bool },
 
     ExprFunctionCall { callee: Box<ASTNode>, arguments: Vec<ASTNode> },
-    ExprIndexing { callee: Box<ASTNode>, property: Vec<ASTNode> },
+    ExprIndexing { callee: Box<ASTNode>, property: Box<ASTNode> },
 
     ExprTernary {
         condition: Box<ASTNode>,
@@ -259,7 +259,7 @@ impl ASTNode {
             },
             ast::ASTNode::ExprIndexing { callee, property } => ASTNode::ExprIndexing {
                 callee: Box::new(ASTNode::from(callee)),
-                property: property.iter().map(ASTNode::from).collect(),
+                property: Box::new(ASTNode::from(property)),
             },
             ast::ASTNode::ExprTernary {
                 condition,
