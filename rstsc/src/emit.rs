@@ -230,18 +230,11 @@ fn emit_single(
             // Body
             emit_single(*body, emitter);
         }
-        ASTNode::ClassDefinition {
-            modifiers,
-            name,
-            extends,
-            declarations,
-            methods,
-            ..
-        } => {
-            emitter.out(&modifiers.emit(true), false);
+        ASTNode::ClassDefinition { inner } => {
+            emitter.out(&inner.modifiers.emit(true), false);
             emitter.out("class ", false);
-            emitter.out(&name, false);
-            if let Some(extends) = extends {
+            emitter.out(&inner.name, false);
+            if let Some(extends) = inner.extends {
                 emitter.out(" extends ", false);
                 emitter.out(&extends.get_single_name(), false);
             }
@@ -249,12 +242,12 @@ fn emit_single(
             emitter.endline();
             emitter.indent();
 
-            for (decl_modifiers, declaration) in declarations {
+            for (decl_modifiers, declaration) in inner.declarations {
                 emitter.out(&decl_modifiers.emit(true), false);
                 emit_named_declaration(declaration, emitter);
                 emitter.endline();
             }
-            for method in methods {
+            for method in inner.methods {
                 if method.body.is_none() { continue; }
                 emit_function_definition(method, false, emitter);
                 emitter.endline();
@@ -319,7 +312,12 @@ fn emit_single(
             }, ", ", ",");
             emitter.out(")", true);
         }
-        // ASTNode::ExprIndexing { .. } => "ExprIndexing"
+        ASTNode::ExprIndexing { callee, property } => {
+            emit_single(*callee, emitter);
+            emitter.out("(", false);
+            emit_single(*property, emitter);
+            emitter.out(")", true);
+        }
         ASTNode::ExprTernary { condition, if_true, if_false } => {
             emit_single(*condition, emitter);
             emitter.out_diff(" ? ", "?", false);
