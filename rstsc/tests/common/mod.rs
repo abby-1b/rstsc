@@ -1,7 +1,6 @@
 use std::{io::Read, process::{Command, Stdio}};
 
 use rand::Rng;
-use rstsc;
 use regex::Regex;
 
 pub enum WhiteSpace {
@@ -35,6 +34,7 @@ fn tsc_compile(code: &str) -> Result<String, String> {
         .arg(&filename_ts)
         .arg("--outFile")
         .arg(&filename_js)
+		.stdout(Stdio::null())
         .spawn();
 
 	// Wait for completion
@@ -59,7 +59,7 @@ fn tsc_compile(code: &str) -> Result<String, String> {
 
 /// Tests TypeScript code, compiling it with TSC and checking the two strings.
 /// Ignores leading and trailing whitespace and semicolons.
-fn test_code(code: &str, whitespace: &WhiteSpace) -> Result<(), String> {
+pub fn test_code<'a>(code: &str, whitespace: &WhiteSpace) -> Result<(), String> {
 	let mut code_string = code.to_string();
 	code_string += "\n ";
 	let code = code_string.as_str();
@@ -71,7 +71,7 @@ fn test_code(code: &str, whitespace: &WhiteSpace) -> Result<(), String> {
 		out
 	} else {
 		out_is_err = true;
-		out.err().unwrap()
+		format!("{:?}", out.err().unwrap())
 	};
 	let actual_untransformed: String = actual.clone();
 
@@ -110,7 +110,8 @@ fn test_code(code: &str, whitespace: &WhiteSpace) -> Result<(), String> {
 			concat!(
 				"Input code:\x1b[32m\n{}\x1b[0m\n",
 				"Expected output:\n\x1b[33m{}\x1b[0m\n",
-				"Got output:\n\x1b[31m{}\x1b[0m"
+				"Got output:\n\x1b[31m{}\x1b[0m\n",
+				"----------------------------------------"
 			),
 			code,
 			expect_untransformed,
