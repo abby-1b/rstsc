@@ -1,6 +1,6 @@
 /// This file is used for less rigorous testing during development.
 
-use rstsc::minify::minify_ast;
+// use rstsc::minify::minify_ast;
 use rstsc::tokenizer::TokenList;
 use rstsc::parser::get_block;
 use rstsc::emit::emit_code;
@@ -8,11 +8,14 @@ use rstsc::emit::emit_code;
 const SOURCE_TEST: &str = include_str!("./test.ts");
 
 fn main() {
+    use std::time::Instant;
+    let now = Instant::now();
+
     let mut tokens = TokenList::from(SOURCE_TEST);
 
     let ast = get_block(&mut tokens);
     if ast.is_err() {
-        ast.err().unwrap().throw();
+        ast.err().unwrap().throw(tokens);
         return;
     }
 
@@ -23,4 +26,7 @@ fn main() {
 
     let out = emit_code(ast, false);
     println!("{}", out);
+
+    let elapsed = now.elapsed();
+    println!("Took: {:.2?}", elapsed);
 }

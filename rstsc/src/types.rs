@@ -11,6 +11,7 @@ use crate::tokenizer::{Token, TokenList, TokenType};
 pub struct TypedNamedDeclaration {
     pub name: String,
     pub typ: Type,
+    pub computed: bool
 }
 
 #[derive(Copy, Clone)]
@@ -47,6 +48,19 @@ pub struct KeyValueMap {
     value: Type,
 }
 
+pub enum KVMapOrComputedProp {
+    KVMap(KeyValueMap),
+    ComputedProp(String)
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+pub struct TypeFunctionArgument {
+    spread: bool,
+    name: String,
+    conditional: bool,
+    typ: Option<Type>
+}
+
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum Type {
     // Primitives
@@ -64,6 +78,7 @@ pub enum Type {
 
     Unknown,
 
+    /// Refers to both `void` and `undefined` type, as they're equal
     Void,
 
     /// A union (eg. `string | number`)
@@ -93,17 +108,24 @@ pub enum Type {
     /// Used for type guards `x is string`
     Guard(String, Box<Type>),
 
-    /// A typed declaration (used inside arrow functions)
+    /// A typed declaration (used for parsing inside arrow functions)
     ColonDeclaration {
+        spread: bool,
         name: String,
         typ: Box<Type>,
         conditional: bool
     },
 
+    /// An un-typed spread argument, used during parsing
+    SpreadParameter {
+        name: String
+    },
+
     /// A function (eg. `let a: (x: number) => void;`)
     Function {
-        args: Vec<Type>,
-        return_type: Box<Type>
+        params: Vec<TypeFunctionArgument>,
+        return_type: Box<Type>,
+        is_constructor: bool
     },
 
     /// An index into a type (eg. `type[prop]`)
@@ -111,6 +133,9 @@ pub enum Type {
         callee: Box<Type>,
         property: Box<Type>
     },
+
+    /// Specifies that this type points to the inferred type of a real value
+    TypeOf(Box<Type>),
 
     /// Specifies that this type is a key of the given type
     KeyOf(Box<Type>),
@@ -357,27 +382,42 @@ impl Display for Type {
             },
 
             Type::ColonDeclaration {
+                spread,
                 name,
                 typ,
                 conditional
             } => {
+                if *spread { f.write_str("...")?; }
                 f.write_str(name)?;
                 if *conditional { f.write_str("?")?; }
                 f.write_str(": ")?;
                 f.write_str(&typ.to_string())
             },
 
+            Type::SpreadParameter { name } => {
+                f.write_str("...")?;
+                f.write_str(name)
+            },
+
             Type::Function {
-                args,
-                return_type
+                params,
+                return_type,
+                is_constructor
             } => {
+                if *is_constructor { f.write_str("new ")?; }
                 f.write_str("(")?;
-                f.write_str(
-                    &args.iter()
-                        .map(|arg| arg.to_string())
-                        .collect::<Vec<String>>()
-                        .join(", ")
-                )?;
+                let mut remaining = params.len();
+                for param in params {
+                    if param.spread { f.write_str("...")?; }
+                    f.write_str(&param.name)?;
+                    if param.conditional { f.write_str("?")?; }
+                    if let Some(typ) = &param.typ {
+                        f.write_str(": ")?;
+                        f.write_str(&typ.to_string())?;
+                    }
+                    remaining -= 1;
+                    if remaining > 0 { f.write_str(", ")?; }
+                }
                 f.write_str(") => ")?;
                 f.write_str(&return_type.to_string())
             }
@@ -386,6 +426,10 @@ impl Display for Type {
                 f.write_str("[")?;
                 f.write_str(&property.to_string())?;
                 f.write_str("]")
+            }
+            Type::TypeOf(inner) => {
+                f.write_str("typeof ")?;
+                std::fmt::Display::fmt(&inner, f)
             }
             Type::KeyOf(inner) => {
                 f.write_str("keyof ")?;
@@ -420,7 +464,19 @@ impl Display for Type {
     }
 }
 
+impl Type {
+    pub fn inner_count(&self) -> usize {
+        match self {
+            Type::Union(inner) => inner.len(),
+            Type::Intersection(inner) => inner.len(),
+            Type::Object { parts, .. } => parts.len(),
+            _ => todo!("type.inner_count not implemented for `{}`", self)
+        }
+    }
+}
+
 /// Gets a type, regardless of whether it starts with `:` or not.
+#[must_use]
 pub fn get_type<'a, 'b>(
     tokens: &'b mut TokenList<'a>
 ) -> Result<Type, CompilerError<'a>> where 'a: 'b {
@@ -431,9 +487,23 @@ pub fn get_type<'a, 'b>(
     return get_expression(tokens, 0);
 }
 
-pub fn get_key_value<'a, 'b>(
+/// Gets a type only if the next token is `:`.
+/// Otherwise, returns None
+#[must_use]
+pub fn try_get_type<'a, 'b>(
     tokens: &'b mut TokenList<'a>
-) -> Result<KeyValueMap, CompilerError<'a>> where 'a: 'b {
+) -> Result<Option<Type>, CompilerError<'a>> where 'a: 'b {
+    if tokens.peek_str() != ":" {
+        Ok(None)
+    } else {
+        tokens.skip_unchecked(); // Skip ":"
+        Ok(Some(get_expression(tokens, 0)?))
+    }
+}
+
+pub fn get_key_value_or_computed_property<'a, 'b>(
+    tokens: &'b mut TokenList<'a>
+) -> Result<KVMapOrComputedProp, CompilerError<'a>> where 'a: 'b {
     if tokens.peek_str() != "[" {
         return Err(CompilerError {
             message: "Expected key-value type!".to_string(),
@@ -446,7 +516,7 @@ pub fn get_key_value<'a, 'b>(
     
     // Although this is usually "key", it can be any identifier!
     let key_token = tokens.consume();
-    if !matches!(key_token.typ, TokenType::Identifier) {
+    if !key_token.is_identifier() {
         return Err(CompilerError {
             message: "Expected identifier for \"[key: type]: type\" declaration".to_string(),
             token: key_token
@@ -454,6 +524,12 @@ pub fn get_key_value<'a, 'b>(
     }
 
     tokens.ignore_whitespace();
+    if tokens.peek_str() == "]" {
+        tokens.skip_unchecked(); // Skip "]"
+        return Ok(
+            KVMapOrComputedProp::ComputedProp(key_token.value.to_owned())
+        )
+    }
     tokens.skip(":")?;
 
     let key_type = get_expression(tokens, 0)?;
@@ -466,7 +542,9 @@ pub fn get_key_value<'a, 'b>(
 
     let value_type = get_expression(tokens, 0)?;
 
-    Ok(KeyValueMap { key: key_type, value: value_type })
+    Ok(KVMapOrComputedProp::KVMap(
+        KeyValueMap { key: key_type, value: value_type }
+    ))
 }
 
 fn parse_infix<'a, 'b>(
@@ -474,6 +552,10 @@ fn parse_infix<'a, 'b>(
     tokens: &'b mut TokenList<'a>,
     precedence: u8
 ) -> Result<Type, CompilerError<'a>> where 'a: 'b {
+    let conditional = if tokens.peek_str() == "?" {
+        tokens.skip_unchecked();
+        true
+    } else { false };
     let infix_opr = tokens.consume();
     match infix_opr.value {
         "|" => {
@@ -497,14 +579,9 @@ fn parse_infix<'a, 'b>(
         ":" => {
             tokens.skip_unchecked();
             tokens.ignore_whitespace();
-            let conditional = if tokens.peek_str() == "?" {
-                tokens.skip_unchecked();
-                true
-            } else {
-                false
-            };
             let typ = get_expression(tokens, precedence)?;
             Ok(Type::ColonDeclaration {
+                spread: false,
                 name: left.to_string(),
                 typ: Box::new(typ),
                 conditional
@@ -537,13 +614,7 @@ fn parse_infix<'a, 'b>(
                     // Skipped!
                 } else {
                     // Wrong character!
-                    return Err(CompilerError {
-                        message: format!(
-                            "Expected \"<\", found {:?}",
-                            first_char
-                        ),
-                        token: Token::from(first_char)
-                    });
+                    return Err(CompilerError::expected("<", Token::from(first_char)));
                 }
             } else {
                 tokens.skip(group_end)?;
@@ -612,7 +683,7 @@ fn parse_infix<'a, 'b>(
         other => {
             Err(CompilerError {
                 message: format!(
-                    "Unexpected infix in type '{:?}'",
+                    "Unexpected infix in type {:?}",
                     other
                 ),
                 token: infix_opr
@@ -650,16 +721,31 @@ fn parse_prefix<'a, 'b>(
                 // TODO: Handle `[key: string]: number`
 
                 tokens.ignore_whitespace();
+                let mut is_computed_property = false;
+                let mut computed_name = None;
                 if tokens.peek_str() == "}" {
                     tokens.skip_unchecked();
                     break;
                 } else if tokens.peek_str() == "[" {
-                    kv_type = Some(get_key_value(tokens)?);
-                    continue;
+                    let kv_or_cp = get_key_value_or_computed_property(tokens)?;
+                    match kv_or_cp {
+                        KVMapOrComputedProp::KVMap(kv_map) => {
+                            kv_type = Some(kv_map);
+                            continue;
+                        }
+                        KVMapOrComputedProp::ComputedProp(name) => {
+                            computed_name = Some(name);
+                            is_computed_property = true;
+                        }
+                    }
                 }
 
                 // Get property name
-                let property = tokens.consume().value.to_string();
+                let property = if let Some(property_name) = computed_name {
+                    property_name
+                } else {
+                    tokens.consume().value.to_string()
+                };
                 
                 // Get property type (fallback to `any`)
                 tokens.ignore_whitespace();
@@ -673,7 +759,8 @@ fn parse_prefix<'a, 'b>(
                 // Push
                 obj_parts.push(TypedNamedDeclaration {
                     name: property,
-                    typ: property_type
+                    typ: property_type,
+                    computed: is_computed_property
                 });
 
                 // Ignore commas / exit
@@ -727,17 +814,55 @@ fn parse_prefix<'a, 'b>(
             // Parenthesized type!
             // This could be an arrow function, too
 
-            let mut inner_types = vec![];
+            let mut params_as_types = vec![];
             loop {
                 tokens.ignore_whitespace();
                 if tokens.peek_str() == "," {
-                    tokens.consume();
+                    tokens.skip_unchecked();
                 } else if tokens.peek_str() == ")" {
-                    tokens.consume();
+                    tokens.skip_unchecked();
                     break;
                 }
 
-                inner_types.push(get_type(tokens)?);
+                params_as_types.push(get_type(tokens)?);
+            }
+            let mut params = vec![];
+            for p in params_as_types.iter() {
+                params.push(match p {
+                    Type::ColonDeclaration { spread, name, typ, conditional } => {
+                        TypeFunctionArgument {
+                            spread: *spread,
+                            name: name.clone(),
+                            conditional: *conditional,
+                            typ: Some((**typ).clone())
+                        }
+                    }
+                    Type::SpreadParameter { name } => {
+                        TypeFunctionArgument {
+                            spread: true,
+                            name: name.clone(),
+                            conditional: false,
+                            typ: None
+                        }
+                    }
+                    Type::Custom(name) => {
+                        TypeFunctionArgument {
+                            spread: false,
+                            name: name.clone(),
+                            conditional: false,
+                            typ: None
+                        }
+                    }
+                    other => {
+                        return Err(CompilerError {
+                            message: format!(
+                                "Expected type argument, found type {:?}",
+                                other
+                            ),
+                            token: Token::from("")
+                        })
+                    }
+                });
             }
 
             tokens.ignore_whitespace();
@@ -746,22 +871,67 @@ fn parse_prefix<'a, 'b>(
                 tokens.skip_unchecked();
                 let return_type = get_expression(tokens, precedence)?;
                 Ok(Type::Function {
-                    args: inner_types,
-                    return_type: Box::new(return_type)
+                    params,
+                    return_type: Box::new(return_type),
+                    is_constructor: false
                 })
-            } else if inner_types.len() != 1 {
+            } else if params.len() != 1 {
                 Ok(Type::Function {
-                    args: inner_types,
-                    return_type: Box::new(Type::Unknown)
+                    params,
+                    return_type: Box::new(Type::Unknown),
+                    is_constructor: false
                 })
             } else {
                 // Simple parenthesis, remove the type from inside
-                Ok(inner_types.pop().unwrap())
+                Ok(params_as_types.pop().unwrap())
             }
         }
-        "asserts" | "unique" => {
+        "new" => {
+            // Makes the proceeding function a constructor
+            let next_token = tokens.peek().clone();
+            let mut next_type = get_expression(tokens, precedence)?;
+            match &mut next_type {
+                Type::Function { is_constructor, .. } => {
+                    *is_constructor = true;
+                }
+                other => {
+                    return Err(CompilerError {
+                        message: format!("`new` prefix expected \"Function\", found {:?}", other),
+                        token: next_token
+                    })
+                }
+            }
+            Ok(next_type)
+        }
+        "..." => {
+            // Spread for arguments
+            let mut param = get_expression(tokens, 0)?;
+            match &mut param {
+                Type::ColonDeclaration { spread, .. } => {
+                    *spread = true;
+                    Ok(param)
+                }
+                Type::Custom(name) => {
+                    Ok(Type::SpreadParameter { name: name.clone() })
+                }
+                _ => {
+                    Err(CompilerError {
+                        message: format!("Expected parameter after spread, found {:?}", param),
+                        token: Token::from("")
+                    })
+                }
+            }
+        }
+        "|" | "&" => {
+            // Prefix symbols used as syntactic sugar are ignored
+            get_expression(tokens, precedence)
+        }
+        "asserts" | "unique" | "abstract" => {
             // These types are ignored
             get_expression(tokens, precedence)
+        }
+        "typeof" => {
+            Ok(Type::TypeOf(Box::new(get_expression(tokens, precedence)?)))
         }
         "keyof" => {
             Ok(Type::KeyOf(Box::new(get_expression(tokens, precedence)?)))
@@ -818,11 +988,10 @@ fn get_expression<'a, 'b>(
                     ExprType::Prefx,
                     next.value
                 );
-                dbg!(next);
                 if let Some(binding_power) = binding_power {
                     // Prefix operators
                     parse_prefix(tokens, binding_power.1)?
-                } else if matches!(next.typ, TokenType::Identifier) {
+                } else if next.is_identifier() {
                     // Could be a name...
                     parse_name(tokens)
                 } else {

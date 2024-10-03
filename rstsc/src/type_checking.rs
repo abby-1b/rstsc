@@ -13,7 +13,7 @@ struct Scope<'a> {
 /// Infers a type from an AST node, as specifically as possible
 fn infer_type_from_node(node: &ASTNode) -> Type {
     match node {
-        ASTNode::ExprNumLiteral { number } => Type::Number,
+        ASTNode::ExprNumLiteral { .. } => Type::Number,
         ASTNode::ExprStrLiteral { .. } => Type::String,
         ASTNode::ExprBoolLiteral { .. } => Type::Boolean,
         ASTNode::Parenthesis { nodes } => {

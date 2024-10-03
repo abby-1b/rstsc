@@ -61,6 +61,10 @@ impl<'a> Token<'a> {
         matches!(self.typ, TokenType::Spacing | TokenType::LineTerminator)
     }
 
+    pub fn is_identifier(&self) -> bool {
+        matches!(self.typ, TokenType::Identifier)
+    }
+
     pub fn from(value: &str) -> Token {
         Token {
             typ: TokenType::Unknown,
@@ -127,15 +131,18 @@ impl<'a> TokenList<'a> {
     }
 
     /// Peeks at the next token without consuming it
+    #[must_use]
     pub fn peek<'b>(&self) -> &Token<'b> where 'a: 'b {
         &self.next_token
     }
 
+    #[must_use]
     pub fn peek_str(&self) -> &str {
         self.next_token.value
     }
 
     /// Consumes the next token
+    #[must_use]
     pub fn consume<'b>(&mut self) -> Token<'b> where 'a: 'b {
         let ret = self.next_token.clone();
         self.queue_token();
@@ -143,6 +150,7 @@ impl<'a> TokenList<'a> {
     }
 
     /// Skips a single character in the currently-loaded token
+    #[must_use]
     pub fn consume_single_character<'b>(&mut self) -> &'b str where 'a: 'b {
         // Get character
         let single_character = &self.next_token.value[0..1];
@@ -164,13 +172,10 @@ impl<'a> TokenList<'a> {
             self.skip_unchecked();
             Ok(())
         } else {
-            Err(CompilerError {
-                message: format!(
-                    "Expected {:?}, found {:?}",
-                    candidate, self.peek_str()
-                ),
-                token: self.peek().clone(),
-            })
+            Err(CompilerError::expected(
+                candidate,
+                self.peek().clone()
+            ))
         }
     }
 
@@ -186,6 +191,7 @@ impl<'a> TokenList<'a> {
     }
 
     /// Saves a checkpoint of the TokenList, so it can be returned to
+    #[must_use]
     pub fn get_checkpoint<'b>(&self) -> TokenListCheckpoint<'b> where 'a: 'b {
         TokenListCheckpoint {
             find_index: self.find_index,
@@ -231,7 +237,7 @@ impl<'a> TokenList<'a> {
                         TokenType::Spacing
                     }
                 );
-            } else if curr_char.is_ascii_alphabetic() {
+            } else if curr_char.is_ascii_alphabetic() || curr_char == '_' || curr_char == '$' {
                 // Identifiers
                 break 'token_done (
                     self.char_iter.consume_all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$'),
@@ -243,7 +249,7 @@ impl<'a> TokenList<'a> {
                     self.char_iter.consume_all(|c| c.is_numeric() || c == '_' || c == '.' || c == 'n'),
                     TokenType::Number
                 );
-            } else if curr_char == '\'' || curr_char == '"' {
+            } else if curr_char == '\'' || curr_char == '"' || curr_char == '`' {
                 // Strings
                 let start_char = self.char_iter.consume().unwrap();
                 let mut token_len = 1;

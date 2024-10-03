@@ -1,4 +1,3 @@
-
 // let obj = {
 //     a: 123,
 //     b: 'nice',
@@ -64,12 +63,20 @@
 // let maybeString: any = 'I\'m a string';
 // assertIsString(maybeString);
 
-
 // interface TestFn {
 //     (x: number, y: number);
+//     (x: number, y: number, z: string);
+//     something: number
 // }
 
-// let a: TestFn = (x: number) => x;
+// const a: {
+//     (x: number, y: number)
+//     lmao: 123
+// } = () => 123;
+
+// const m = (a: number, b: number) => 123;
+// m.something = 456;
+// const a: TestFn = m;
 
 // interface TestProps {
 //     a: number;
@@ -78,7 +85,6 @@
 //     d: TestFn
 //     e
 // }
-
 
 // type A = { some: number } | { lol: string } & { other: boolean }
 // type B = { some: number } & { lol: string } | { other: boolean }
@@ -113,6 +119,40 @@
 // type ObjectWithValues = { a: number; b: string; c: boolean };
 // let valueOfObject: ValueOf<ObjectWithValues> = true;
 
-
-let some: true extends true ? true : false;
+// let some: true extends true ? true : false;
 // let nestedConditional: true extends (true extends false ? true : false) ? true : false = false;
+
+// type Callback = () => void;
+// let callback: Callback = () => { console.log('Callback called'); }
+
+// let neverFunction: () => never = () => { throw new Error('Never returns'); };
+
+// let a: { [key: string]: number } = { 'hey': 123, 'there': 456 };
+
+// let identityValue: number = identityFunction<number>(42);
+
+// let genericWithUnion: <T>(x: T | T[]) => T[] = x => Array.isArray(x) ? x : [x];
+
+// type Point = { x: number; y: number; };
+// function logPoint(p: Point): void { console.log(`x: ${p.x}, y: ${p.y}`); }
+// type PartialPoint = Partial<Point>;
+// let partialPoint: PartialPoint = { x: 10 };
+// type RequiredPoint = Required<PartialPoint>;
+// let requiredPoint: RequiredPoint = { x: 10, y: 20 };
+
+// interface Shape { area(): number; }
+// interface Another {}
+// class Circle implements Shape {
+//     constructor(public radius: number) {}
+//     area(): number { return Math.PI * this.radius * this.radius; }
+//     lmao(some?: number) { return some; }
+// }
+
+// TODO: deal with the things below
+
+// type ElementType<T> = T extends (infer U)[] ? U : never;
+// type T8 = ElementType<string[]>;
+
+const sym = Symbol();
+// type T7 = { [n: number]: string, [sym]: number }[typeof sym];
+type T7 = { [n: number]: string, [sym]: number }[typeof sym];

@@ -295,14 +295,12 @@ impl ASTNode {
                 cast_type: cast_type.clone(),
                 value: Box::new(ASTNode::from(value)),
             },
-            ast::ASTNode::TypeDeclaration { first_typ, equals_typ } => ASTNode::TypeDeclaration {
-                first_typ: first_typ.clone(),
-                equals_typ: equals_typ.clone(),
-            },
             ast::ASTNode::Empty => ASTNode::Empty,
 
             // TODO: finish all missing nodes
-            _ => { ASTNode::Empty } // For debugging
+            missing_type => {
+                todo!("Missing type: {:?}", missing_type);
+            } // For debugging
         }
     }
 
