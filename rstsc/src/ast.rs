@@ -1,7 +1,7 @@
 
 use core::fmt::Debug;
 
-use crate::{error_type::CompilerError, tokenizer::EOF_TOKEN, types::{KeyValueMap, Type, TypedNamedDeclaration}};
+use crate::{error_type::CompilerError, tokenizer::EOF_TOKEN, types::Type};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum VariableDefType {
@@ -45,19 +45,23 @@ pub struct ModifierList {
     pub flags: u8,
 }
 
+pub const ACCESSIBILITY_MODIFIERS: &[&str] = &[
+    "public", "private", "protected",
+];
+
 pub const MODIFIERS: &[&str] = &[
     "export",
     "async",
-    "public", "private", "protected",
     "static",
+    "public", "private", "protected",
     "readonly",
     "abstract"
 ];
 pub const MODIFIER_IS_JS: &[bool] = &[
     true,
     true,
-    false, false, false,
     true,
+    false, false, false,
     false,
     false
 ];
@@ -65,26 +69,26 @@ pub const MODIFIER_IS_JS: &[bool] = &[
 #[derive(Clone)]
 /// A single modifier
 pub enum Modifier {
-    Export,
-    Async,
-    Static,
-    Public,
-    Private,
-    Protected,
-    Readonly,
-    Abstract,
+    Export = 1,
+    Async = 2,
+    Static = 4,
+    Public = 8,
+    Private = 16,
+    Protected = 32,
+    Readonly = 64,
+    Abstract = 128,
 }
-impl Modifier {
-    pub fn as_flag(&self) -> u8 {
+impl Into<u8> for Modifier {
+    fn into(self) -> u8 {
         match self {
-            Modifier::Export => 1 << 0,
-            Modifier::Async => 1 << 1,
-            Modifier::Static => 1 << 2,
-            Modifier::Public => 1 << 3,
-            Modifier::Private => 1 << 4,
-            Modifier::Protected => 1 << 5,
-            Modifier::Readonly => 1 << 6,
-            Modifier::Abstract => 1 << 7,
+            Modifier::Export => 1,
+            Modifier::Async => 2,
+            Modifier::Static => 4,
+            Modifier::Public => 8,
+            Modifier::Private => 16,
+            Modifier::Protected => 32,
+            Modifier::Readonly => 64,
+            Modifier::Abstract => 128,
         }
     }
 }
@@ -92,12 +96,12 @@ impl Modifier {
 impl ModifierList {
     /// Sets the modifier in the list
     pub fn set(&mut self, modifier: Modifier) {
-        self.flags |= modifier.as_flag();
+        self.flags |= modifier as u8;
     }
 
     /// Checks if the modifier exists within the list
-    pub fn has(&mut self, modifier: Modifier) -> bool {
-        self.flags & modifier.as_flag() != 0
+    pub fn has(&self, modifier: Modifier) -> bool {
+        self.flags & modifier as u8 != 0
     }
 
     pub fn emit(&self, js_only: bool) -> String {
@@ -116,11 +120,12 @@ impl ModifierList {
 
 impl Debug for ModifierList {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Num: {}\n", self.flags)?;
         f.debug_list()
             .entries(
                 (0..6).filter_map(|idx| {
                     let flag = 1 << idx;
-                    if self.flags & flag== 0 {
+                    if self.flags & flag == 0 {
                         return None;
                     }
                     Some(MODIFIERS[idx])
@@ -159,9 +164,10 @@ pub struct FunctionDefinition {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClassDefinition {
     pub modifiers: ModifierList,
-    pub name: String,
+    pub name: Option<String>,
     pub generics: Vec<Type>,
     pub extends: Option<Type>,
+    pub implements: Vec<Type>,
 
     /// Named declarations
     pub declarations: Vec<(ModifierList, NamedDeclaration)>,
@@ -172,9 +178,10 @@ pub struct ClassDefinition {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct InterfaceDeclaration {
-    name: Type,
-    extends: Option<Type>,
-    equals_type: Type
+    pub name: String,
+    pub generics: Vec<Type>,
+    pub extends: Vec<Type>,
+    pub equals_type: Type
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -270,11 +277,6 @@ pub enum ASTNode {
         value: Box<ASTNode>,
     },
 
-    TypeDeclaration {
-        first_typ: Type,
-        equals_typ: Type
-    },
-
     InterfaceDeclaration { inner: InterfaceDeclaration },
 
     /// Used in situations like `[ 1, 2, ]` where there's an empty expression
@@ -313,9 +315,8 @@ impl ASTNode {
             ASTNode::PostfixOpr { .. } => "PostfixOpr",
             ASTNode::ExprAs { .. } => "ExprAs",
             ASTNode::ExprTypeAssertion { .. } => "ExprTypeAssertion",
-            ASTNode::TypeDeclaration { .. } => "TypeDeclaration",
+            ASTNode::InterfaceDeclaration { .. } => "InterfaceDeclaration",
             ASTNode::Empty { .. } => "Empty",
-            ASTNode::InterfaceDeclaration { .. } => "InterfaceDeclaration"
         }.to_string()
     }
 

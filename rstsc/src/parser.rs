@@ -1,12 +1,13 @@
 use phf::phf_map;
 use crate::{
     ast::{
-        ASTNode, ClassDefinition, FunctionDefinition, Modifier, ModifierList, NamedDeclaration, ObjectProperty, VariableDefType, MODIFIERS
+        ASTNode, ClassDefinition, FunctionDefinition, InterfaceDeclaration, Modifier, ModifierList, NamedDeclaration, ObjectProperty, VariableDefType, ACCESSIBILITY_MODIFIERS, MODIFIERS
     },
     error_type::CompilerError,
+
     operations::{get_operator_binding_power, ExprType},
-    tokenizer::{TokenList, TokenType, EOF_TOKEN},
-    types::{get_key_value, get_type, Type, TypedNamedDeclaration}
+    tokenizer::{Token, TokenList, TokenType, EOF_TOKEN},
+    types::{get_key_value_or_computed_property, get_type, try_get_type, KVMapOrComputedProp, KeyValueMap, Type, TypedNamedDeclaration}
 };
 
 pub static INVERSE_GROUPINGS: phf::Map<&'static str, &'static str> = phf_map! {
@@ -129,7 +130,7 @@ fn handle_vars<'a, 'b>(
     let def_type = get_variable_def_type(tokens)?;
 
     // Get the variable definitions
-    let defs = get_named_declarations(tokens)?;
+    let defs = get_multiple_named_declarations(tokens)?;
 
     out.push(ASTNode::VariableDeclaration {
         modifiers: Default::default(),
@@ -158,16 +159,53 @@ fn get_variable_def_type<'b>(
     }
 }
 
-/// Gets typed declarations, with or without values. Stops when it encounters a semicolon.
+/// Gets a single named (and optionally typed) declaration, with or without
+/// values.
+fn get_named_declaration<'a, 'b>(
+    tokens: &'b mut TokenList<'a>
+) -> Result<NamedDeclaration, CompilerError<'a>> where 'a: 'b {
+    let spread = if tokens.peek_str() == "..." {
+        tokens.skip_unchecked();
+        true
+    } else {
+        false
+    };
+    let name_token = tokens.consume();
+    let name = name_token.value.to_owned();
+    let conditional = if tokens.peek_str() == "?" {
+        tokens.skip_unchecked();
+        true
+    } else {
+        false
+    };
+    let typ = try_get_type(tokens)?;
+    let value = if tokens.peek_str() == "=" {
+        tokens.skip_unchecked();
+        Some(get_expression(tokens, 0)?)
+    } else {
+        None
+    };
+    Ok(NamedDeclaration {
+        name,
+        typ,
+        value,
+        conditional,
+        spread,
+    })
+}
+
+/// Gets multiple named declarations, with or without values.
+/// Stops when it encounters a semicolon or closing parenthesis
 /// 
 /// Examples (in square brackets):
 /// 
 /// `let [a: number = 123, b: string];`
 /// 
 /// `function some([a: number, b: string = '123']) { ... }`
-fn get_named_declarations<'a, 'b>(
+fn get_multiple_named_declarations<'a, 'b>(
     tokens: &'b mut TokenList<'a>
 ) -> Result<Vec<NamedDeclaration>, CompilerError<'a>> where 'a: 'b {
+    // Old code
     let declaration_node = get_expression(tokens, 0)?;
     convert_to_typed_declarations(declaration_node)
 }
@@ -372,7 +410,7 @@ fn handle_function_declaration<'a, 'b>(
 
     // Get name
     tokens.ignore_whitespace();
-    let name = if matches!(tokens.peek().typ, TokenType::Identifier) {
+    let name = if tokens.peek().is_identifier() {
         // Named function
         Some(tokens.consume().value.to_string())
     } else {
@@ -390,43 +428,15 @@ fn handle_function_declaration<'a, 'b>(
     Ok(true)
 }
 
+/// Gets a function once the name has been consumed.
+/// This includes any generics, arguments, return type, and body.
 fn get_function_after_name<'a, 'b>(
     tokens: &'b mut TokenList<'a>,
     name: Option<String>
 ) -> Result<FunctionDefinition, CompilerError<'a>> where 'a: 'b {
-    // Get generics
     tokens.ignore_whitespace();
-    let mut generics = vec![];
-    if tokens.peek_str() == "<" {
-        tokens.skip_unchecked();
-        loop {
-            let new_type = get_type(tokens)?;
 
-            // Skip comma
-            tokens.ignore_whitespace();
-            while tokens.peek_str() == "," {
-                tokens.skip_unchecked();
-                tokens.ignore_whitespace();
-            }
-
-            if tokens.peek_str() == "=" {
-                // Generic default
-                // Defaults are ignored! They're an artifact of TypeScript's
-                // older type inference, which couldn't infer a lot of the more
-                // complex types.
-                tokens.skip_unchecked();
-                get_type(tokens)?;
-            }
-
-            // Add the type
-            generics.push(new_type);
-
-            if tokens.peek_str() == ">" {
-                break;
-            }
-        }
-        tokens.skip_unchecked();
-    }
+    let generics = get_optional_generics(tokens)?;
     
     // Get parameters and return type
     let (params, return_type) = {
@@ -468,6 +478,126 @@ fn get_function_after_name<'a, 'b>(
     })
 }
 
+/// Similar to `get_function_after_name`, gets a class constructor.
+fn get_constructor_after_name<'a, 'b>(
+    tokens: &'b mut TokenList<'a>,
+    declarations: &mut Vec<(ModifierList, NamedDeclaration)>
+) -> Result<FunctionDefinition, CompilerError<'a>> where 'a: 'b {
+    tokens.ignore_whitespace();
+
+    // Handle generics
+    if tokens.peek_str() == "<" {
+        return Err(CompilerError {
+            message: "Type parameters cannot appear on a constructor declaration.".to_owned(),
+            token: tokens.consume()
+        })
+    }
+    
+    // Get parameters
+    let mut params = vec![];
+    let mut set_properties: Vec<ASTNode> = vec![];
+    tokens.skip("(")?;
+    while tokens.peek_str() != ")" {
+        tokens.ignore_whitespace();
+        if ACCESSIBILITY_MODIFIERS.contains(&tokens.peek_str()) {
+            let modifiers = fetch_modifier_list(tokens);
+            let mut declaration = get_named_declaration(tokens)?;
+            params.push(declaration.clone());
+            declaration.value = None;
+            declarations.push((modifiers, declaration.clone()));
+            set_properties.push(ASTNode::InfixOpr {
+                left: Box::new(ASTNode::InfixOpr {
+                    left: Box::new(ASTNode::ExprIdentifier { name: "this".to_owned() }),
+                    opr: ".".to_owned(),
+                    right: Box::new(ASTNode::ExprIdentifier { name: declaration.name.clone() })
+                }),
+                opr: "=".to_owned(),
+                right: Box::new(ASTNode::ExprIdentifier { name: declaration.name.clone() })
+            })
+        } else {
+            params.push(get_named_declaration(tokens)?);
+        }
+    }
+    tokens.skip_unchecked(); // Skip ")"
+
+    // Get return type
+    tokens.ignore_whitespace();
+    let return_type = try_get_type(tokens)?;
+
+    // Get body
+    tokens.ignore_whitespace();
+    let body = if tokens.peek_str() == ";" {
+        // No body! This means it's just a declaration.
+        None
+    } else {
+        tokens.skip("{")?;
+        let mut body = get_block(tokens)?;
+        match &mut body {
+            ASTNode::Block { nodes } => {
+                nodes.splice(0..0, set_properties);
+                Some(body)
+            }
+            other => {
+                return Err(CompilerError {
+                    message: format!(
+                        "Expected block in function body, found {:?}",
+                        other
+                    ),
+                    token: Token::from("")
+                })
+            }
+        }
+    };
+
+    Ok(FunctionDefinition {
+        modifiers: Default::default(),
+        name: Some("constructor".to_owned()),
+        generics: vec![],
+        params,
+        return_type,
+        body: body.map(Box::new)
+    })
+}
+
+/// Gets types separated by commas
+fn get_comma_separated_types_until<'a, 'b>(
+    tokens: &'b mut TokenList<'a>,
+    until_str: &[&str]
+) -> Result<Vec<Type>, CompilerError<'a>> where 'a: 'b {
+    let mut types = vec![];
+    loop {
+        tokens.ignore_whitespace();
+        while tokens.peek_str() == "," {
+            tokens.skip_unchecked();
+            tokens.ignore_whitespace();
+        }
+        if until_str.contains(&tokens.peek_str()) {
+            break
+        }
+        types.push(get_type(tokens)?);
+        if tokens.peek_str() == "=" {
+            // Type defaults are ignored! They're an artifact of TypeScript's
+            // older type inference, which couldn't infer a lot of the more
+            // complex types.
+            tokens.skip_unchecked();
+            get_type(tokens)?;
+        }
+    }
+    Ok(types)
+}
+
+/// Gets generics if available, otherwise returns an empty vec
+fn get_optional_generics<'a, 'b>(
+    tokens: &'b mut TokenList<'a>
+) -> Result<Vec<Type>, CompilerError<'a>> where 'a: 'b {
+    // Get generics
+    if tokens.peek_str() != "<" { return Ok(vec![]); }
+    tokens.skip_unchecked(); // Skip "<"
+    let generics = get_comma_separated_types_until(tokens, &[ ">" ])?;
+    tokens.skip_unchecked(); // Skip ">"
+    Ok(generics)
+}
+
 fn handle_class_declaration<'a, 'b>(
     tokens: &'b mut TokenList<'a>,
     out: &mut Vec<ASTNode>,
@@ -475,47 +605,35 @@ fn handle_class_declaration<'a, 'b>(
     if tokens.peek_str() != "class" {
         return Ok(false);
     }
+    out.push(get_class_expression(tokens)?);
+    Ok(true)
+}
+
+fn get_class_expression<'a, 'b>(
+    tokens: &'b mut TokenList<'a>,
+) -> Result<ASTNode, CompilerError<'a>> where 'a: 'b {
     tokens.skip_unchecked(); // Skip "class"
     tokens.ignore_whitespace();
 
-    fn deconstruct_class_header<'a>(
-        header_type: Type
-    ) -> Result<(Option<String>, Option<Vec<Type>>, Option<Type>), CompilerError<'a>> {
-        match header_type {
-            Type::Custom(name) => {
-                Ok((Some(name), None, None))
-            }
-            Type::WithArgs(name_type, generics) => {
-                let mut out = deconstruct_class_header(*name_type)?;
-                out.1 = Some(generics);
-                Ok(out)
-            }
-            Type::Extends(left, extends) => {
-                let mut out = deconstruct_class_header(*left)?;
-                out.2 = Some(*extends);
-                Ok(out)
-            }
-            other => {
-                Err(CompilerError {
-                    message: format!(
-                        "Expected class header, found {:?}",
-                        other
-                    ),
-                    token: EOF_TOKEN.clone()
-                })
-            }
-        }
-    }
-
-    // Get the class name and generics
-
-    // TODO: fix anonymous class generics `let a = class<T> {...}`
-    let (name, generics, extends) = deconstruct_class_header(get_type(tokens)?)?;
-    let name: String = name.unwrap_or(ANONYMOUS_CLASS_NAME.to_string());
-    let generics = generics.unwrap_or(vec![]);
+    let TypedHeader {
+        name,
+        generics,
+        extends,
+        implements
+    } = get_typed_header(tokens, false)?;
+    let extends = if extends.len() > 1 {
+        return Err(CompilerError {
+            message: format!("Classes can only extend once!"),
+            token: Token::from("")
+        })
+    } else if extends.len() == 1 {
+        Some(extends.last().unwrap().clone())
+    } else {
+        None
+    };
 
     // Classes change the way things are parsed!
-    let mut declarations = vec![];
+    let mut declarations: Vec<(ModifierList, NamedDeclaration)> = vec![];
     let mut methods = vec![];
 
     tokens.ignore_whitespace();
@@ -534,9 +652,7 @@ fn handle_class_declaration<'a, 'b>(
 
         // Get the name (might be a property or a method, we don't know yet)
         let name = tokens.consume();
-        if !matches!(name.typ, TokenType::Identifier) {
-            dbg!(declarations);
-            dbg!(methods);
+        if !name.is_identifier() {
             return Err(CompilerError {
                 message: "Expected identifier in class body!".to_string(),
                 token: name
@@ -544,12 +660,14 @@ fn handle_class_declaration<'a, 'b>(
         }
         tokens.ignore_whitespace();
 
-        if [ ":", "=", ";" ].contains(&tokens.peek_str()) {
+        if name.value != "constructor" && [ ":", "=", ";" ].contains(&tokens.peek_str()) {
             // `:`, `=`, and `;` mean it's a property
             tokens.restore_checkpoint(checkpoint);
 
+            println!("Modifier for declaration: {:?}", modifiers);
+
             // Get the declaration
-            let gotten_declarations = get_named_declarations(tokens)?;
+            let gotten_declarations = get_multiple_named_declarations(tokens)?;
 
             // Add the declaration
             for declaration in gotten_declarations {
@@ -560,10 +678,18 @@ fn handle_class_declaration<'a, 'b>(
             }
         } else {
             // Otherwise, it's a method
-            let mut function = get_function_after_name(
-                tokens,
-                Some(name.value.to_string())
-            )?;
+            let mut function = if name.value == "constructor" {
+                get_constructor_after_name(
+                    tokens,
+                    &mut declarations
+                )?
+            } else {
+                get_function_after_name(
+                    tokens,
+                    Some(name.value.to_string())
+                )?
+            };
+            function.modifiers.flags |= modifiers.flags;
             if !function.modifiers.has(Modifier::Public) &&
                 !function.modifiers.has(Modifier::Private) &&
                 !function.modifiers.has(Modifier::Protected) {
@@ -583,16 +709,63 @@ fn handle_class_declaration<'a, 'b>(
     }
     tokens.skip("}")?; // Skip body "}"
 
-    out.push(ASTNode::ClassDefinition { inner: Box::new(ClassDefinition {
+    Ok(ASTNode::ClassDefinition { inner: Box::new(ClassDefinition {
         modifiers: Default::default(),
         name,
         generics,
         extends,
+        implements,
         declarations,
         methods
-    }) });
+    }) })
+}
 
-    Ok(true)
+struct TypedHeader {
+    name: Option<String>,
+    generics: Vec<Type>,
+    extends: Vec<Type>,
+    implements: Vec<Type>,
+}
+
+/// Gets a typed header for a class or interface.
+fn get_typed_header<'a>(
+    tokens: &mut TokenList<'a>,
+    require_name: bool
+) -> Result<TypedHeader, CompilerError<'a>> {
+    tokens.ignore_whitespace();
+    let name: Option<String> = if tokens.peek().is_identifier() {
+        Some(tokens.consume().value.to_owned())
+    } else if require_name {
+        let t = tokens.consume();
+        return Err(CompilerError {
+            message: format!("Expected identifier, found {:?}", t.value),
+            token: t
+        });
+    } else {
+        None
+    };
+
+    let generics: Vec<Type> = get_optional_generics(tokens)?;
+    tokens.ignore_whitespace();
+
+    let extends = if tokens.peek_str() == "extends" {
+        tokens.skip_unchecked(); // Skip "extends"
+        get_comma_separated_types_until(tokens, &[ "implements", "{", "=" ])?
+    } else {
+        vec![]
+    };
+    tokens.ignore_whitespace();
+
+    let implements = if tokens.peek_str() == "implements" {
+        tokens.skip_unchecked(); // Skip "implements"
+        get_comma_separated_types_until(tokens, &[ "{", "=" ])?
+    } else {
+        vec![]
+    };
+
+    Ok(TypedHeader {
+        name, generics, extends, implements
+    })
 }
 
 fn handle_modifiers<'a>(
@@ -641,11 +814,25 @@ fn handle_type_declaration<'a>(
     if tokens.peek_str() != "type" {
         return Ok(false);
     }
-
     tokens.skip_unchecked(); // Skip `type`
 
-    // Get the first type
-    let first_typ = get_type(tokens)?;
+    let TypedHeader {
+        name, generics,
+        extends, implements
+    } = get_typed_header(tokens, true)?;
+    let name = unsafe { name.unwrap_unchecked() };
+    if extends.len() > 0 {
+        return Err(CompilerError {
+            message: format!("Type declarations can't extend!"),
+            token: Token::from("")
+        })
+    }
+    if implements.len() > 0 {
+        return Err(CompilerError {
+            message: format!("Type declarations can't implement!"),
+            token: Token::from("")
+        })
+    }
 
     // Consume `=`
     tokens.ignore_whitespace();
@@ -654,10 +841,12 @@ fn handle_type_declaration<'a>(
     // Get the second type
     let equals_typ = get_type(tokens)?;
 
-    out.push(ASTNode::TypeDeclaration {
-        first_typ,
-        equals_typ
-    });
+    out.push(ASTNode::InterfaceDeclaration { inner: InterfaceDeclaration {
+        name,
+        generics,
+        extends,
+        equals_type: equals_typ
+    } });
 
     Ok(true)
 }
@@ -671,28 +860,28 @@ fn handle_interface<'a>(
     }
 
     tokens.skip_unchecked();
+    
+    let TypedHeader {
+        name, generics,
+        extends, implements
+    } = get_typed_header(tokens, true)?;
+    let name = unsafe { name.unwrap_unchecked() };
+    if implements.len() > 0 {
+        return Err(CompilerError {
+            message: format!("Interfaces can't implement, only extend!"),
+            token: Token::from("")
+        })
+    }
 
-    // Get the interface name
-    let name = get_type(tokens)?;
-    tokens.ignore_whitespace();
-
-    let extends = if tokens.peek_str() == "extends" {
-        tokens.skip_unchecked(); // Skip "extends"
-        Some(get_type(tokens)?)
-    } else {
-        None
-    };
-
-    tokens.skip("{")?;
-
-    // TODO: IMPORTANT:
-    // Just uhh... get the interface as a type. Types can do everything that
-    // interfaces can do. It's pointless.
+    tokens.skip_unchecked(); // Skip "{"
 
     // Store the parts of the interface!
-    let mut function_types = Type::Intersection(vec![]);
-    let mut interface_named_parts: Vec<TypedNamedDeclaration> = vec![];
-    let mut key_value = None;
+    // Stores the function types in a multi-function interface
+    let mut function_types = Type::Union(vec![]);
+    // Named key-value types
+    let mut named_parts: Vec<TypedNamedDeclaration> = vec![];
+    // [key: type]
+    let mut key_value: Option<KeyValueMap> = None;
 
     loop {
         tokens.ignore_whitespace();
@@ -705,34 +894,43 @@ fn handle_interface<'a>(
         if next == "(" {
             // Function
             let function = get_type(tokens)?;
-            interface_type.intersection(function);
+            function_types.union(function);
         } else if next == "[" {
-            key_value = Some(get_key_value(tokens)?);
-        } else {
-            // Normal named declaration (no type)
-            let named_decl = get_type(tokens)?;
-            match named_decl {
-                Type::ColonDeclaration { name, typ, conditional } => {
-                    interface_named_parts.push(TypedNamedDeclaration {
+            let kv_or_cp = get_key_value_or_computed_property(tokens)?;
+            match kv_or_cp {
+                KVMapOrComputedProp::KVMap(kv_map) => key_value = Some(kv_map),
+                KVMapOrComputedProp::ComputedProp(name) => {
+                    named_parts.push(TypedNamedDeclaration {
                         name,
-                        typ: *typ
-                    })
-                }
-                Type::Custom(name) => {
-                    interface_named_parts.push(TypedNamedDeclaration {
-                        name,
-                        typ: Type::Unknown,
-                    })
-                },
-                other => {
-                    return Err(CompilerError {
-                        message: format!(
-                            "Expected type declaration, found {:?}",
-                            other
-                        ),
-                        token: EOF_TOKEN.clone()
+                        typ: try_get_type(tokens)?.unwrap_or(Type::Unknown),
+                        computed: false
                     });
                 }
+            }
+        } else {
+            // Normal named declaration (no type)
+
+            // Try getting a named function
+            let checkpoint = tokens.get_checkpoint();
+            let function_name = tokens.consume();
+            tokens.ignore_whitespace();
+            if tokens.peek_str() == "(" {
+                // It's a function! (which is a member)
+                let function = get_type(tokens)?;
+                named_parts.push(TypedNamedDeclaration {
+                    name: function_name.value.to_owned(),
+                    typ: function,
+                    computed: false
+                });
+            } else {
+                // It isn't a function, treat it as a named declaration
+                tokens.restore_checkpoint(checkpoint);
+                let decl = get_named_declaration(tokens)?;
+                named_parts.push(TypedNamedDeclaration {
+                    name: decl.name,
+                    typ: decl.typ.unwrap_or(Type::Unknown),
+                    computed: false
+                });
             }
         }
 
@@ -743,15 +941,29 @@ fn handle_interface<'a>(
         }
     }
 
-    // dbg!(interface_type);
-    // dbg!(interface_named_parts);
-    // TODO: finish interface typing
-    // interface_type.combine(named_declarations_to_type(interface_named_parts)?);
+    let named_dict = Type::Object {
+        key_value: key_value.map(Box::new),
+        parts: named_parts
+    };
 
-    out.push(ASTNode::TypeDeclaration {
-        first_typ: name,
-        equals_typ: Type::Any
-    });
+    let mut equals_type = Type::Intersection(vec![]);
+    if function_types.inner_count() != 0 { equals_type.intersection(function_types); }
+    if named_dict.inner_count() != 0 { equals_type.intersection(named_dict); }
+    out.push(ASTNode::InterfaceDeclaration { inner: InterfaceDeclaration {
+        name,
+        generics,
+        extends,
+        equals_type: if equals_type.inner_count() == 0 {
+            Type::Object { key_value: None, parts: vec![] }
+        } else if equals_type.inner_count() == 1 {
+            match equals_type {
+                Type::Intersection(inner) => inner[0].clone(),
+                _ => panic!("")
+            }
+        } else {
+            equals_type
+        }
+    } });
 
     Ok(true)
 }
@@ -972,7 +1184,7 @@ fn parse_infix<'a>(
         tokens.ignore_whitespace();
         if tokens.peek_str() == ":" {
             // Conditional type!
-            tokens.skip_unchecked();
+            tokens.skip_unchecked(); // Skip ":"
 
             // Get the type
             let typ = get_type(tokens)?;
@@ -1061,31 +1273,30 @@ fn get_expression<'a>(
             TokenType::Symbol | TokenType::Identifier => {
                 // `class` can be used inside an expression, but calling it a
                 // prefix feels strange... I'm going to handle it here
-                // TODO: fix class expressions
-                // if next.value == "class" {
-                //     handle_class_declaration(tokens, out)
-                // }
-
-                let binding_power = get_operator_binding_power(
-                    ExprType::Prefx,
-                    next.value
-                );
-                if let Some(binding_power) = binding_power {
-                    // These prefix operators include what you might expect
-                    // (+, -, ~), along with arrays, dicts, among other things!
-                    parse_prefix(tokens, binding_power.1)?
-                } else if matches!(next.typ, TokenType::Identifier) {
-                    // Could be a name...
-                    parse_name(tokens)?
+                if next.value == "class" {
+                    get_class_expression(tokens)?
                 } else {
-                    // Not a name & no matching operators.
-                    return Err(CompilerError {
-                        message: format!(
-                            "Prefix operator not found: {:?}",
-                            tokens.peek()
-                        ),
-                        token: tokens.consume()
-                    });
+                    let binding_power = get_operator_binding_power(
+                        ExprType::Prefx,
+                        next.value
+                    );
+                    if let Some(binding_power) = binding_power {
+                        // These prefix operators include what you might expect
+                        // (+, -, ~), along with arrays, dicts, among other things!
+                        parse_prefix(tokens, binding_power.1)?
+                    } else if next.is_identifier() {
+                        // Could be a name...
+                        parse_name(tokens)?
+                    } else {
+                        // Not a name & no matching operators.
+                        return Err(CompilerError {
+                            message: format!(
+                                "Prefix operator not found: {:?}",
+                                tokens.peek()
+                            ),
+                            token: tokens.consume()
+                        });
+                    }
                 }
             },
             _ => {

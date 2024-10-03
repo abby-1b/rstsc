@@ -126,28 +126,35 @@ pub fn get_type_operator_binding_power(
 ) -> Option<(u8, u8)> {
     match (&expr_type, opr) {
 
-        (ExprType::Prefx, "{") => Some((14, 15)),
-        (ExprType::Prefx, "(") => Some((14, 15)),
-        (ExprType::Prefx, "<") => Some((14, 15)),
-        (ExprType::Prefx, "[") => Some((14, 15)),
+        (ExprType::Prefx, "{") => Some((16, 17)),
+        (ExprType::Prefx, "(") => Some((16, 17)),
+        (ExprType::Prefx, "<") => Some((16, 17)),
+        (ExprType::Prefx, "[") => Some((16, 17)),
 
-        (ExprType::Infx, "[") => Some((12, 13)),
-        (ExprType::Infx, "<") => Some((12, 13)),
+        (ExprType::Infx, "[") => Some((14, 15)),
+        (ExprType::Infx, "<") => Some((14, 15)),
 
+        (ExprType::Prefx, "new") => Some((12, 13)),
+
+        (ExprType::Prefx, "typeof"  ) => Some((10, 11)),
         (ExprType::Prefx, "keyof"   ) => Some((10, 11)),
         (ExprType::Prefx, "asserts" ) => Some((10, 11)),
         (ExprType::Prefx, "infer"   ) => Some((10, 11)),
         (ExprType::Prefx, "readonly") => Some((10, 11)),
         (ExprType::Prefx, "unique"  ) => Some((10, 11)),
+        (ExprType::Prefx, "abstract") => Some((10, 11)),
+        (ExprType::Prefx, "&") => Some((10, 11)),
+        (ExprType::Prefx, "|") => Some((10, 11)),
 
-        (ExprType::Infx, "&") => Some((8, 9)),
+        (ExprType::Infx , "&") => Some((8, 9)),
 
-        (ExprType::Infx, "|") => Some((6, 7)),
+        (ExprType::Infx , "|") => Some((6, 7)),
 
         (ExprType::Infx, "extends") => Some((4, 5)),
 
-        (ExprType::Infx, "?" ) => Some((2, 3)), // Conditional
-        (ExprType::Infx, "is") => Some((2, 3)),
+        (ExprType::Infx , "?"  ) => Some((2, 3)), // Conditional
+        (ExprType::Infx , "is" ) => Some((2, 3)),
+        (ExprType::Prefx, "...") => Some((2, 3)), // Spread
 
         (ExprType::Infx, ":" ) => Some((0, 1)),
 

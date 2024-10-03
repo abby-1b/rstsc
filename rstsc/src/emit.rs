@@ -232,8 +232,12 @@ fn emit_single(
         }
         ASTNode::ClassDefinition { inner } => {
             emitter.out(&inner.modifiers.emit(true), false);
-            emitter.out("class ", false);
-            emitter.out(&inner.name, false);
+            if let Some(name) = inner.name {
+                emitter.out("class ", false);
+                emitter.out(&name, false);
+            } else {
+                emitter.out("class", false);
+            }
             if let Some(extends) = inner.extends {
                 emitter.out(" extends ", false);
                 emitter.out(&extends.get_single_name(), false);
@@ -314,9 +318,9 @@ fn emit_single(
         }
         ASTNode::ExprIndexing { callee, property } => {
             emit_single(*callee, emitter);
-            emitter.out("(", false);
+            emitter.out("[", false);
             emit_single(*property, emitter);
-            emitter.out(")", true);
+            emitter.out("]", true);
         }
         ASTNode::ExprTernary { condition, if_true, if_false } => {
             emit_single(*condition, emitter);
@@ -357,7 +361,7 @@ fn emit_single(
         }
         ASTNode::ExprAs { value, .. } => { emit_single(*value, emitter); }
         ASTNode::ExprTypeAssertion { value, .. } => { emit_single(*value, emitter); }
-        ASTNode::TypeDeclaration { .. } => {}
+        ASTNode::InterfaceDeclaration { .. } => {},
         ASTNode::Empty { .. } => {}
         other => {
             emitter.out(&format!("[ {} ]", other.name()), true);
