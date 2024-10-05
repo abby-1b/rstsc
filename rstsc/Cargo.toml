@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-cap = "0.1.2"
+cap = { version = "0.1.2", features = ["stats"] }
 phf = { version = "0.11.2", features = ["macros"] }
 rand = "0.8.5"
 rayon = "1.10.0"
