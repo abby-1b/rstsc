@@ -11,10 +11,13 @@ static ALLOCATOR: Cap<alloc::System> = Cap::new(alloc::System, usize::max_value(
 const SOURCE_TEST: &str = include_str!("./test.ts");
 
 fn main() {
-  // Set the limit to 30MiB.
-  ALLOCATOR.set_limit(64 * 1024).unwrap();
-  println!("Currently allocated: {}B", ALLOCATOR.allocated());
+  let start_mem = ALLOCATOR.allocated();
+  do_ast();
+  let allocated = ALLOCATOR.total_allocated() - start_mem;
+  println!("Program used {} KiB", (allocated as f32 / 10.24).round() / 100.0);
+}
 
+fn do_ast() {
   // Generate the AST
   let mut tokens = TokenList::from(SOURCE_TEST);
 
@@ -26,10 +29,6 @@ fn main() {
 
   let ast = ast.unwrap();
   dbg!(&ast);
-
-  println!("Currently allocated: {}B", ALLOCATOR.allocated());
   let out = emit_code(ast, false);
-  println!("{}", out);
-
-  // Check memory
+  dbg!("{}", out);
 }
