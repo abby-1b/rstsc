@@ -104,14 +104,14 @@ fn step_combine(node: &mut ASTNode) {
 
             if let ASTNode::Parenthesis { nodes } = &**callee {
                 if nodes.len() == 1 {
-                    if let ASTNode::FunctionDefinition { inner } = &nodes[0] {
+                    if let ASTNode::FunctionDefinition { inner: _ } = &nodes[0] {
                         // TODO: minify parenthesis properly
                     }
                 }
             }
         }
         // ASTNode::ExprIndexing { .. } => {}
-        ASTNode::PrefixOpr { opr, expr } => {
+        ASTNode::PrefixOpr { opr: _, expr } => {
             step_combine(expr);
         }
         ASTNode::InfixOpr { left, opr, right } => {

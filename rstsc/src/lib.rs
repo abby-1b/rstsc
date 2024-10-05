@@ -1,4 +1,5 @@
 
+pub mod small_vec;
 pub mod error_type;
 pub mod tokenizer;
 pub mod operations;

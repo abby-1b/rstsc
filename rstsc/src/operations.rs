@@ -32,14 +32,16 @@ pub fn get_operator_binding_power(
 ) -> Option<(u8, u8)> {
     // TODO: add TypeScript's `!` postfix operator
     match (&expr_type, opr) {
-        (ExprType::Prefx, "{") => Some((38, 39)),
-        (ExprType::Prefx, "[") => Some((38, 39)),
-        (ExprType::Prefx, "(") => Some((38, 39)),
+        (ExprType::Prefx, "{") => Some((40, 41)),
+        (ExprType::Prefx, "[") => Some((40, 41)),
+        (ExprType::Prefx, "(") => Some((40, 41)),
 
-        (ExprType::Infx, "." ) => Some((36, 37)),
-        (ExprType::Infx, "?.") => Some((36, 37)),
-        (ExprType::Infx, "[" ) => Some((36, 37)),
-        (ExprType::Infx, "(" ) => Some((36, 37)),
+        (ExprType::Infx, "." ) => Some((38, 39)),
+        (ExprType::Infx, "?.") => Some((38, 39)),
+        (ExprType::Infx, "[" ) => Some((38, 39)),
+        (ExprType::Infx, "(" ) => Some((38, 39)),
+
+        (ExprType::Pstfx, "!") => Some((36, 37)), // Non-null assertion
         
         (ExprType::Prefx, "new") => Some((34, 35)),
 
