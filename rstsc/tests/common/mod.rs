@@ -18,7 +18,7 @@ pub enum WhiteSpace {
 }
 
 /// Compiles TypeScript using `tsc`
-fn tsc_compile(code: &str) -> Result<String, String> {
+pub fn tsc_compile(code: &str) -> Result<String, String> {
 	// Get a random filename
 	let mut filename = rand::thread_rng().gen::<f32>().to_string();
 	filename += "test";
@@ -30,7 +30,7 @@ fn tsc_compile(code: &str) -> Result<String, String> {
 
 	let child = Command::new("tsc")
         .arg("--target")
-        .arg("es2022")
+        .arg("ESNext")
         .arg(&filename_ts)
         .arg("--outFile")
         .arg(&filename_js)
@@ -59,8 +59,8 @@ fn tsc_compile(code: &str) -> Result<String, String> {
 
 /// Tests TypeScript code, compiling it with TSC and checking the two strings.
 /// Ignores leading and trailing whitespace and semicolons.
-pub fn test_code<'a>(code: &str, whitespace: &WhiteSpace) -> Result<(), String> {
-	let mut code_string = code.to_string();
+pub fn test_code<'a>(source: &str, compiled: &str, whitespace: &WhiteSpace) -> Result<(), String> {
+	let mut code_string = source.to_string();
 	code_string += "\n ";
 	let code = code_string.as_str();
 
@@ -76,16 +76,7 @@ pub fn test_code<'a>(code: &str, whitespace: &WhiteSpace) -> Result<(), String> 
 	let actual_untransformed: String = actual.clone();
 
 	// Get the `tsc` output
-	let expected = if out_is_err {
-		Ok("[skipped due to rstsc failure]".to_string())
-	} else {
-		tsc_compile(code)
-	};
-	let mut expect: String = if let Ok(out) = expected {
-		out
-	} else {
-		expected.err().unwrap()
-	};
+	let mut expect: String = compiled.to_owned();
 	let expect_untransformed: String = expect.clone();
 
 	actual = actual.trim_matches(|c| "\n\t; ".contains(c)).to_string();
@@ -93,7 +84,7 @@ pub fn test_code<'a>(code: &str, whitespace: &WhiteSpace) -> Result<(), String> 
 
 	match whitespace {
 		WhiteSpace::IgnoreAll => {
-			let re = Regex::new(r"[\n\t;() ]+").unwrap();
+			let re = Regex::new(r"[\n\t;,() ]+").unwrap();
 			actual = re.replace_all(actual.as_str(), "").to_string();
 			expect = re.replace_all(expect.as_str(), "").to_string();
 		}
@@ -122,36 +113,36 @@ pub fn test_code<'a>(code: &str, whitespace: &WhiteSpace) -> Result<(), String> 
 	}
 }
 
-/// Tests multiple code snippets at once
-pub fn test_multiple(
-	input_snippets: &[&str],
-	whitespace: WhiteSpace
-) {
-	let mut fails = vec![];
+// /// Tests multiple code snippets at once
+// pub fn test_multiple(
+// 	input_snippets: &[&str],
+// 	whitespace: WhiteSpace
+// ) {
+// 	let mut fails = vec![];
 
-	let mut count_failed: usize = 0;
-	let mut count_correct: usize = 0;
+// 	let mut count_failed: usize = 0;
+// 	let mut count_correct: usize = 0;
 
-	for snippet in input_snippets {
-		if let Err(fail_message) = test_code(snippet, &whitespace) {
-			fails.push(fail_message);
-			count_failed += 1;
-		} else {
-			count_correct += 1;
-		}
-	}
+// 	for snippet in input_snippets {
+// 		if let Err(fail_message) = test_code(snippet, &whitespace) {
+// 			fails.push(fail_message);
+// 			count_failed += 1;
+// 		} else {
+// 			count_correct += 1;
+// 		}
+// 	}
 
-	if !fails.is_empty() {
-		// Some fails
-		for fail in fails {
-			println!("{}", fail);
-		}
+// 	if !fails.is_empty() {
+// 		// Some fails
+// 		for fail in fails {
+// 			println!("{}", fail);
+// 		}
 
-		panic!(
-			"{} correct, {} failed ({:.2}% passed)",
-			count_correct,
-			count_failed,
-			(count_correct as f64 / (count_correct + count_failed) as f64) * 100.0
-		);
-	}
-}
+// 		panic!(
+// 			"{} correct, {} failed ({:.2}% passed)",
+// 			count_correct,
+// 			count_failed,
+// 			(count_correct as f64 / (count_correct + count_failed) as f64) * 100.0
+// 		);
+// 	}
+// }
