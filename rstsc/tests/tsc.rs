@@ -1,8 +1,9 @@
+use rayon::prelude::*;
 mod common;
 use std::collections::HashMap;
 use regex::Regex;
 
-use common::test_code;
+use common::{test_code, tsc_compile};
 
 const SOURCE: &str = include_str!("./tests.ts");
 
@@ -23,6 +24,7 @@ fn tsc_tests() {
         ("Spread", &[ r"..." ]),
         ("Getter", &[ r"get " ]),
         ("Setter", &[ r"set " ]),
+        ("A-Params", &[ r"\(public|\(private" ])
     ];
 
     // Compile tags into regex
@@ -44,8 +46,11 @@ fn tsc_tests() {
         tag_counts.insert(tag, [ 0, 0 ]);
     }
 
-    for test_source in SOURCE.split("\n\n") {
-        let state = test_code(test_source, &common::WhiteSpace::IgnoreAll);
+    let source_snippets: Vec<&str> = SOURCE.split("\n\n").collect();
+    let compiled_snippets: Vec<String> = source_snippets.par_iter().map(|s| tsc_compile(s).unwrap()).collect();
+
+    for (source, compiled) in source_snippets.iter().zip(compiled_snippets) {
+        let state = test_code(source, &compiled, &common::WhiteSpace::IgnoreAll);
         let idx = if state.is_err() {
             fails.push(state.err().unwrap());
             count_failed += 1;
@@ -57,7 +62,7 @@ fn tsc_tests() {
         for (tag, lookups) in tags.iter() {
             let mut found = false;
             for l in lookups {
-                let a = l.captures_iter(test_source);
+                let a = l.captures_iter(source);
                 if a.count() > 0 {
                     found = true;
                     break;
@@ -81,7 +86,10 @@ fn tsc_tests() {
             counts.push((tag.0, tag.1));
         }
         counts.sort_by_key(|k| {
-            ((k.1[0] as f64 / (k.1[0] + k.1[1]) as f64) * 100000.0) as usize
+            (
+                (k.1[0] as f64 / (k.1[0] + k.1[1]) as f64) * 100000.0 -
+                (k.1[0] + k.1[1]) as f64 * 100.0
+            ) as i64
         });
 
         for (tag, [ win, loss ]) in counts {

@@ -27,7 +27,7 @@ const enum SomeEnum2 {
     ok = (13 * 2) + 1 * 2,
     test = 'crap',
 }
-let a = SomeEnum.ok;
+let a = SomeEnum2.ok;
 
 let pair: [number, string] = [1, 'one'];
 
