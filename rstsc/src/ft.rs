@@ -158,7 +158,8 @@ impl ASTNode {
             ast::ASTNode::Block { nodes } => ASTNode::Block {
                 nodes: nodes.iter().map(ASTNode::from).collect(),
             },
-            ast::ASTNode::Declaration { on, typ, conditional } => ASTNode::Declaration {
+            ast::ASTNode::Declaration { on, typ, conditional: _ } => ASTNode::Declaration {
+                // TODO: use conditionals!
                 on: Box::new(ASTNode::from(on)),
                 typ: typ.clone(),
             },
@@ -253,7 +254,8 @@ impl ASTNode {
             ast::ASTNode::ExprBoolLiteral { value } => ASTNode::ExprBoolLiteral {
                 value: *value,
             },
-            ast::ASTNode::ExprFunctionCall { callee, arguments } => ASTNode::ExprFunctionCall {
+            ast::ASTNode::ExprFunctionCall { callee, generics, arguments } => ASTNode::ExprFunctionCall {
+                // TODO: add generics
                 callee: Box::new(ASTNode::from(callee)),
                 arguments: arguments.iter().map(ASTNode::from).collect(),
             },

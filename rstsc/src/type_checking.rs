@@ -57,17 +57,17 @@ fn infer_type_from_node(node: &ASTNode) -> Type {
 pub fn infer_return_type(node: &mut ASTNode) {
     match &node {
         ASTNode::FunctionDefinition {
-            inner
+            inner: _
         } => {
             // TODO: infer function return type
         }
         ASTNode::ArrowFunctionDefinition {
-            params,
-            return_type,
+            params: _,
+            return_type: _,
             body
         } => {
             // TODO: make this work
-            if let ASTNode::Block { nodes } = &**body {
+            if let ASTNode::Block { nodes: _ } = &**body {
                 // Body is a block
             } else {
                 // Body is a single expression
@@ -75,7 +75,7 @@ pub fn infer_return_type(node: &mut ASTNode) {
             }
         }
         other => {
-            panic!("Tried inferring non-function node: {:?}", node);
+            panic!("Tried inferring non-function node: {:?}", other);
         }
     }
 }

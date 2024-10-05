@@ -1,3 +1,4 @@
+// use rstsc::small_vec::SmallVec;
 /// This file is used for less rigorous testing during development.
 
 // use rstsc::minify::minify_ast;
@@ -8,25 +9,26 @@ use rstsc::emit::emit_code;
 const SOURCE_TEST: &str = include_str!("./test.ts");
 
 fn main() {
-    use std::time::Instant;
-    let now = Instant::now();
+  // let mut a = vec![ 1i32, 2, 3 ];
+  // let mut v = Vec::new();
+  // v.push(123i32);
+  // v.push(456);
+  // v.append(&mut a);
+  // println!("{:?}", v);
 
-    let mut tokens = TokenList::from(SOURCE_TEST);
+  let mut tokens = TokenList::from(SOURCE_TEST);
 
-    let ast = get_block(&mut tokens);
-    if ast.is_err() {
-        ast.err().unwrap().throw(tokens);
-        return;
-    }
+  let ast = get_block(&mut tokens);
+  if ast.is_err() {
+    ast.err().unwrap().throw(tokens);
+    return;
+  }
 
-    let ast = ast.unwrap();
-    
-    // minify_ast(&mut ast);
-    dbg!(&ast);
+  let ast = ast.unwrap();
 
-    let out = emit_code(ast, false);
-    println!("{}", out);
+  // minify_ast(&mut ast);
+  dbg!(&ast);
 
-    let elapsed = now.elapsed();
-    println!("Took: {:.2?}", elapsed);
+  let out = emit_code(ast, false);
+  println!("{}", out);
 }

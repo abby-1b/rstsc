@@ -308,7 +308,7 @@ fn emit_single(
         ASTNode::ExprBoolLiteral { value } => {
             emitter.out(if value { "true" } else { "false" }, true);
         }
-        ASTNode::ExprFunctionCall { callee, arguments } => {
+        ASTNode::ExprFunctionCall { callee, generics: _, arguments } => {
             emit_single(*callee, emitter);
             emitter.out("(", false);
             emitter.emit_vec(arguments, |argument, emitter| {
@@ -358,6 +358,9 @@ fn emit_single(
         ASTNode::PostfixOpr { expr, opr } => {
             emit_single(*expr, emitter);
             emitter.out(&opr, true);
+        }
+        ASTNode::NonNullAssertion { expr } => {
+            emit_single(*expr, emitter);
         }
         ASTNode::ExprAs { value, .. } => { emit_single(*value, emitter); }
         ASTNode::ExprTypeAssertion { value, .. } => { emit_single(*value, emitter); }

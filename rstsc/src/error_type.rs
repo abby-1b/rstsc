@@ -16,6 +16,7 @@ impl<'a> std::fmt::Debug for CompilerError<'a> {
 impl<'a> CompilerError<'a> {
     // Throws this error, exiting the program.
     pub fn throw(&self, tokens: TokenList) {
+        let _ = tokens;
         // let token_ptr = (&self.token.value.as_bytes()[0]) as *const u8;
 
         // // Get the line number of the error token
