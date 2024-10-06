@@ -664,3 +664,9 @@ class OtherIndexSignature {
     [key: string]: number | string;
     knownProp: number = 1;
 }
+
+const maybeNullValueA: (number | undefined)[] = [ 1, 2 ];
+const nonNullValueA = a[0]!;
+
+const maybeNullValueB: string | undefined = "hello!";
+const nonNullValueB = maybeNullValueB!;
