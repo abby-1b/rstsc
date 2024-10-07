@@ -1,13 +1,19 @@
 use phf::phf_map;
 use crate::{
   ast::{
-    ASTNode, ClassDefinition, FunctionDefinition, InterfaceDeclaration, Modifier, ModifierList, NamedDeclaration, ObjectProperty, VariableDefType, ACCESSIBILITY_MODIFIERS, MODIFIERS
+    ASTNode, ClassDefinition, FunctionDefinition, InterfaceDeclaration,
+    Modifier, ModifierList, NamedDeclaration, ObjectProperty, VariableDefType,
+    ACCESSIBILITY_MODIFIERS, MODIFIERS
   },
   error_type::CompilerError,
-
   operations::{get_operator_binding_power, ExprType},
+  small_vec::SmallVec,
   tokenizer::{Token, TokenList, TokenType, EOF_TOKEN},
-  types::{get_key_value_or_computed_property, get_type, try_get_type, KVMapOrComputedProp, KeyValueMap, Type, TypedNamedDeclaration}
+  types::{
+    get_comma_separated_types_until, get_generics,
+    get_key_value_or_computed_property, get_optional_generics, get_type,
+    try_get_type, KVMapOrComputedProp, KeyValueMap, Type, TypedNamedDeclaration
+  }
 };
 
 pub static INVERSE_GROUPINGS: phf::Map<&'static str, &'static str> = phf_map! {
@@ -26,7 +32,7 @@ pub static ANONYMOUS_CLASS_NAME: &'static str = "\0";
 
 /// Parses a single block. Consumes the ending token!
 pub fn get_block<'a>(tokens: &mut TokenList<'a>) -> Result<ASTNode, CompilerError<'a>> {
-  let mut nodes = vec![];
+  let mut nodes = SmallVec::new();
 
   // Go through the tokens list
   loop {
@@ -41,7 +47,7 @@ pub fn get_block<'a>(tokens: &mut TokenList<'a>) -> Result<ASTNode, CompilerErro
   // Remove trailing empty
   if let Some(node) = nodes.last() {
     if matches!(node, ASTNode::Empty) {
-      nodes.pop();
+      nodes.pop_unused();
     }
   }
 
@@ -204,7 +210,7 @@ fn get_named_declaration<'a, 'b>(
 /// `function some([a: number, b: string = '123']) { ... }`
 fn get_multiple_named_declarations<'a, 'b>(
   tokens: &'b mut TokenList<'a>
-) -> Result<Vec<NamedDeclaration>, CompilerError<'a>> where 'a: 'b {
+) -> Result<SmallVec<NamedDeclaration>, CompilerError<'a>> where 'a: 'b {
   // Old code
   let declaration_node = get_expression(tokens, 0)?;
   convert_to_typed_declarations(declaration_node)
@@ -212,7 +218,7 @@ fn get_multiple_named_declarations<'a, 'b>(
 
 fn convert_to_typed_declarations(
   node: ASTNode,
-) -> Result<Vec<NamedDeclaration>, CompilerError<'static>> {
+) -> Result<SmallVec<NamedDeclaration>, CompilerError<'static>> {
   let ast_declarations = if let ASTNode::Parenthesis { nodes } = node {
     // Already split (by parenthesis node)
     nodes
@@ -277,7 +283,7 @@ fn convert_to_typed_declarations(
     }
   }
 
-  let mut declarations = Vec::with_capacity(ast_declarations.len());
+  let mut declarations = SmallVec::with_capacity(ast_declarations.len());
   for ast_declaration in ast_declarations {
     if !matches!(ast_declaration, ASTNode::Empty) {
       declarations.push(deconstruct_ast_declaration(ast_declaration)?);
@@ -481,7 +487,7 @@ fn get_function_after_name<'a, 'b>(
 /// Similar to `get_function_after_name`, gets a class constructor.
 fn get_constructor_after_name<'a, 'b>(
   tokens: &'b mut TokenList<'a>,
-  declarations: &mut Vec<(ModifierList, NamedDeclaration)>
+  declarations: &mut SmallVec<(ModifierList, NamedDeclaration)>
 ) -> Result<FunctionDefinition, CompilerError<'a>> where 'a: 'b {
   tokens.ignore_whitespace();
 
@@ -494,8 +500,8 @@ fn get_constructor_after_name<'a, 'b>(
   }
   
   // Get parameters
-  let mut params = vec![];
-  let mut set_properties: Vec<ASTNode> = vec![];
+  let mut params = SmallVec::new();
+  let mut set_properties: SmallVec<ASTNode> = SmallVec::new();
   tokens.skip("(")?;
   while tokens.peek_str() != ")" {
     tokens.ignore_whitespace();
@@ -534,7 +540,7 @@ fn get_constructor_after_name<'a, 'b>(
     let mut body = get_block(tokens)?;
     match &mut body {
       ASTNode::Block { nodes } => {
-        nodes.splice(0..0, set_properties);
+        nodes.append_front(&mut set_properties);
         Some(body)
       }
       other => {
@@ -552,63 +558,11 @@ fn get_constructor_after_name<'a, 'b>(
   Ok(FunctionDefinition {
     modifiers: Default::default(),
     name: Some("constructor".to_owned()),
-    generics: vec![],
+    generics: SmallVec::new(),
     params,
     return_type,
     body: body.map(Box::new)
   })
-}
-
-/// Gets types separated by commas
-fn get_comma_separated_types_until<'a, 'b>(
-  tokens: &'b mut TokenList<'a>,
-  until_str: &[&str]
-) -> Result<Vec<Type>, CompilerError<'a>> where 'a: 'b {
-  let mut types = vec![];
-  loop {
-    tokens.ignore_whitespace();
-    while tokens.peek_str() == "," {
-      tokens.skip_unchecked();
-      tokens.ignore_whitespace();
-    }
-    if until_str.contains(&tokens.peek_str()) {
-      break
-    }
-    types.push(get_type(tokens)?);
-    if tokens.peek_str() == "=" {
-      // Type defaults are ignored! They're an artifact of TypeScript's
-      // older type inference, which couldn't infer a lot of the more
-      // complex types.
-      tokens.skip_unchecked();
-      get_type(tokens)?;
-    }
-  }
-  Ok(types)
-}
-
-/// Gets generics if available, otherwise returns an empty vec
-fn get_optional_generics<'a, 'b>(
-  tokens: &'b mut TokenList<'a>
-) -> Result<Vec<Type>, CompilerError<'a>> where 'a: 'b {
-  // Get generics
-  if tokens.peek_str() != "<" { return Ok(vec![]); }
-  tokens.skip_unchecked(); // Skip "<"
-  get_generics(tokens)
-}
-
-/// Gets generics until it finds a ">", consuming it.
-/// Used after the first "<", as it will not consume it!
-fn get_generics<'a, 'b>(
-  tokens: &'b mut TokenList<'a>
-) -> Result<Vec<Type>, CompilerError<'a>> where 'a: 'b {
-  let generics = get_comma_separated_types_until(
-    tokens, &[ ">", ")", ";" ]
-  )?;
-  if tokens.peek_str() != ">" {
-    return Err(CompilerError::expected(">", tokens.consume()));
-  }
-  tokens.skip_unchecked(); // Skip ">"
-  Ok(generics)
 }
 
 fn handle_class_declaration<'a, 'b>(
@@ -646,8 +600,9 @@ fn get_class_expression<'a, 'b>(
   };
 
   // Classes change the way things are parsed!
-  let mut declarations: Vec<(ModifierList, NamedDeclaration)> = vec![];
-  let mut methods = vec![];
+  let mut kv_maps = SmallVec::new();
+  let mut declarations: SmallVec<(ModifierList, NamedDeclaration)> = SmallVec::new();
+  let mut methods = SmallVec::new();
 
   tokens.ignore_whitespace();
   tokens.skip("{")?; // Skip body "{"
@@ -664,6 +619,30 @@ fn get_class_expression<'a, 'b>(
     let checkpoint = tokens.get_checkpoint();
 
     // Get the name (might be a property or a method, we don't know yet)
+    if tokens.peek_str() == "[" {
+      // Key-value map!;
+      // TODO: make this accept more than single-token computed properties
+      // TODO: fix computed properties
+      match get_key_value_or_computed_property(tokens)? {
+        KVMapOrComputedProp::KVMap(kv_map) => {
+          kv_maps.push(kv_map);
+        }
+        KVMapOrComputedProp::ComputedProp(..) => {
+          todo!();
+        }
+      }
+      
+      tokens.ignore_whitespace();
+
+      // Skip ";" (if any)
+      if tokens.peek_str() == ";" {
+        tokens.skip_unchecked();
+      }
+
+      tokens.ignore_whitespace();
+      continue;
+    }
+    dbg!(tokens.peek_str());
     let name = tokens.consume();
     if !name.is_identifier() {
       return Err(CompilerError {
@@ -676,8 +655,6 @@ fn get_class_expression<'a, 'b>(
     if name.value != "constructor" && [ ":", "=", ";" ].contains(&tokens.peek_str()) {
       // `:`, `=`, and `;` mean it's a property
       tokens.restore_checkpoint(checkpoint);
-
-      println!("Modifier for declaration: {:?}", modifiers);
 
       // Get the declaration
       let gotten_declarations = get_multiple_named_declarations(tokens)?;
@@ -728,6 +705,7 @@ fn get_class_expression<'a, 'b>(
     generics,
     extends,
     implements,
+    kv_maps,
     declarations,
     methods
   }) })
@@ -735,9 +713,9 @@ fn get_class_expression<'a, 'b>(
 
 struct TypedHeader {
   name: Option<String>,
-  generics: Vec<Type>,
-  extends: Vec<Type>,
-  implements: Vec<Type>,
+  generics: SmallVec<Type>,
+  extends: SmallVec<Type>,
+  implements: SmallVec<Type>,
 }
 
 /// Gets a typed header for a class or interface.
@@ -758,14 +736,14 @@ fn get_typed_header<'a>(
     None
   };
 
-  let generics: Vec<Type> = get_optional_generics(tokens)?;
+  let generics = get_optional_generics(tokens)?;
   tokens.ignore_whitespace();
 
   let extends = if tokens.peek_str() == "extends" {
     tokens.skip_unchecked(); // Skip "extends"
     get_comma_separated_types_until(tokens, &[ "implements", "{", "=" ])?
   } else {
-    vec![]
+    SmallVec::new()
   };
   tokens.ignore_whitespace();
 
@@ -773,7 +751,7 @@ fn get_typed_header<'a>(
     tokens.skip_unchecked(); // Skip "implements"
     get_comma_separated_types_until(tokens, &[ "{", "=" ])?
   } else {
-    vec![]
+    SmallVec::new()
   };
 
   Ok(TypedHeader {
@@ -955,7 +933,7 @@ fn handle_interface<'a>(
   }
 
   let named_dict = Type::Object {
-    key_value: key_value.map(Box::new),
+    key_value: SmallVec::new(),
     parts: named_parts
   };
 
@@ -967,7 +945,7 @@ fn handle_interface<'a>(
     generics,
     extends,
     equals_type: if equals_type.inner_count() == 0 {
-      Type::Object { key_value: None, parts: vec![] }
+      Type::Object { key_value: SmallVec::new(), parts: vec![] }
     } else if equals_type.inner_count() == 1 {
       match equals_type {
         Type::Intersection(inner) => inner[0].clone(),
@@ -1041,7 +1019,7 @@ fn parse_prefix<'a>(
     Ok(ret)
   } else if prefix_start == "{" {
     // Dicts get even more special treatment!
-    let mut properties = vec![];
+    let mut properties = SmallVec::new();
     loop {
       tokens.ignore_whitespace();
       let key_token = tokens.peek();
@@ -1132,7 +1110,7 @@ fn parse_infix<'a>(
     match opr.as_str() {
       "(" => return Ok(ASTNode::ExprFunctionCall {
         callee: Box::new(left),
-        generics: vec![],
+        generics: SmallVec::new(),
         arguments: separate_commas(inner)
       }),
       "[" => return Ok(ASTNode::ExprIndexing {
@@ -1151,13 +1129,16 @@ fn parse_infix<'a>(
         (convert_to_typed_declarations(*on)?, Some(typ))
       }
       ASTNode::ExprIdentifier { name } => {
-        (vec![ NamedDeclaration {
-          name,
-          typ: None,
-          value: None,
-          conditional: false,
-          spread: false
-        } ], None)
+        (
+          SmallVec::with_element(NamedDeclaration {
+            name,
+            typ: None,
+            value: None,
+            conditional: false,
+            spread: false
+          }),
+          None
+        )
       }
       other => {
         return Err(CompilerError {
@@ -1262,7 +1243,7 @@ fn parse_infix<'a>(
 }
 
 /// Turns a tree containing commas into a vector with the nodes they separated
-fn separate_commas(node: ASTNode) -> Vec<ASTNode> {
+fn separate_commas(node: ASTNode) -> SmallVec<ASTNode> {
   match node {
     // Separate infix operations (but only if the operation is ",")
     ASTNode::InfixOpr { left, ref opr, right } if opr == "," => {
@@ -1274,7 +1255,7 @@ fn separate_commas(node: ASTNode) -> Vec<ASTNode> {
     }
 
     // Otherwise, return the node, as it's between commas
-    _ => vec![ node ]
+    _ => SmallVec::with_element(node)
   }
 }
 

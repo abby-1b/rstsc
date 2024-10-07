@@ -1,4 +1,4 @@
-use crate::{ast, type_checking::infer_return_type, types::Type};
+use crate::{ast, small_vec::SmallVec, type_checking::infer_return_type, types::Type};
 
 #[derive(Debug, Clone)]
 
@@ -55,8 +55,8 @@ impl ObjectProperty {
 pub struct FunctionDefinition {
     pub modifiers: ast::ModifierList,
     pub name: Option<String>,
-    pub generics: Vec<Type>,
-    pub params: Vec<NamedDeclaration>,
+    pub generics: SmallVec<Type>,
+    pub params: SmallVec<NamedDeclaration>,
     pub return_type: Type,
     pub body: Option<Box<ASTNode>>
 }
@@ -254,7 +254,7 @@ impl ASTNode {
             ast::ASTNode::ExprBoolLiteral { value } => ASTNode::ExprBoolLiteral {
                 value: *value,
             },
-            ast::ASTNode::ExprFunctionCall { callee, generics, arguments } => ASTNode::ExprFunctionCall {
+            ast::ASTNode::ExprFunctionCall { callee, generics: _, arguments } => ASTNode::ExprFunctionCall {
                 // TODO: add generics
                 callee: Box::new(ASTNode::from(callee)),
                 arguments: arguments.iter().map(ASTNode::from).collect(),
