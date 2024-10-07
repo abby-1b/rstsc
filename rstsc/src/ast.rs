@@ -1,7 +1,7 @@
 
 use core::fmt::Debug;
 
-use crate::{error_type::CompilerError, small_vec::SmallVec, tokenizer::EOF_TOKEN, types::Type};
+use crate::{error_type::CompilerError, small_vec::SmallVec, tokenizer::EOF_TOKEN, types::{KeyValueMap, Type}};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum VariableDefType {
@@ -147,7 +147,7 @@ pub struct NamedDeclaration {
 
   /// True when this declaration starts with a spread
   /// (eg. `(...args)`)
-  pub spread: bool
+  pub spread: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -155,8 +155,8 @@ pub struct FunctionDefinition {
   pub modifiers: ModifierList,
   pub name: Option<String>,
 
-  pub generics: Vec<Type>,
-  pub params: Vec<NamedDeclaration>,
+  pub generics: SmallVec<Type>,
+  pub params: SmallVec<NamedDeclaration>,
   pub return_type: Option<Type>,
   pub body: Option<Box<ASTNode>>
 }
@@ -165,29 +165,30 @@ pub struct FunctionDefinition {
 pub struct ClassDefinition {
   pub modifiers: ModifierList,
   pub name: Option<String>,
-  pub generics: Vec<Type>,
+  pub generics: SmallVec<Type>,
   pub extends: Option<Type>,
-  pub implements: Vec<Type>,
+  pub implements: SmallVec<Type>,
+  pub kv_maps: SmallVec<KeyValueMap>,
 
   /// Named declarations
-  pub declarations: Vec<(ModifierList, NamedDeclaration)>,
+  pub declarations: SmallVec<(ModifierList, NamedDeclaration)>,
 
   /// Functions
-  pub methods: Vec<FunctionDefinition>
+  pub methods: SmallVec<FunctionDefinition>
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct InterfaceDeclaration {
   pub name: String,
-  pub generics: Vec<Type>,
-  pub extends: Vec<Type>,
+  pub generics: SmallVec<Type>,
+  pub extends: SmallVec<Type>,
   pub equals_type: Type
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ASTNode {
   /// A block of code
-  Block { nodes: Vec<ASTNode> },
+  Block { nodes: SmallVec<ASTNode> },
 
   /// A declaration that contains a name and type.
   /// Can also contain an optional value
@@ -203,7 +204,7 @@ pub enum ASTNode {
   VariableDeclaration {
     modifiers: ModifierList,
     def_type: VariableDefType,
-    defs: Vec<NamedDeclaration>
+    defs: SmallVec<NamedDeclaration>
   },
 
   StatementIf {
@@ -230,7 +231,7 @@ pub enum ASTNode {
   FunctionDefinition { inner: Box<FunctionDefinition> },
 
   ArrowFunctionDefinition {
-    params: Vec<NamedDeclaration>,
+    params: SmallVec<NamedDeclaration>,
     return_type: Option<Type>,
     body: Box<ASTNode>
   },
@@ -239,9 +240,9 @@ pub enum ASTNode {
 
   // Used for expressions
 
-  Parenthesis { nodes: Vec<ASTNode> },
-  Array { nodes: Vec<ASTNode> },
-  Dict { properties: Vec<ObjectProperty> },
+  Parenthesis { nodes: SmallVec<ASTNode> },
+  Array { nodes: SmallVec<ASTNode> },
+  Dict { properties: SmallVec<ObjectProperty> },
 
   // Expression parsing...
 
@@ -252,8 +253,8 @@ pub enum ASTNode {
 
   ExprFunctionCall {
     callee: Box<ASTNode>,
-    generics: Vec<Type>,
-    arguments: Vec<ASTNode>,
+    generics: SmallVec<Type>,
+    arguments: SmallVec<ASTNode>,
   },
   ExprIndexing { callee: Box<ASTNode>, property: Box<ASTNode> },
 
