@@ -5,6 +5,7 @@ use std::hash::{Hash, Hasher};
 use crate::error_type::CompilerError;
 use crate::operations::{get_type_operator_binding_power, ExprType};
 use crate::parser::INVERSE_GROUPINGS;
+use crate::small_vec::SmallVec;
 use crate::tokenizer::{Token, TokenList, TokenType};
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
@@ -48,6 +49,7 @@ pub struct KeyValueMap {
   value: Type,
 }
 
+#[derive(Debug)]
 pub enum KVMapOrComputedProp {
   KVMap(KeyValueMap),
   ComputedProp(String)
@@ -101,7 +103,7 @@ pub enum Type {
 
   /// A typed object (dict)
   Object {
-    key_value: Option<Box<KeyValueMap>>,
+    key_value: SmallVec<KeyValueMap>,
     parts: Vec<TypedNamedDeclaration>
   },
 
@@ -123,7 +125,8 @@ pub enum Type {
 
   /// A function (eg. `let a: (x: number) => void;`)
   Function {
-    params: Vec<TypeFunctionArgument>,
+    generics: SmallVec<Type>,
+    params: SmallVec<TypeFunctionArgument>,
     return_type: Box<Type>,
     is_constructor: bool
   },
@@ -358,12 +361,12 @@ impl Display for Type {
 
       Type::Object{ key_value, parts } => {
         f.write_str("{ ")?;
-        if let Some(key_value) = key_value {
+        for kv in key_value {
           f.write_str("[key: ")?;
-          std::fmt::Display::fmt(&key_value.key, f)?;
+          f.write_str(&kv.key.to_string())?;
           f.write_str("]: ")?;
-          std::fmt::Display::fmt(&key_value.value, f)?;
-          f.write_str(", ")?;
+          f.write_str(&kv.value.to_string())?;
+          f.write_str(",")?;
         }
         f.write_str(
           &parts.iter()
@@ -400,11 +403,22 @@ impl Display for Type {
       },
 
       Type::Function {
+        generics,
         params,
         return_type,
         is_constructor
       } => {
         if *is_constructor { f.write_str("new ")?; }
+        if !generics.is_empty() {
+          f.write_str("<")?;
+          let mut remaining = generics.len();
+          for generic in generics {
+            f.write_str(&generic.to_string())?;
+            remaining -= 1;
+            if remaining > 0 { f.write_str(", ")?; }
+          }
+          f.write_str(">")?;
+        }
         f.write_str("(")?;
         let mut remaining = params.len();
         for param in params {
@@ -716,7 +730,7 @@ fn parse_prefix<'a, 'b>(
     "{" => {
       // Dictionary object
       let mut obj_parts: Vec<TypedNamedDeclaration> = vec![];
-      let mut kv_type = None;
+      let mut kv_maps = SmallVec::new();
       loop {
         // TODO: Handle `[key: string]: number`
 
@@ -727,10 +741,10 @@ fn parse_prefix<'a, 'b>(
           tokens.skip_unchecked();
           break;
         } else if tokens.peek_str() == "[" {
-          let kv_or_cp = get_key_value_or_computed_property(tokens)?;
-          match kv_or_cp {
+          let kv_or_cmp = get_key_value_or_computed_property(tokens)?;
+          match kv_or_cmp {
             KVMapOrComputedProp::KVMap(kv_map) => {
-              kv_type = Some(kv_map);
+              kv_maps.push(kv_map);
               continue;
             }
             KVMapOrComputedProp::ComputedProp(name) => {
@@ -771,7 +785,7 @@ fn parse_prefix<'a, 'b>(
       }
 
       Ok(Type::Object {
-        key_value: kv_type.map(Box::new),
+        key_value: kv_maps,
         parts: obj_parts,
       })
     }
@@ -826,7 +840,7 @@ fn parse_prefix<'a, 'b>(
 
         params_as_types.push(get_type(tokens)?);
       }
-      let mut params = vec![];
+      let mut params = SmallVec::new();
       for p in params_as_types.iter() {
         params.push(match p {
           Type::ColonDeclaration {
@@ -877,12 +891,14 @@ fn parse_prefix<'a, 'b>(
         tokens.skip_unchecked();
         let return_type = get_expression(tokens, precedence)?;
         Ok(Type::Function {
+          generics: SmallVec::new(),
           params,
           return_type: Box::new(return_type),
           is_constructor: false
         })
       } else if params.len() != 1 {
         Ok(Type::Function {
+          generics: SmallVec::new(),
           params,
           return_type: Box::new(Type::Unknown),
           is_constructor: false
@@ -932,6 +948,23 @@ fn parse_prefix<'a, 'b>(
       // Prefix symbols used as syntactic sugar are ignored
       get_expression(tokens, precedence)
     }
+    "<" => {
+      // Start of function with generics
+      let mut generics = get_generics(tokens)?;
+      let mut next_fn = get_expression(tokens, precedence)?;
+      match &mut next_fn {
+        Type::Function { generics: inner_generics, .. } => {
+          inner_generics.append(&mut generics);
+        }
+        other => {
+          return Err(CompilerError {
+            message: format!("Expected Function type, found {:?}", other),
+            token: Token::from("")
+          })
+        }
+      }
+      Ok(next_fn)
+    }
     "asserts" | "unique" | "abstract" => {
       // These types are ignored
       get_expression(tokens, precedence)
@@ -954,7 +987,7 @@ fn parse_prefix<'a, 'b>(
     other => {
       Err(CompilerError {
         message: format!(
-          "Prefix operator not found: {:?}",
+          "Type prefix operator not found: {:?}",
           other
         ),
         token: prefix_opr
@@ -1050,4 +1083,56 @@ fn get_expression<'a, 'b>(
   }
 
   Ok(left)
+}
+
+/// Gets types separated by commas
+pub fn get_comma_separated_types_until<'a, 'b>(
+  tokens: &'b mut TokenList<'a>,
+  until_str: &[&str]
+) -> Result<SmallVec<Type>, CompilerError<'a>> where 'a: 'b {
+  let mut types = SmallVec::new();
+  loop {
+    tokens.ignore_whitespace();
+    while tokens.peek_str() == "," {
+      tokens.skip_unchecked();
+      tokens.ignore_whitespace();
+    }
+    if until_str.contains(&tokens.peek_str()) {
+      break
+    }
+    types.push(get_type(tokens)?);
+    if tokens.peek_str() == "=" {
+      // Type defaults are ignored! They're an artifact of TypeScript's
+      // older type inference, which couldn't infer a lot of the more
+      // complex types.
+      tokens.skip_unchecked();
+      get_type(tokens)?;
+    }
+  }
+  Ok(types)
+}
+
+/// Gets generics if available, otherwise returns an empty vec
+pub fn get_optional_generics<'a, 'b>(
+  tokens: &'b mut TokenList<'a>
+) -> Result<SmallVec<Type>, CompilerError<'a>> where 'a: 'b {
+  // Get generics
+  if tokens.peek_str() != "<" { return Ok(SmallVec::new()); }
+  tokens.skip_unchecked(); // Skip "<"
+  get_generics(tokens)
+}
+
+/// Gets generics until it finds a ">", consuming it.
+/// Used after the first "<", as it will not consume it!
+pub fn get_generics<'a, 'b>(
+  tokens: &'b mut TokenList<'a>
+) -> Result<SmallVec<Type>, CompilerError<'a>> where 'a: 'b {
+  let generics = get_comma_separated_types_until(
+    tokens, &[ ">", ")", ";" ]
+  )?;
+  if tokens.peek_str() != ">" {
+    return Err(CompilerError::expected(">", tokens.consume()));
+  }
+  tokens.skip_unchecked(); // Skip ">"
+  Ok(generics)
 }
