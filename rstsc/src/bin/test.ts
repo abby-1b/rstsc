@@ -131,8 +131,6 @@
 
 // let identityValue: number = identityFunction<number>(42);
 
-// let genericWithUnion: <T>(x: T | T[]) => T[] = x => Array.isArray(x) ? x : [x];
-
 // type Point = { x: number; y: number; };
 // function logPoint(p: Point): void { console.log(`x: ${p.x}, y: ${p.y}`); }
 // type PartialPoint = Partial<Point>;
@@ -143,16 +141,26 @@
 // interface Shape { area(): number; }
 // interface Another {}
 // class Circle implements Shape {
-//     constructor(public radius: number) {}
-//     area(): number { return Math.PI * this.radius * this.radius; }
-//     lmao(some?: number) { return some; }
+//   constructor(public radius: number) {}
+//   area(): number { return Math.PI * this.radius * this.radius; }
+//   lmao(some?: number) { return some; }
 // }
 
 // TODO: deal with the things below
 
+// let convertToArray: <T>(x: T | T[]) => T[] = x => Array.isArray(x) ? x : [x];
+
+const lol = "lmao";
+// class OtherIndexSignature {
+//   knownProp: number = 1;
+//   [key: string]: number | string;
+//   [key: number]: string;
+// }
+// (new OtherIndexSignature())[lol]
+
 // type ElementType<T> = T extends (infer U)[] ? U : never;
 // type T8 = ElementType<string[]>;
 
-const sym = Symbol();
+// const sym = Symbol();
 // type T7 = { [n: number]: string, [sym]: number }[typeof sym];
-type T7 = { [n: number]: string, [sym]: number }[typeof sym];
+// type T7 = { [n: number]: string, [sym]: number }[typeof sym];
