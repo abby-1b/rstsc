@@ -164,15 +164,12 @@ pub enum Type {
 impl Type {
   /// Joins this type with another in a union `|` (combining mutably)
   pub fn union(&mut self, other: Type) {
-    match other {
-      Type::Union(types) => {
-        // Split other type into its parts
-        for typ in types {
-          self.union(typ);
-        }
-        return;
-      },
-      _ => {}
+    if let Type::Union(types) = other {
+      // Split other type into its parts
+      for typ in types {
+        self.union(typ);
+      }
+      return;
     }
 
     match self {
@@ -209,15 +206,12 @@ impl Type {
 
   /// Joins this type with another in an intersection `&` (combining mutably)
   pub fn intersection(&mut self, other: Type) {
-    match other {
-      Type::Intersection(types) => {
-        // Split other type into its parts
-        for typ in types {
-          self.intersection(typ);
-        }
-        return;
-      },
-      _ => {}
+    if let Type::Intersection(types) = other {
+      // Split other type into its parts
+      for typ in types {
+        self.intersection(typ);
+      }
+      return;
     }
 
     match self {
@@ -325,7 +319,7 @@ impl Display for Type {
         )
       },
 
-      Type::Custom(name) => { f.write_str(&name) },
+      Type::Custom(name) => { f.write_str(name) },
 
       Type::WithArgs(typ, args) => {
         f.write_str(&typ.to_string())?;
@@ -489,20 +483,17 @@ impl Type {
 }
 
 /// Gets a type, regardless of whether it starts with `:` or not.
-#[must_use]
 pub fn get_type<'a, 'b>(
   tokens: &'b mut TokenList<'a>
 ) -> Result<Type, CompilerError<'a>> where 'a: 'b {
   if tokens.peek_str() == ":" {
     tokens.skip_unchecked();
   }
-
-  return get_expression(tokens, 0);
+  get_expression(tokens, 0)
 }
 
 /// Gets a type only if the next token is `:`.
 /// Otherwise, returns None
-#[must_use]
 pub fn try_get_type<'a, 'b>(
   tokens: &'b mut TokenList<'a>
 ) -> Result<Option<Type>, CompilerError<'a>> where 'a: 'b {
@@ -634,7 +625,7 @@ fn parse_infix<'a, 'b>(
       }
 
       if group_start == "[" {
-        if arguments.len() == 0 {
+        if arguments.is_empty() {
           // Normal array notation
           Ok(Type::Array(Box::new(left)))
         } else if arguments.len() == 1 {
@@ -868,7 +859,7 @@ fn parse_prefix<'a, 'b>(
               typ: None
             }
           }
-          other if params.len() > 0 => {
+          other if !params.is_empty() => {
             return Err(CompilerError {
               message: format!(
                 "Expected type argument, found type {:?}",

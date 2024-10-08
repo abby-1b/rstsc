@@ -183,6 +183,12 @@ impl<T: Debug> SmallVec<T> {
   }
 }
 
+impl<T: Debug> Default for SmallVec<T> {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
 impl<T: Debug + ToString> SmallVec<T> {
   pub fn join(&self, separator: &str) -> String {
     let mut out = String::new();

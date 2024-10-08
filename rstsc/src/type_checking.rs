@@ -6,9 +6,9 @@ use crate::{ft::ASTNode, types::Type};
 // ];
 
 /// A scope contains variables, their types, and their values
-struct Scope<'a> {
-    parent: &'a Scope<'a>,
-}
+// struct Scope<'a> {
+//     parent: &'a Scope<'a>,
+// }
 
 /// Infers a type from an AST node, as specifically as possible
 fn infer_type_from_node(node: &ASTNode) -> Type {
@@ -43,7 +43,7 @@ fn infer_type_from_node(node: &ASTNode) -> Type {
         ASTNode::InfixOpr { left: _, opr, right } => {
             let opr_str = opr.as_str();
             if opr_str == "=" {
-                infer_type_from_node(&*right)
+                infer_type_from_node(right)
             } else {
                 // TODO: properly infer (eg. `a += 1` might be string or number, depending on the type of A)
                 Type::Unknown

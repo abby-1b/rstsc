@@ -158,7 +158,7 @@ impl<'a> TokenList<'a> {
     // Skip character in source string
     self.next_token.value = &self.next_token.value[1..];
 
-    if self.next_token.value.len() == 0 {
+    if self.next_token.value.is_empty() {
       // Make sure we aren't left with an empty string!
       self.queue_token();
     }

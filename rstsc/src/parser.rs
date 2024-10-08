@@ -28,7 +28,7 @@ pub static INVERSE_GROUPINGS: phf::Map<&'static str, &'static str> = phf_map! {
   ">" => "<",
 };
 
-pub static ANONYMOUS_CLASS_NAME: &'static str = "\0";
+pub static ANONYMOUS_CLASS_NAME: &str = "\0";
 
 /// Parses a single block. Consumes the ending token!
 pub fn get_block<'a>(tokens: &mut TokenList<'a>) -> Result<ASTNode, CompilerError<'a>> {
@@ -156,12 +156,10 @@ fn get_variable_def_type<'b>(
     "var"   => Ok(VariableDefType::Var),
     "let"   => Ok(VariableDefType::Let),
     "const" => Ok(VariableDefType::Const),
-    other => {
-      return Err(CompilerError {
-        message: format!("Unexpected var declaration: {}", other),
-        token: header_token
-      })
-    }
+    other => Err(CompilerError {
+      message: format!("Unexpected var declaration: {}", other),
+      token: header_token
+    })
   }
 }
 
@@ -588,15 +586,13 @@ fn get_class_expression<'a, 'b>(
     extends,
     implements
   } = get_typed_header(tokens, false)?;
-  let extends = if extends.len() > 1 {
-    return Err(CompilerError {
-      message: format!("Classes can only extend once!"),
+  let extends = match extends.len() {
+    len if len > 1 => return Err(CompilerError {
+      message: "Classes can only extend once!".to_owned(),
       token: Token::from("")
-    })
-  } else if extends.len() == 1 {
-    Some(extends.last().unwrap().clone())
-  } else {
-    None
+    }),
+    1 => Some(extends.last().unwrap().clone()),
+    _ => None
   };
 
   // Classes change the way things are parsed!
@@ -811,15 +807,15 @@ fn handle_type_declaration<'a>(
     extends, implements
   } = get_typed_header(tokens, true)?;
   let name = unsafe { name.unwrap_unchecked() };
-  if extends.len() > 0 {
+  if !extends.is_empty() {
     return Err(CompilerError {
-      message: format!("Type declarations can't extend!"),
+      message: "Type declarations can't extend!".to_owned(),
       token: Token::from("")
     })
   }
-  if implements.len() > 0 {
+  if !implements.is_empty() {
     return Err(CompilerError {
-      message: format!("Type declarations can't implement!"),
+      message: "Type declarations can't implement!".to_owned(),
       token: Token::from("")
     })
   }
@@ -856,9 +852,9 @@ fn handle_interface<'a>(
     extends, implements
   } = get_typed_header(tokens, true)?;
   let name = unsafe { name.unwrap_unchecked() };
-  if implements.len() > 0 {
+  if !implements.is_empty() {
     return Err(CompilerError {
-      message: format!("Interfaces can't implement, only extend!"),
+      message: "Interfaces can't implement, only extend!".to_owned(),
       token: Token::from("")
     })
   }
