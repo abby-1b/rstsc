@@ -4,10 +4,9 @@ use core::fmt::Debug;
 // Setting this to `u8` still makes the vec 16 bytes long due to alignment
 // Using `u32` seems to be good enough, unless further packing makes a smaller
 // type feasable.
-type SizeType = u32;
+pub type SizeType = u32;
 
 /// A vector implementation with limited capacity (defined at compile time)
-#[derive(Clone)]
 pub struct SmallVec<T: Debug> {
   memory: *mut T,
   capacity: SizeType,
@@ -15,13 +14,11 @@ pub struct SmallVec<T: Debug> {
 }
 
 impl<T: Debug> SmallVec<T> {
-  const MAX_LEN: usize = SizeType::max_value() as usize;
-  const T_SIZE: usize = std::mem::size_of::<T>();
-  const T_ALIGN: usize = std::mem::align_of::<T>();
+  const MAX_LEN: usize = SizeType::MAX as usize;
 
   pub const fn new() -> SmallVec<T> {
     SmallVec {
-      memory: 0 as *mut T,
+      memory: std::ptr::null_mut::<T>(),
       capacity: 0,
       length: 0
     }
@@ -35,11 +32,7 @@ impl<T: Debug> SmallVec<T> {
   }
 
   pub fn with_capacity(capacity: usize) -> SmallVec<T> {
-    #[cfg(debug_assertions)]
-    if capacity > Self::MAX_LEN {
-      panic!("Tried making SmallVec with capacity higher than {}", Self::MAX_LEN)
-    }
-
+    debug_assert!(capacity <= Self::MAX_LEN, "TinyVec exceeded max capacity while initializing with capacity");
     let mut v = Self::new();
     unsafe { v.allocate(capacity as SizeType); }
     v
@@ -47,6 +40,9 @@ impl<T: Debug> SmallVec<T> {
 
   pub fn len(&self) -> usize {
     self.length as usize
+  }
+  pub fn len_natural(&self) -> SizeType {
+    self.length
   }
   pub fn set_len(&mut self, new_len: usize) {
     self.length = new_len as SizeType;
@@ -74,36 +70,18 @@ impl<T: Debug> SmallVec<T> {
   }
 
   pub fn push(&mut self, value: T) {
-    if self.capacity == 0 {
-      // Allocate initial memory (1 elements)
-      unsafe { self.allocate(1); }
-    } else if self.length == self.capacity {
-      // Allocate more memory (double)
-      if self.capacity == Self::MAX_LEN as SizeType {
-        panic!("SmallVec exceeded the max of {} elements!", self.capacity);
-      } else {
-        unsafe { self.allocate(self.capacity.saturating_mul(2)) }
-      }
+    if self.capacity == 0 || self.length == self.capacity {
+      debug_assert!(self.len() != Self::MAX_LEN, "TinyVec exceeded max capacity while pushing");
+      let new_cap = if self.capacity == 0 { 1 } else { self.capacity.saturating_mul(2) };
+      unsafe { self.allocate(new_cap) }
     }
-    unsafe {
-      let end = self.memory.add(self.len());
-      std::ptr::write(end, value);
-      self.length += 1;
-    }
+    unsafe { std::ptr::write(self.memory.add(self.len()), value); }
+    self.length += 1;
   }
-  #[must_use]
   pub fn pop(&mut self) -> Option<T> {
     if self.length == 0 { return None }
     self.length -= 1;
     Some(unsafe { std::ptr::read(self.memory.add(self.len())) })
-  }
-  pub fn pop_unused(&mut self) {
-    if self.length > 0 {
-      self.length -= 1;
-      unsafe {
-        std::ptr::drop_in_place(self.memory.add(self.len()));
-      }
-    }
   }
 
   pub fn append(&mut self, other: &mut Self) {
@@ -126,7 +104,7 @@ impl<T: Debug> SmallVec<T> {
     }
 
     self.length += other.length;
-    other.set_len(0);
+    other.length = 0;
   }
 
   pub fn append_front(&mut self, other: &mut Self) {
@@ -167,7 +145,7 @@ impl<T: Debug> SmallVec<T> {
     }
 
     self.length += other.length;
-    other.set_len(0);
+    other.length = 0;
   }
 
   /// Allocates new memory, retaining all the old elements
@@ -192,25 +170,31 @@ impl<T: Debug> SmallVec<T> {
 
   /// Gets a pointer to a new slice of memory of a given capacity
   unsafe fn get_new_memory(capacity: SizeType) -> *mut T {
-    // TODO: change for Layout::array::<T>(capacity as usize);
-    let layout = Layout::from_size_align(
-      Self::T_SIZE * capacity as usize,
-      Self::T_ALIGN
-    ).unwrap();
+    let layout = Layout::array::<T>(capacity as usize).unwrap();
     std::alloc::alloc(layout) as *mut T
   }
 
   /// Drops the inner buffer, which is both used for changing capacity and
   /// dropping the whole struct. Only drops the buffer, not the elements!
   unsafe fn drop_inner_buffer(&mut self) {
-    let old_layout = Layout::from_size_align(
-      Self::T_SIZE * self.capacity as usize,
-      Self::T_ALIGN
-    ).unwrap();
-
-    // Deallocate the whole buffer
+    let old_layout = Layout::array::<T>(self.capacity as usize).unwrap();
     std::alloc::dealloc(self.memory as *mut u8, old_layout);
-    self.memory = 0 as *mut T;
+    self.memory = std::ptr::null_mut::<T>();
+  }
+}
+
+impl<T: Debug + ToString> SmallVec<T> {
+  pub fn join(&self, separator: &str) -> String {
+    let mut out = String::new();
+    let mut remaining = self.length;
+    for element in self {
+      out += &element.to_string();
+      remaining -= 1;
+      if remaining != 0 {
+        out += separator;
+      }
+    }
+    out
   }
 }
 
@@ -219,16 +203,23 @@ impl<T: Debug> Drop for SmallVec<T> {
     if self.capacity == 0 { return; }
 
     // Deallocate inner elements
-    for i in 0..self.len() {
-      let ptr = unsafe { self.memory.add(i) };
-      unsafe { std::ptr::drop_in_place(ptr); }
-    }
+    let slice = std::ptr::slice_from_raw_parts_mut(self.memory, self.len());
+    unsafe { std::ptr::drop_in_place(slice) };
 
     // Drop the buffer itself
     unsafe { self.drop_inner_buffer(); }
   }
 }
 
+impl<T: Debug + Clone> Clone for SmallVec<T> {
+  fn clone(&self) -> Self {
+    let mut new_vec: SmallVec<T> = SmallVec::with_capacity(self.capacity());
+    for element in self.iter() {
+      new_vec.push(element.clone());
+    }
+    new_vec
+  }
+}
 
 impl<T: Debug> Index<usize> for SmallVec<T> {
   type Output = T;
@@ -263,7 +254,7 @@ impl<T: PartialEq + Debug> PartialEq for SmallVec<T> {
     for (a, b) in a.zip(b) {
       if a != b { return false; }
     }
-    return true;
+    true
   }
 }
 impl<T: Eq + Debug> Eq for SmallVec<T> {}
@@ -271,7 +262,7 @@ impl<T: Hash + Debug> Hash for SmallVec<T> {
   #[inline]
   fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
     self.len().hash(state);
-    for i in self {
+    for i in self.into_iter() {
       i.hash(state);
     }
   }
@@ -281,7 +272,7 @@ impl<T: Debug> FromIterator<T> for SmallVec<T> {
   fn from_iter<U: IntoIterator<Item = T>>(iter: U) -> Self {
     let iter = iter.into_iter();
     let (lower, upper) = iter.size_hint();
-    
+
     let mut vec = if let Some(upper) = upper {
       SmallVec::with_capacity(upper)
     } else {
@@ -357,7 +348,7 @@ impl<T: Debug> Iterator for IntoIter<T> {
 impl<T: Debug> Drop for IntoIter<T> {
   fn drop(&mut self) {
     // Iterate over each element, dropping it when it goes out of scope
-    while let Some(_) = self.next() {}
+    for _ in self.by_ref() {}
 
     // Setting the length to zero prevents the elements inside the vec from
     // being dropped when the vec is dropped (meaning they'd be double freed).
