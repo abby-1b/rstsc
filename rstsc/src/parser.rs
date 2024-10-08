@@ -12,7 +12,7 @@ use crate::{
   types::{
     get_comma_separated_types_until, get_generics,
     get_key_value_or_computed_property, get_optional_generics, get_type,
-    try_get_type, KVMapOrComputedProp, KeyValueMap, Type, TypedNamedDeclaration
+    try_get_type, KVMapOrComputedProp, Type, TypedNamedDeclaration
   }
 };
 
@@ -47,7 +47,7 @@ pub fn get_block<'a>(tokens: &mut TokenList<'a>) -> Result<ASTNode, CompilerErro
   // Remove trailing empty
   if let Some(node) = nodes.last() {
     if matches!(node, ASTNode::Empty) {
-      nodes.pop_unused();
+      nodes.pop();
     }
   }
 
@@ -61,7 +61,7 @@ pub fn get_block<'a>(tokens: &mut TokenList<'a>) -> Result<ASTNode, CompilerErro
 fn get_single_statement<'a, 'b>(
   tokens: &'b mut TokenList<'a>
 ) -> Result<ASTNode, CompilerError<'a>> where 'a: 'b {
-  let mut nodes = vec![];
+  let mut nodes = SmallVec::new();
 
   // Go through the tokens list
   loop {
@@ -111,7 +111,7 @@ fn get_single_statement<'a, 'b>(
 /// Handles blocks in the middle of nowhere
 fn handle_blocks<'a>(
   tokens: &mut TokenList<'a>,
-  out: &mut Vec<ASTNode>,
+  out: &mut SmallVec<ASTNode>,
 ) -> Result<bool, CompilerError<'a>> {
   if tokens.peek_str() != "{" {
     return Ok(false);
@@ -126,7 +126,7 @@ fn handle_blocks<'a>(
 /// Handles variable initialization
 fn handle_vars<'a, 'b>(
   tokens: &'b mut TokenList<'a>,
-  out: &mut Vec<ASTNode>,
+  out: &mut SmallVec<ASTNode>,
 ) -> Result<bool, CompilerError<'a>> where 'a: 'b {
   const VARIABLE_DECLARATIONS: &[&str] = &[ "var", "let", "const" ];
   if !VARIABLE_DECLARATIONS.contains(&tokens.peek_str()) {
@@ -296,7 +296,7 @@ fn convert_to_typed_declarations(
 /// Handles control flow, like `if`, `while`, and `for`
 fn handle_control_flow<'a>(
   tokens: &mut TokenList<'a>,
-  out: &mut Vec<ASTNode>,
+  out: &mut SmallVec<ASTNode>,
 ) -> Result<bool, CompilerError<'a>> {
   const CONTROL_FLOW: &[&str] = &[ "if", "while", "for", "switch" ];
   if !CONTROL_FLOW.contains(&tokens.peek_str()) {
@@ -372,7 +372,7 @@ fn handle_control_flow<'a>(
 /// Handles `return`, `break`, `continue`, and `throw`
 fn handle_other_statements<'a>(
   tokens: &mut TokenList<'a>,
-  out: &mut Vec<ASTNode>,
+  out: &mut SmallVec<ASTNode>,
 ) -> Result<bool, CompilerError<'a>> {
   const STATEMENT_NAMES: &[&str] = &[
     "return",
@@ -406,7 +406,7 @@ fn handle_other_statements<'a>(
 
 fn handle_function_declaration<'a, 'b>(
   tokens: &'b mut TokenList<'a>,
-  out: &mut Vec<ASTNode>,
+  out: &mut SmallVec<ASTNode>,
 ) -> Result<bool, CompilerError<'a>> where 'a: 'b {
   if tokens.peek_str() != "function" {
     return Ok(false);
@@ -567,7 +567,7 @@ fn get_constructor_after_name<'a, 'b>(
 
 fn handle_class_declaration<'a, 'b>(
   tokens: &'b mut TokenList<'a>,
-  out: &mut Vec<ASTNode>,
+  out: &mut SmallVec<ASTNode>,
 ) -> Result<bool, CompilerError<'a>> where 'a: 'b {
   if tokens.peek_str() != "class" {
     return Ok(false);
@@ -642,7 +642,6 @@ fn get_class_expression<'a, 'b>(
       tokens.ignore_whitespace();
       continue;
     }
-    dbg!(tokens.peek_str());
     let name = tokens.consume();
     if !name.is_identifier() {
       return Err(CompilerError {
@@ -761,7 +760,7 @@ fn get_typed_header<'a>(
 
 fn handle_modifiers<'a>(
   tokens: &mut TokenList<'a>,
-  out: &mut Vec<ASTNode>,
+  out: &mut SmallVec<ASTNode>,
 ) -> Result<bool, CompilerError<'a>> {
   if !MODIFIERS.contains(&tokens.peek_str()) {
     return Ok(false);
@@ -800,7 +799,7 @@ fn fetch_modifier_list(tokens: &mut TokenList) -> ModifierList {
 
 fn handle_type_declaration<'a>(
   tokens: &mut TokenList<'a>,
-  out: &mut Vec<ASTNode>,
+  out: &mut SmallVec<ASTNode>,
 ) -> Result<bool, CompilerError<'a>> {
   if tokens.peek_str() != "type" {
     return Ok(false);
@@ -844,7 +843,7 @@ fn handle_type_declaration<'a>(
 
 fn handle_interface<'a>(
   tokens: &mut TokenList<'a>,
-  out: &mut Vec<ASTNode>
+  out: &mut SmallVec<ASTNode>
 ) -> Result<bool, CompilerError<'a>> {
   if tokens.peek_str() != "interface" {
     return Ok(false);
@@ -868,11 +867,11 @@ fn handle_interface<'a>(
 
   // Store the parts of the interface!
   // Stores the function types in a multi-function interface
-  let mut function_types = Type::Union(vec![]);
+  let mut function_types = Type::Union(SmallVec::new());
   // Named key-value types
-  let mut named_parts: Vec<TypedNamedDeclaration> = vec![];
+  let mut named_parts = SmallVec::new();
   // [key: type]
-  let mut key_value: Option<KeyValueMap> = None;
+  let mut key_value = SmallVec::new();
 
   loop {
     tokens.ignore_whitespace();
@@ -889,7 +888,7 @@ fn handle_interface<'a>(
     } else if next == "[" {
       let kv_or_cp = get_key_value_or_computed_property(tokens)?;
       match kv_or_cp {
-        KVMapOrComputedProp::KVMap(kv_map) => key_value = Some(kv_map),
+        KVMapOrComputedProp::KVMap(kv_map) => key_value.push(kv_map),
         KVMapOrComputedProp::ComputedProp(name) => {
           named_parts.push(TypedNamedDeclaration {
             name,
@@ -933,11 +932,11 @@ fn handle_interface<'a>(
   }
 
   let named_dict = Type::Object {
-    key_value: SmallVec::new(),
+    key_value,
     parts: named_parts
   };
 
-  let mut equals_type = Type::Intersection(vec![]);
+  let mut equals_type = Type::Intersection(SmallVec::new());
   if function_types.inner_count() != 0 { equals_type.intersection(function_types); }
   if named_dict.inner_count() != 0 { equals_type.intersection(named_dict); }
   out.push(ASTNode::InterfaceDeclaration { inner: Box::new(InterfaceDeclaration {
@@ -945,7 +944,7 @@ fn handle_interface<'a>(
     generics,
     extends,
     equals_type: if equals_type.inner_count() == 0 {
-      Type::Object { key_value: SmallVec::new(), parts: vec![] }
+      Type::Object { key_value: SmallVec::new(), parts: SmallVec::new() }
     } else if equals_type.inner_count() == 1 {
       match equals_type {
         Type::Intersection(inner) => inner[0].clone(),
@@ -962,7 +961,7 @@ fn handle_interface<'a>(
 /// Handles expressions. Basically a soft wrapper around `get_expression`
 fn handle_expression<'a>(
   tokens: &mut TokenList<'a>,
-  out: &mut Vec<ASTNode>,
+  out: &mut SmallVec<ASTNode>,
 ) -> Result<(), CompilerError<'a>> {
   out.push(get_expression(tokens, 0)?);
   Ok(())
@@ -985,7 +984,7 @@ fn parse_name<'a>(
 ) -> Result<ASTNode, CompilerError<'a>> {
   if tokens.peek_str() == "function" {
     // Handle inline functions
-    let mut function_container = vec![];
+    let mut function_container = SmallVec::new();
     handle_function_declaration(tokens, &mut function_container)?;
     return Ok(function_container.pop().unwrap());
   }

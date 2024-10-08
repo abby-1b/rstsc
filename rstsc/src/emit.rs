@@ -1,5 +1,3 @@
-use std::iter::Peekable;
-
 use crate::{ast::{ASTNode, FunctionDefinition, NamedDeclaration, ObjectProperty}, small_vec::SmallVec};
 
 struct Emitter {

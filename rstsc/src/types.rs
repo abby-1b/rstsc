@@ -5,7 +5,7 @@ use std::hash::{Hash, Hasher};
 use crate::error_type::CompilerError;
 use crate::operations::{get_type_operator_binding_power, ExprType};
 use crate::parser::INVERSE_GROUPINGS;
-use crate::small_vec::SmallVec;
+use crate::small_vec::{SizeType, SmallVec};
 use crate::tokenizer::{Token, TokenList, TokenType};
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
@@ -84,19 +84,19 @@ pub enum Type {
   Void,
 
   /// A union (eg. `string | number`)
-  Union(Vec<Type>),
+  Union(SmallVec<Type>),
   
   /// A selection (eg. `string & number`)
-  Intersection(Vec<Type>),
+  Intersection(SmallVec<Type>),
 
   /// Custom types
   Custom(String),
 
   /// Arguments (eg. `Record<string, number>`)
-  WithArgs(Box<Type>, Vec<Type>),
+  WithArgs(Box<Type>, SmallVec<Type>),
 
   /// Tuples (eg. `[string, number]`)
-  Tuple { inner_types: Vec<Type>, spread_idx: usize },
+  Tuple { inner_types: SmallVec<Type>, spread_idx: SizeType },
 
   /// Array type (eg. `number[]`)
   Array(Box<Type>),
@@ -104,7 +104,7 @@ pub enum Type {
   /// A typed object (dict)
   Object {
     key_value: SmallVec<KeyValueMap>,
-    parts: Vec<TypedNamedDeclaration>
+    parts: SmallVec<TypedNamedDeclaration>
   },
 
   /// Used for type guards `x is string`
@@ -184,7 +184,7 @@ impl Type {
         let new_hash = hasher.finish();
 
         let mut found_type = false;
-        for t in types.into_iter() {
+        for t in types.iter() {
           t.hash(&mut hasher);
           if hasher.finish() == new_hash {
             found_type = true;
@@ -199,7 +199,7 @@ impl Type {
       }
       _ => {
         if other != *self {
-          let mut new_union = Type::Union(vec![ self.clone() ]);
+          let mut new_union = Type::Union(SmallVec::with_element(self.clone()));
           new_union.union(other);
           *self = new_union;
         }
@@ -229,7 +229,7 @@ impl Type {
         let new_hash = hasher.finish();
 
         let mut found_type = false;
-        for t in types.into_iter() {
+        for t in types.iter() {
           t.hash(&mut hasher);
           if hasher.finish() == new_hash {
             found_type = true;
@@ -244,9 +244,8 @@ impl Type {
       }
       _ => {
         if other != *self {
-          let mut new_union = Type::Intersection(vec![ self.clone() ]);
-          new_union.intersection(other);
-          *self = new_union;
+          *self = Type::Intersection(SmallVec::with_element(self.clone()));
+          self.intersection(other);
         }
       }
     }
@@ -314,14 +313,14 @@ impl Display for Type {
       Type::Union(types) => {
         f.write_str(
           &types.iter()
-            .map(|t| t.to_string()).collect::<Vec<String>>()
+            .map(|t| t.to_string()).collect::<SmallVec<String>>()
             .join(" | ")
         )
       },
       Type::Intersection(types) => {
         f.write_str(
           &types.iter()
-            .map(|t| t.to_string()).collect::<Vec<String>>()
+            .map(|t| t.to_string()).collect::<SmallVec<String>>()
             .join(" & ")
         )
       },
@@ -332,7 +331,7 @@ impl Display for Type {
         f.write_str(&typ.to_string())?;
         f.write_str(
           &args.iter()
-            .map(|t| t.to_string()).collect::<Vec<String>>()
+            .map(|t| t.to_string()).collect::<SmallVec<String>>()
             .join(" | ")
         )
       },
@@ -343,12 +342,12 @@ impl Display for Type {
         f.write_str(
           &inner_types.iter().enumerate()
             .map(|(index, typ)| {
-              if spread_idx == index {
+              if spread_idx == index as SizeType {
                 "...".to_owned() + &typ.to_string()
               } else {
                 typ.to_string()
               }
-            }).collect::<Vec<String>>()
+            }).collect::<SmallVec<String>>()
             .join(", ")
         )?;
         f.write_str(" ]")
@@ -372,7 +371,7 @@ impl Display for Type {
           &parts.iter()
             .map(|kv| {
               kv.name.clone() + " " + &kv.typ.to_string()
-            }).collect::<Vec<String>>()
+            }).collect::<SmallVec<String>>()
             .join(", ")
         )?;
         f.write_str(" }")
@@ -606,7 +605,7 @@ fn parse_infix<'a, 'b>(
       let group_start = infix_opr.value.to_string();
       let group_end = INVERSE_GROUPINGS[infix_opr.value];
 
-      let mut arguments: Vec<Type> = vec![];
+      let mut arguments: SmallVec<Type> = SmallVec::new();
       tokens.ignore_whitespace();
       if tokens.peek_str() != group_end {
         loop {
@@ -729,7 +728,7 @@ fn parse_prefix<'a, 'b>(
   match prefix_opr.value {
     "{" => {
       // Dictionary object
-      let mut obj_parts: Vec<TypedNamedDeclaration> = vec![];
+      let mut obj_parts = SmallVec::new();
       let mut kv_maps = SmallVec::new();
       loop {
         // TODO: Handle `[key: string]: number`
@@ -791,12 +790,12 @@ fn parse_prefix<'a, 'b>(
     }
     "[" => {
       // Tuple
-      let mut inner_types: Vec<Type> = vec![];
-      let mut spread_idx = usize::MAX;
+      let mut inner_types = SmallVec::new();
+      let mut spread_idx = SizeType::MAX;
       loop {
         if tokens.peek_str() == "..." {
           // Get spread
-          if spread_idx != usize::MAX {
+          if spread_idx != SizeType::MAX {
             // Multiple spreads are not allowed
             // eg. `let a: [boolean, ...number[], ...string[]]`
             return Err(CompilerError {
@@ -804,7 +803,7 @@ fn parse_prefix<'a, 'b>(
               token: tokens.consume()
             });
           }
-          spread_idx = inner_types.len();
+          spread_idx = inner_types.len_natural();
           tokens.skip_unchecked(); // Skip "..."
         }
         inner_types.push(get_expression(tokens, precedence)?);
@@ -828,7 +827,7 @@ fn parse_prefix<'a, 'b>(
       // Parenthesized type!
       // This could be an arrow function, too
 
-      let mut params_as_types = vec![];
+      let mut params_as_types = SmallVec::with_capacity(4);
       loop {
         tokens.ignore_whitespace();
         if tokens.peek_str() == "," {
