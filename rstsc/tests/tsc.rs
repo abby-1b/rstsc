@@ -24,7 +24,8 @@ fn tsc_tests() {
         ("Spread", &[ r"..." ]),
         ("Getter", &[ r"get " ]),
         ("Setter", &[ r"set " ]),
-        ("A-Params", &[ r"\(public|\(private" ])
+        ("A-Params", &[ r"\(public|\(private" ]),
+        ("NN-Assert", &[ r"!;" ]),
     ];
 
     // Compile tags into regex
