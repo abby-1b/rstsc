@@ -34,22 +34,19 @@ fn step_combine(node: &mut ASTNode) {
             take_out_of_block(body);
             alternate.as_mut().map(take_out_of_block);
 
-            match (&**body, alternate.as_deref_mut()) {
-                (
-                    &ASTNode::StatementReturn { value: Some(ref return_true) },
-                    Some(ASTNode::StatementReturn { value: Some(ref return_false) })
-                ) => {
-                    // TODO: fix precedence with inline conditions
-                    let new_node = ASTNode::StatementReturn {
-                        value: Some(Box::new(ASTNode::ExprTernary {
-                            condition: condition.clone(),
-                            if_true: return_true.clone(),
-                            if_false: return_false.clone()
-                        }))
-                    };
-                    replace_node(node, new_node)
-                }
-                _ => {}
+            if let (
+                &ASTNode::StatementReturn { value: Some(ref return_true) },
+                Some(ASTNode::StatementReturn { value: Some(ref return_false) })
+            ) = (&**body, alternate.as_deref_mut()) {
+                // TODO: fix precedence with inline conditions
+                let new_node = ASTNode::StatementReturn {
+                    value: Some(Box::new(ASTNode::ExprTernary {
+                        condition: condition.clone(),
+                        if_true: return_true.clone(),
+                        if_false: return_false.clone()
+                    }))
+                };
+                replace_node(node, new_node)
             }
         }
         // ASTNode::StatementWhile { .. } => {}
@@ -177,7 +174,7 @@ fn combine_add(left: &ASTNode, right: &ASTNode) -> Option<ASTNode> {
 
         (ASTNode::ExprStrLiteral { string: lhs }, ASTNode::ExprNumLiteral { number: rhs }) => {
             let quotation = &lhs[0..1];
-            ASTNode::ExprStrLiteral { string: String::new() + &lhs[0..lhs.len() - 1] + &rhs + quotation }
+            ASTNode::ExprStrLiteral { string: String::new() + &lhs[0..lhs.len() - 1] + rhs + quotation }
         }
         (ASTNode::ExprStrLiteral { string: lhs }, ASTNode::ExprStrLiteral { string: rhs }) => {
             ASTNode::ExprStrLiteral { string: String::new() + &lhs[0..lhs.len() - 1] + &rhs[1..rhs.len()] }

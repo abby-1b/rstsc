@@ -7,7 +7,7 @@ pub struct CompilerError<'a> {
 
 impl<'a> std::fmt::Debug for CompilerError<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}\n", &self.message)?;
+        writeln!(f, "{}", &self.message)?;
         write!(f, "{:?}", self.token)?;
         Ok(())
     }

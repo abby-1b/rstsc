@@ -78,9 +78,9 @@ pub enum Modifier {
   Readonly = 64,
   Abstract = 128,
 }
-impl Into<u8> for Modifier {
-  fn into(self) -> u8 {
-    match self {
+impl From<Modifier> for u8 {
+  fn from(val: Modifier) -> Self {
+    match val {
       Modifier::Export => 1,
       Modifier::Async => 2,
       Modifier::Static => 4,
@@ -120,7 +120,7 @@ impl ModifierList {
 
 impl Debug for ModifierList {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    write!(f, "Num: {}\n", self.flags)?;
+    writeln!(f, "Num: {}", self.flags)?;
     f.debug_list()
       .entries(
         (0..6).filter_map(|idx| {
@@ -329,12 +329,10 @@ impl ASTNode {
 
   /// Checks if a node is a literal
   pub fn is_literal(&self) -> bool {
-    match self {
-      ASTNode::ExprNumLiteral { .. } => true,
-      ASTNode::ExprStrLiteral { .. } => true,
-      ASTNode::ExprBoolLiteral { .. } => true,
-      _ => false
-    }
+    matches!(
+      self,
+      ASTNode::ExprNumLiteral { .. } | ASTNode::ExprStrLiteral { .. } | ASTNode::ExprBoolLiteral { .. }
+    )
   }
 
   pub fn apply_modifiers(&mut self, new_modifiers: ModifierList) -> Result<(), CompilerError<'static>> {

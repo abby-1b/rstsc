@@ -27,7 +27,7 @@ fn main() {
     // minify_ast(&mut ast);
     // dbg!(&ast);
 
-    let out = emit_code(ast, false);
+    let _ = emit_code(ast, false);
     // println!("{}", out);
 
     let elapsed = now.elapsed();

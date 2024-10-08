@@ -4,16 +4,15 @@ use cap::Cap;
 use rstsc::ast::ASTNode;
 use rstsc::tokenizer::TokenList;
 use rstsc::parser::get_block;
-use rstsc::emit::emit_code;
 
 #[global_allocator]
-static ALLOCATOR: Cap<alloc::System> = Cap::new(alloc::System, usize::max_value());
+static ALLOCATOR: Cap<alloc::System> = Cap::new(alloc::System, usize::MAX);
 
 const SOURCE_TEST: &str = include_str!("./test.ts");
 
 fn main() {
   let start_mem = ALLOCATOR.allocated();
-  for i in 0..10 { do_ast(); }
+  for _ in 0..10 { let _ = do_ast(); }
   let ast = do_ast();
 
   let total_allocated = ALLOCATOR.total_allocated() - start_mem;
