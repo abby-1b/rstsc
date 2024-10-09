@@ -8,6 +8,7 @@ use rstsc::emit::emit_code;
 const SOURCE_TEST: &str = include_str!("./test.ts");
 
 fn main() {
+
   let mut tokens = TokenList::from(SOURCE_TEST);
 
   let ast = get_block(&mut tokens);

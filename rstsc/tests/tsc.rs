@@ -48,7 +48,9 @@ fn tsc_tests() {
     }
 
     let source_snippets: Vec<&str> = SOURCE.split("\n\n").collect();
-    let compiled_snippets: Vec<String> = source_snippets.par_iter().map(|s| tsc_compile(s).unwrap()).collect();
+    let compiled_snippets: Vec<String> = source_snippets.par_iter().map(|s| {
+        tsc_compile(s).unwrap()
+    }).collect();
 
     for (source, compiled) in source_snippets.iter().zip(compiled_snippets) {
         let state = test_code(source, &compiled, &common::WhiteSpace::IgnoreAll);

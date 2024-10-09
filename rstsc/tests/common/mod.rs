@@ -65,6 +65,7 @@ pub fn test_code<'a>(source: &str, compiled: &str, whitespace: &WhiteSpace) -> R
 	let code = code_string.as_str();
 
 	// Get the `rstsc` output
+	// println!("RSTSC compiling: {:?}", code);
 	let out = rstsc::compile(code);
 	let mut out_is_err = false;
 	let mut actual: String = if let Ok(out) = out {

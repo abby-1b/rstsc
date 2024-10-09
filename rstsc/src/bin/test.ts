@@ -16,24 +16,23 @@
 // }
 
 // function weirdOperation() {
-//     return (
-//         (((10 + 21) - 30) * 40)
-//         + (function() {
-//             return (
-//                 (((40 - 50) + 10) * 20) -
-//                 (function() {
-//                     return (
-//                         (((20 + 30) - 40) * 50) +
-//                         (function() {
-//                             return (((30 - 10) + 20) * 30) - (((40 - 50) + 10) * 20);
-//                         })()
-//                     );
-//                 })()
-//             );
+//   return (
+//     (((10 + 21) - 30) * 40)
+//     + (function() {
+//       return (
+//         (((40 - 50) + 10) * 20) -
+//         (function() {
+//           return (
+//             (((20 + 30) - 40) * 50) +
+//             (function() {
+//               return (((30 - 10) + 20) * 30) - (((40 - 50) + 10) * 20);
+//             })()
+//           );
 //         })()
-//     );
+//       );
+//     })()
+//   );
 // }
-
 // console.log(weirdOperation());
 
 // function lol() {
@@ -150,7 +149,15 @@
 
 // let convertToArray: <T>(x: T | T[]) => T[] = x => Array.isArray(x) ? x : [x];
 
-const lol = "lmao";
+// const lol: string = "123";
+// function test(a: number, b?: string) {}
+
+// const theKey = 'lol';
+// type SomeType = {
+//   [theKey]: number
+// };
+
+
 // class OtherIndexSignature {
 //   knownProp: number = 1;
 //   [key: string]: number | string;

@@ -1,9 +1,9 @@
 
 use core::fmt::Debug;
 
-use crate::{error_type::CompilerError, small_vec::SmallVec, tokenizer::EOF_TOKEN, types::{KeyValueMap, Type}};
+use crate::{declaration::Declaration, error_type::CompilerError, small_vec::SmallVec, spread::Spread, tokenizer::EOF_TOKEN, types::{KeyValueMap, Type}};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub enum VariableDefType {
   Var,
   Let,
@@ -19,7 +19,7 @@ impl VariableDefType {
   }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub enum ObjectProperty {
   Property {
     computed: bool,
@@ -31,7 +31,7 @@ pub enum ObjectProperty {
   }
 }
 
-#[derive(Default, Clone, PartialEq)]
+#[derive(Default, Clone, PartialEq, Hash)]
 /// A list of modifier flags
 pub struct ModifierList {
   /// A list of bit flags (lowest to highest) detailing:
@@ -120,7 +120,6 @@ impl ModifierList {
 
 impl Debug for ModifierList {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    writeln!(f, "Num: {}", self.flags)?;
     f.debug_list()
       .entries(
         (0..6).filter_map(|idx| {
@@ -135,33 +134,27 @@ impl Debug for ModifierList {
   }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct NamedDeclaration {
-  pub name: String,
-  pub typ: Option<Type>,
-  pub value: Option<ASTNode>,
-
-  /// True when this declaration is conditional
-  /// (eg. `someVar?: string`)
-  pub conditional: bool,
-
-  /// True when this declaration starts with a spread
-  /// (eg. `(...args)`)
-  pub spread: bool,
-}
-
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct FunctionDefinition {
   pub modifiers: ModifierList,
   pub name: Option<String>,
 
   pub generics: SmallVec<Type>,
-  pub params: SmallVec<NamedDeclaration>,
+  pub params: SmallVec<Declaration>,
+  pub spread: Spread,
   pub return_type: Option<Type>,
   pub body: Option<Box<ASTNode>>
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub struct ArrowFunctionDefinition {
+  pub params: SmallVec<Declaration>,
+  pub spread: Spread,
+  pub return_type: Option<Type>,
+  pub body: Box<ASTNode>
+}
+
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct ClassDefinition {
   pub modifiers: ModifierList,
   pub name: Option<String>,
@@ -171,13 +164,13 @@ pub struct ClassDefinition {
   pub kv_maps: SmallVec<KeyValueMap>,
 
   /// Named declarations
-  pub declarations: SmallVec<(ModifierList, NamedDeclaration)>,
+  pub declarations: SmallVec<(ModifierList, Declaration)>,
 
   /// Functions
   pub methods: SmallVec<FunctionDefinition>
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct InterfaceDeclaration {
   pub name: String,
   pub generics: SmallVec<Type>,
@@ -185,26 +178,16 @@ pub struct InterfaceDeclaration {
   pub equals_type: Type
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub enum ASTNode {
   /// A block of code
   Block { nodes: SmallVec<ASTNode> },
-
-  /// A declaration that contains a name and type.
-  /// Can also contain an optional value
-  Declaration {
-    on: Box<ASTNode>,
-    typ: Type,
-
-    // Whether or not this declaration has the `?` sign before its type
-    conditional: bool
-  },
 
   /// A `var`, `let` or `const` variable definition
   VariableDeclaration {
     modifiers: ModifierList,
     def_type: VariableDefType,
-    defs: SmallVec<NamedDeclaration>
+    defs: SmallVec<Declaration>
   },
 
   StatementIf {
@@ -229,12 +212,7 @@ pub enum ASTNode {
   StatementThrow { value: Option<Box<ASTNode>> },
 
   FunctionDefinition { inner: Box<FunctionDefinition> },
-
-  ArrowFunctionDefinition {
-    params: SmallVec<NamedDeclaration>,
-    return_type: Option<Type>,
-    body: Box<ASTNode>
-  },
+  ArrowFunctionDefinition { inner: Box<ArrowFunctionDefinition> },
 
   ClassDefinition { inner: Box<ClassDefinition> },
 
@@ -294,7 +272,6 @@ impl ASTNode {
   pub fn name(&self) -> String {
     match self {
       ASTNode::Block { .. } => "Block",
-      ASTNode::Declaration { .. } => "Declaration",
       ASTNode::VariableDeclaration { .. } => "VariableDeclaration",
       ASTNode::StatementIf { .. } => "StatementIf",
       ASTNode::StatementWhile { .. } => "StatementWhile",

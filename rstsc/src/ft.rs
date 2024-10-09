@@ -1,22 +1,26 @@
-use crate::{ast, small_vec::SmallVec, type_checking::infer_return_type, types::Type};
+use crate::{ast::{self}, declaration::Declaration, small_vec::SmallVec, spread::Spread, type_checking::infer_return_type, types::Type};
 
-#[derive(Debug, Clone)]
-
-pub struct NamedDeclaration {
-  pub name: String,
-  pub typ: Type,
-  pub value: Option<ASTNode>,
-  pub conditional: bool
+impl ExprType {
+  pub fn from_typed(node: &ft::ASTNode) -> Option<ExprType> {
+    match node {
+      ft::ASTNode::PrefixOpr { .. } => Some(ExprType::Prefx),
+      ft::ASTNode::InfixOpr { .. } => Some(ExprType::Infx),
+      ft::ASTNode::PostfixOpr { .. } => Some(ExprType::Pstfx),
+      _ => None
+    }
+  }
 }
 
-impl NamedDeclaration {
-  pub fn from(n: &ast::NamedDeclaration) -> NamedDeclaration {
-    NamedDeclaration {
-      name: n.name.clone(),
-      typ: n.typ.clone().unwrap_or(Type::Unknown),
-      value: n.value.as_ref().map(ASTNode::from),
-      conditional: n.conditional
-    }
+pub fn get_operator_binding_power_from_node_typed(node: &ft::ASTNode) -> Option<(u8, u8)> {
+  if let Some(opr_type) = ExprType::from_typed(node) {
+    get_operator_binding_power(opr_type, match node {
+      ft::ASTNode::PrefixOpr { opr, .. } => opr,
+      ft::ASTNode::InfixOpr { opr, .. } => opr,
+      ft::ASTNode::PostfixOpr { opr, .. } => opr,
+      _ => " "
+    })
+  } else {
+    None
   }
 }
 
@@ -56,24 +60,28 @@ pub struct FunctionDefinition {
   pub modifiers: ast::ModifierList,
   pub name: Option<String>,
   pub generics: SmallVec<Type>,
-  pub params: SmallVec<NamedDeclaration>,
+  pub params: SmallVec<Declaration>,
+  pub spread: Spread,
   pub return_type: Type,
   pub body: Option<Box<ASTNode>>
+}
+
+#[derive(Debug, Clone)]
+pub struct ArrowFunctionDefinition {
+  pub params: SmallVec<Declaration>,
+  pub spread: Spread,
+  pub return_type: Type,
+  pub body: Box<ASTNode>
 }
 
 #[derive(Debug, Clone)]
 pub enum ASTNode {
   Block { nodes: Vec<ASTNode> },
 
-  Declaration {
-    on: Box<ASTNode>,
-    typ: Type,
-  },
-
   VariableDeclaration {
     modifiers: ast::ModifierList,
     def_type: ast::VariableDefType,
-    defs: Vec<NamedDeclaration>
+    defs: SmallVec<Declaration>
   },
 
   StatementIf {
@@ -97,30 +105,24 @@ pub enum ASTNode {
   StatementContinue { value: Option<Box<ASTNode>> },
   StatementThrow { value: Option<Box<ASTNode>> },
 
-  FunctionDefinition {
-    inner: FunctionDefinition
-  },
+  FunctionDefinition(FunctionDefinition),
 
-  ArrowFunctionDefinition {
-    params: Vec<NamedDeclaration>,
-    return_type: Type,
-    body: Box<ASTNode>
-  },
+  ArrowFunctionDefinition(ArrowFunctionDefinition),
   PotentialParameter {
     name: String,
     param_type: Type
   },
 
-  Parenthesis { nodes: Vec<ASTNode> },
-  Array { nodes: Vec<ASTNode> },
-  Dict { properties: Vec<ObjectProperty> },
+  Parenthesis { nodes: SmallVec<ASTNode> },
+  Array { nodes: SmallVec<ASTNode> },
+  Dict { properties: SmallVec<ObjectProperty> },
 
   ExprIdentifier { name: String },
   ExprNumLiteral { number: String },
   ExprStrLiteral { string: String },
   ExprBoolLiteral { value: bool },
 
-  ExprFunctionCall { callee: Box<ASTNode>, arguments: Vec<ASTNode> },
+  ExprFunctionCall { callee: Box<ASTNode>, arguments: SmallVec<ASTNode> },
   ExprIndexing { callee: Box<ASTNode>, property: Box<ASTNode> },
 
   ExprTernary {
@@ -158,11 +160,6 @@ impl ASTNode {
       ast::ASTNode::Block { nodes } => ASTNode::Block {
         nodes: nodes.iter().map(ASTNode::from).collect(),
       },
-      ast::ASTNode::Declaration { on, typ, conditional: _ } => ASTNode::Declaration {
-        // TODO: use conditionals!
-        on: Box::new(ASTNode::from(on)),
-        typ: typ.clone(),
-      },
       ast::ASTNode::VariableDeclaration {
         modifiers,
         def_type,
@@ -170,7 +167,7 @@ impl ASTNode {
       } => ASTNode::VariableDeclaration {
         modifiers: modifiers.clone(),
         def_type: def_type.clone(),
-        defs: defs.iter().map(NamedDeclaration::from).collect(),
+        defs: defs.clone(),
       },
       ast::ASTNode::StatementIf {
         condition,
@@ -207,31 +204,6 @@ impl ASTNode {
       },
       ast::ASTNode::StatementThrow { value } => ASTNode::StatementThrow {
         value: value.as_ref().map(|a| Box::new(ASTNode::from(a))),
-      },
-      ast::ASTNode::FunctionDefinition {
-        inner
-      } => {
-        let body = inner.body.as_ref().map(|a| Box::new(ASTNode::from(a)));
-        let ret_inner = FunctionDefinition {
-          modifiers: inner.modifiers.clone(),
-          name: inner.name.clone(),
-          generics: inner.generics.clone(),
-          params: inner.params.iter().map(NamedDeclaration::from).collect(),
-          return_type: inner.return_type.clone().unwrap_or(Type::Unknown),
-          body,
-        };
-        let mut ret = ASTNode::FunctionDefinition { inner: ret_inner };
-        infer_return_type(&mut ret);
-        ret
-      },
-      ast::ASTNode::ArrowFunctionDefinition {
-        params,
-        return_type,
-        body,
-      } => ASTNode::ArrowFunctionDefinition {
-        params: params.iter().map(NamedDeclaration::from).collect(),
-        return_type: return_type.clone().unwrap_or(Type::Unknown),
-        body: Box::new(ASTNode::from(body)),
       },
       ast::ASTNode::Parenthesis { nodes } => ASTNode::Parenthesis {
         nodes: nodes.iter().map(ASTNode::from).collect(),

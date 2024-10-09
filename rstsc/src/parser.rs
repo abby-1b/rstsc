@@ -1,20 +1,24 @@
-use phf::phf_map;
+use phf::{phf_map, phf_set};
 use crate::{
   ast::{
-    ASTNode, ClassDefinition, FunctionDefinition, InterfaceDeclaration,
-    Modifier, ModifierList, NamedDeclaration, ObjectProperty, VariableDefType,
-    ACCESSIBILITY_MODIFIERS, MODIFIERS
+    ASTNode, ArrowFunctionDefinition, ClassDefinition, FunctionDefinition, InterfaceDeclaration, Modifier, ModifierList, ObjectProperty, VariableDefType, ACCESSIBILITY_MODIFIERS, MODIFIERS
   },
-  error_type::CompilerError,
-  operations::{get_operator_binding_power, ExprType},
+  declaration::{Declaration, DeclarationTyped},
+  error_type::CompilerError, operations::{get_operator_binding_power, ExprType},
   small_vec::SmallVec,
+  spread::Spread,
   tokenizer::{Token, TokenList, TokenType, EOF_TOKEN},
   types::{
     get_comma_separated_types_until, get_generics,
     get_key_value_or_computed_property, get_optional_generics, get_type,
-    try_get_type, KVMapOrComputedProp, Type, TypedNamedDeclaration
+    try_get_type, KVMapOrComputedProp, Type
   }
 };
+
+lazy_static::lazy_static! {
+  static ref ARROW_FN_PRECEDENCE: u8 = get_operator_binding_power(ExprType::Infx, "=>").unwrap().1;
+  static ref COLON_PRECEDENCE: u8 = get_operator_binding_power(ExprType::Infx, ":").unwrap().1;
+}
 
 pub static INVERSE_GROUPINGS: phf::Map<&'static str, &'static str> = phf_map! {
   "(" => ")",
@@ -30,7 +34,19 @@ pub static INVERSE_GROUPINGS: phf::Map<&'static str, &'static str> = phf_map! {
 
 pub static ANONYMOUS_CLASS_NAME: &str = "\0";
 
-/// Parses a single block. Consumes the ending token!
+pub static DISALLOWED_VARIABLE_NAMES: phf::Set<&'static str> = phf_set! {
+  "abstract", "arguments", "await", "boolean", "break", "byte", "case", "catch",
+  "char", "class", "const", "continue", "debugger", "default", "delete", "do",
+  "double", "else", "enum", "eval", "export", "extends", "false", "final",
+  "finally", "float", "for", "function", "goto", "if", "implements", "import",
+  "in", "instanceof", "int", "interface", "let", "long", "native", "new",
+  "null", "package", "private", "protected", "public", "return", "short",
+  "static", "super", "switch", "synchronized", "this", "throw", "throws",
+  "transient", "true", "try", "typeof", "var", "void", "volatile", "while",
+  "with", "yield",
+};
+
+/// Parses a single block. Consumes the ending token, but not the starting token.
 pub fn get_block<'a>(tokens: &mut TokenList<'a>) -> Result<ASTNode, CompilerError<'a>> {
   let mut nodes = SmallVec::new();
 
@@ -136,7 +152,7 @@ fn handle_vars<'a, 'b>(
   let def_type = get_variable_def_type(tokens)?;
 
   // Get the variable definitions
-  let defs = get_multiple_named_declarations(tokens)?;
+  let defs = get_multiple_declarations(tokens, false)?.0;
 
   out.push(ASTNode::VariableDeclaration {
     modifiers: Default::default(),
@@ -164,38 +180,43 @@ fn get_variable_def_type<'b>(
 }
 
 /// Gets a single named (and optionally typed) declaration, with or without
-/// values.
-fn get_named_declaration<'a, 'b>(
+/// a value. Does NOT handle spreads!
+fn get_declaration<'a, 'b>(
   tokens: &'b mut TokenList<'a>
-) -> Result<NamedDeclaration, CompilerError<'a>> where 'a: 'b {
-  let spread = if tokens.peek_str() == "..." {
-    tokens.skip_unchecked();
-    true
-  } else {
-    false
-  };
+) -> Result<Declaration, CompilerError<'a>> where 'a: 'b {
+  tokens.ignore_whitespace();
   let name_token = tokens.consume();
+  if !name_token.is_identifier() {
+    return Err(CompilerError {
+      message: "Expected identifier".to_owned(),
+      token: name_token
+    })
+  }
   let name = name_token.value.to_owned();
-  let conditional = if tokens.peek_str() == "?" {
-    tokens.skip_unchecked();
-    true
+  let typ = if tokens.peek_str() == "?" {
+    let conditional_token = tokens.consume();
+    tokens.ignore_whitespace();
+    if tokens.peek_str() != ":" {
+      return Err(CompilerError {
+        message: "Expected `:` after `?` in conditional declaration".to_owned(),
+        token: conditional_token
+    })
+    }
+    let mut typ = get_type(tokens)?;
+    typ.intersection(Type::Void);
+    Some(typ)
   } else {
-    false
-  };
-  let typ = try_get_type(tokens)?;
+    try_get_type(tokens)?
+  }.unwrap_or(Type::Unknown);
+
+  tokens.ignore_whitespace();
   let value = if tokens.peek_str() == "=" {
     tokens.skip_unchecked();
     Some(get_expression(tokens, 0)?)
   } else {
     None
   };
-  Ok(NamedDeclaration {
-    name,
-    typ,
-    value,
-    conditional,
-    spread,
-  })
+  Ok(Declaration::new(name, typ, value))
 }
 
 /// Gets multiple named declarations, with or without values.
@@ -206,89 +227,32 @@ fn get_named_declaration<'a, 'b>(
 /// `let [a: number = 123, b: string];`
 /// 
 /// `function some([a: number, b: string = '123']) { ... }`
-fn get_multiple_named_declarations<'a, 'b>(
-  tokens: &'b mut TokenList<'a>
-) -> Result<SmallVec<NamedDeclaration>, CompilerError<'a>> where 'a: 'b {
-  // Old code
-  let declaration_node = get_expression(tokens, 0)?;
-  convert_to_typed_declarations(declaration_node)
-}
-
-fn convert_to_typed_declarations(
-  node: ASTNode,
-) -> Result<SmallVec<NamedDeclaration>, CompilerError<'static>> {
-  let ast_declarations = if let ASTNode::Parenthesis { nodes } = node {
-    // Already split (by parenthesis node)
-    nodes
-  } else {
-    // Split here
-    separate_commas(node)
-  };
-
-  fn deconstruct_ast_declaration(d: ASTNode) -> Result<NamedDeclaration, CompilerError<'static>> {
-    match d {
-      ASTNode::ExprIdentifier { name } => {
-        Ok(NamedDeclaration {
-          name,
-          typ: None,
-          value: None,
-          conditional: false,
-          spread: false
-        })
-      }
-      ASTNode::Declaration { on, typ, conditional } => {
-        let mut decl = deconstruct_ast_declaration(*on)?;
-        decl.typ = Some(typ);
-        decl.conditional = conditional;
-        Ok(decl)
-      }
-      ASTNode::InfixOpr { left, opr, right } => {
-        if opr == "=" {
-          let mut decl = deconstruct_ast_declaration(*left)?;
-          decl.value = Some(*right);
-          Ok(decl)
-        } else {
-          Err(CompilerError {
-            message: format!(
-              "Expected `=`, found {}",
-              opr
-            ),
-            token: EOF_TOKEN.clone()
-          })
-        }
-      }
-      ASTNode::PrefixOpr { opr, expr } => {
-        if opr == "..." {
-          let mut decl = deconstruct_ast_declaration(*expr)?;
-          decl.spread = true;
-          Ok(decl)
-        } else {
-          Err(CompilerError {
-            message: format!("Expected `...`, found {}", opr),
-            token: EOF_TOKEN.clone()
-          })
-        }
-      }
-      other => {
-        Err(CompilerError {
-          message: format!(
-            "Expected declaration, found {:?}",
-            other
-          ),
-          token: EOF_TOKEN.clone()
-        })
-      }
+fn get_multiple_declarations<'a, 'b>(
+  tokens: &'b mut TokenList<'a>,
+  allow_spread: bool
+) -> Result<(SmallVec<Declaration>, Spread), CompilerError<'a>> where 'a: 'b {
+  let mut declarations = SmallVec::new();
+  let mut spread = Spread::new();
+  while ![ ";", ")" ].contains(&tokens.peek_str()) {
+    if tokens.peek_str() == "..." {
+      if !allow_spread { return Err(CompilerError {
+        message: "Unexpected spread".to_owned(),
+        token: tokens.consume()
+      }) }
+      spread.set(declarations.len_natural(), tokens.consume())?;
     }
-  }
+    declarations.push(get_declaration(tokens)?);
 
-  let mut declarations = SmallVec::with_capacity(ast_declarations.len());
-  for ast_declaration in ast_declarations {
-    if !matches!(ast_declaration, ASTNode::Empty) {
-      declarations.push(deconstruct_ast_declaration(ast_declaration)?);
+    let mut found_comma = false;
+    tokens.ignore_whitespace();
+    while tokens.peek_str() == "," {
+      tokens.skip_unchecked(); // Skip ","
+      tokens.ignore_whitespace();
+      found_comma = true;
     }
+    if !found_comma { break; }
   }
-
-  Ok(declarations)
+  Ok((declarations, spread))
 }
 
 /// Handles control flow, like `if`, `while`, and `for`
@@ -443,24 +407,11 @@ fn get_function_after_name<'a, 'b>(
   let generics = get_optional_generics(tokens)?;
   
   // Get parameters and return type
-  let (params, return_type) = {
-    tokens.ignore_whitespace();
-    let header = get_expression(tokens, 0)?;
-
-    if let ASTNode::Declaration { on, typ, conditional: _ } = header {
-      // Parameters with return type
-      (
-        convert_to_typed_declarations(*on)?,
-        Some(typ)
-      )
-    } else {
-      // Only parameters, no return type
-      (
-        convert_to_typed_declarations(header)?,
-        None
-      )
-    }
-  };
+  tokens.ignore_whitespace();
+  tokens.skip("(")?;
+  let params = get_multiple_declarations(tokens, true)?;
+  tokens.skip(")")?;
+  let return_type = try_get_type(tokens)?;
 
   // Get body
   tokens.ignore_whitespace();
@@ -476,7 +427,8 @@ fn get_function_after_name<'a, 'b>(
     modifiers: Default::default(),
     name,
     generics,
-    params,
+    params: params.0,
+    spread: params.1,
     return_type,
     body: body.map(Box::new)
   })
@@ -485,7 +437,7 @@ fn get_function_after_name<'a, 'b>(
 /// Similar to `get_function_after_name`, gets a class constructor.
 fn get_constructor_after_name<'a, 'b>(
   tokens: &'b mut TokenList<'a>,
-  declarations: &mut SmallVec<(ModifierList, NamedDeclaration)>
+  declarations: &mut SmallVec<(ModifierList, Declaration)>
 ) -> Result<FunctionDefinition, CompilerError<'a>> where 'a: 'b {
   tokens.ignore_whitespace();
 
@@ -500,26 +452,28 @@ fn get_constructor_after_name<'a, 'b>(
   // Get parameters
   let mut params = SmallVec::new();
   let mut set_properties: SmallVec<ASTNode> = SmallVec::new();
+  let mut spread = Spread::new();
   tokens.skip("(")?;
   while tokens.peek_str() != ")" {
     tokens.ignore_whitespace();
     if ACCESSIBILITY_MODIFIERS.contains(&tokens.peek_str()) {
       let modifiers = fetch_modifier_list(tokens);
-      let mut declaration = get_named_declaration(tokens)?;
+      let mut declaration = get_declaration(tokens)?;
+      spread.try_set(tokens, params.len_natural())?;
       params.push(declaration.clone());
-      declaration.value = None;
+      declaration.clear_value();
       declarations.push((modifiers, declaration.clone()));
       set_properties.push(ASTNode::InfixOpr {
         left: Box::new(ASTNode::InfixOpr {
           left: Box::new(ASTNode::ExprIdentifier { name: "this".to_owned() }),
           opr: ".".to_owned(),
-          right: Box::new(ASTNode::ExprIdentifier { name: declaration.name.clone() })
+          right: Box::new(ASTNode::ExprIdentifier { name: declaration.name().clone() })
         }),
         opr: "=".to_owned(),
-        right: Box::new(ASTNode::ExprIdentifier { name: declaration.name.clone() })
+        right: Box::new(ASTNode::ExprIdentifier { name: declaration.name().clone() })
       })
     } else {
-      params.push(get_named_declaration(tokens)?);
+      params.push(get_declaration(tokens)?);
     }
   }
   tokens.skip_unchecked(); // Skip ")"
@@ -558,6 +512,7 @@ fn get_constructor_after_name<'a, 'b>(
     name: Some("constructor".to_owned()),
     generics: SmallVec::new(),
     params,
+    spread,
     return_type,
     body: body.map(Box::new)
   })
@@ -597,7 +552,7 @@ fn get_class_expression<'a, 'b>(
 
   // Classes change the way things are parsed!
   let mut kv_maps = SmallVec::new();
-  let mut declarations: SmallVec<(ModifierList, NamedDeclaration)> = SmallVec::new();
+  let mut declarations = SmallVec::new();
   let mut methods = SmallVec::new();
 
   tokens.ignore_whitespace();
@@ -648,11 +603,11 @@ fn get_class_expression<'a, 'b>(
     tokens.ignore_whitespace();
 
     if name.value != "constructor" && [ ":", "=", ";" ].contains(&tokens.peek_str()) {
-      // `:`, `=`, and `;` mean it's a property
+      // Normal property
       tokens.restore_checkpoint(checkpoint);
 
       // Get the declaration
-      let gotten_declarations = get_multiple_named_declarations(tokens)?;
+      let gotten_declarations = get_multiple_declarations(tokens, false)?.0;
 
       // Add the declaration
       for declaration in gotten_declarations {
@@ -719,12 +674,14 @@ fn get_typed_header<'a>(
   require_name: bool
 ) -> Result<TypedHeader, CompilerError<'a>> {
   tokens.ignore_whitespace();
-  let name: Option<String> = if tokens.peek().is_identifier() {
+  let name = tokens.peek();
+  let is_illegal_name = DISALLOWED_VARIABLE_NAMES.contains(&name.value);
+  let name: Option<String> = if name.is_identifier() && !is_illegal_name {
     Some(tokens.consume().value.to_owned())
   } else if require_name {
     let t = tokens.consume();
     return Err(CompilerError {
-      message: format!("Expected identifier, found {:?}", t.value),
+      message: format!("Expected class name, found {:?}", t.value),
       token: t
     });
   } else {
@@ -882,41 +839,36 @@ fn handle_interface<'a>(
       let function = get_type(tokens)?;
       function_types.union(function);
     } else if next == "[" {
-      let kv_or_cp = get_key_value_or_computed_property(tokens)?;
-      match kv_or_cp {
+      match get_key_value_or_computed_property(tokens)? {
         KVMapOrComputedProp::KVMap(kv_map) => key_value.push(kv_map),
-        KVMapOrComputedProp::ComputedProp(name) => {
-          named_parts.push(TypedNamedDeclaration {
-            name,
-            typ: try_get_type(tokens)?.unwrap_or(Type::Unknown),
-            computed: false
-          });
+        KVMapOrComputedProp::ComputedProp(value) => {
+          named_parts.push(DeclarationTyped::computed(
+            value,
+            try_get_type(tokens)?.unwrap_or(Type::Unknown)
+          ))
         }
       }
     } else {
-      // Normal named declaration (no type)
-
       // Try getting a named function
       let checkpoint = tokens.get_checkpoint();
       let function_name = tokens.consume();
       tokens.ignore_whitespace();
+      // TODO: make this get a typed declaration directly (without using a type in-between)
       if tokens.peek_str() == "(" {
         // It's a function! (which is a member)
         let function = get_type(tokens)?;
-        named_parts.push(TypedNamedDeclaration {
-          name: function_name.value.to_owned(),
-          typ: function,
-          computed: false
-        });
+        named_parts.push(DeclarationTyped::named(
+          function_name.value.to_owned(),
+          function
+        ));
       } else {
         // It isn't a function, treat it as a named declaration
         tokens.restore_checkpoint(checkpoint);
-        let decl = get_named_declaration(tokens)?;
-        named_parts.push(TypedNamedDeclaration {
-          name: decl.name,
-          typ: decl.typ.unwrap_or(Type::Unknown),
-          computed: false
-        });
+        let decl = get_declaration(tokens)?;
+        named_parts.push(DeclarationTyped::named(
+          decl.name().clone(),
+          decl.typ().clone()
+        ));
       }
     }
 
@@ -1117,21 +1069,9 @@ fn parse_infix<'a>(
   } else if opr == "=>" {
     // Arrow functions get special treatment!
     let (params, return_type) = match left {
-      ASTNode::Parenthesis { .. } => {
-        (convert_to_typed_declarations(left)?, None)
-      },
-      ASTNode::Declaration { on, typ, .. } => {
-        (convert_to_typed_declarations(*on)?, Some(typ))
-      }
       ASTNode::ExprIdentifier { name } => {
         (
-          SmallVec::with_element(NamedDeclaration {
-            name,
-            typ: None,
-            value: None,
-            conditional: false,
-            spread: false
-          }),
+          SmallVec::with_element(Declaration::new(name, Type::Unknown, None)),
           None
         )
       }
@@ -1146,48 +1086,12 @@ fn parse_infix<'a>(
       }
     };
 
-    tokens.ignore_whitespace();
-    return Ok(ASTNode::ArrowFunctionDefinition {
-      params,
-      return_type,
-      body: Box::new(
-        if tokens.peek_str() == "{" {
-          get_single_statement(tokens)?
-        } else {
-          get_expression(tokens, precedence)?
-        }
-      )
-    });
-  } else if opr == ":" {
-    // `:` here means what's coming up is a type, not an expression
-    let typ = get_type(tokens)?;
-    tokens.ignore_whitespace();
-    return Ok(ASTNode::Declaration {
-      on: Box::new(left),
-      typ,
-      conditional: false
-    });
+    return Ok(parse_arrow_function_after_arrow(tokens, params, Spread::new(), return_type)?);
   } else if opr == "?" {
     // Ternary (eg. `condition ? true : false`)
-    // Or maybe a conditional type (eg. `let a?: string;`)
-
-    tokens.ignore_whitespace();
-    if tokens.peek_str() == ":" {
-      // Conditional type!
-      tokens.skip_unchecked(); // Skip ":"
-
-      // Get the type
-      let typ = get_type(tokens)?;
-      return Ok(ASTNode::Declaration {
-        on: Box::new(left),
-        typ,
-        conditional: true
-      })
-    }
 
     // Get the first part, up until the `:`
-    let colon_precedence = get_operator_binding_power(ExprType::Infx, ":").unwrap();
-    let mut if_true = get_expression(tokens, colon_precedence.1)?;
+    let mut if_true = get_expression(tokens, *COLON_PRECEDENCE)?;
     while tokens.peek_str() != ":" {
       if tokens.is_done() {
         return Err(CompilerError {
@@ -1198,7 +1102,7 @@ fn parse_infix<'a>(
       if_true = parse_infix(
         if_true,
         tokens,
-        colon_precedence.1
+        *COLON_PRECEDENCE
       )?;
       tokens.ignore_whitespace();
     }
@@ -1254,8 +1158,51 @@ fn separate_commas(node: ASTNode) -> SmallVec<ASTNode> {
   }
 }
 
+/// Tries parsing an arrow function, returning None if none is present.
+/// Caller is responsible for restoring the tokenizer back to its origial state
+/// if this function returns None.
+fn try_parse_arrow_function<'a>(
+  tokens: &mut TokenList<'a>,
+) -> Result<Option<ASTNode>, CompilerError<'a>> {
+  tokens.skip("(")?;
+  let (params, spread) = {
+    if let Ok(d) = get_multiple_declarations(tokens, true) { d }
+    else { return Ok(None) }
+  };
+  if tokens.skip(")").is_err() { return Ok(None) }
+  tokens.ignore_whitespace();
+  let return_type = try_get_type(tokens)?;
+  if tokens.peek_str() != "=>" { return Ok(None) }
+  tokens.skip_unchecked(); // Skip "=>"
+  Ok(Some(parse_arrow_function_after_arrow(tokens, params, spread, return_type)?))
+}
+
+/// Parses an arrow function starting at the arrow (`=>`)
+fn parse_arrow_function_after_arrow<'a>(
+  tokens: &mut TokenList<'a>,
+  params: SmallVec<Declaration>,
+  spread: Spread,
+  return_type: Option<Type>
+) -> Result<ASTNode, CompilerError<'a>> {
+  tokens.ignore_whitespace();
+  let is_expression = tokens.peek_str() != "{";
+  let body = if is_expression {
+    get_expression(tokens, *ARROW_FN_PRECEDENCE)?
+  } else {
+    tokens.skip_unchecked(); // Skip "{"
+    get_block(tokens)?
+  };
+
+  Ok(ASTNode::ArrowFunctionDefinition { inner: Box::new(ArrowFunctionDefinition {
+    params,
+    spread,
+    return_type,
+    body: Box::new(body)
+  }) })
+}
+
 /// Gets a single expression
-fn get_expression<'a>(
+pub fn get_expression<'a>(
   tokens: &mut TokenList<'a>,
   precedence: u8
 ) -> Result<ASTNode, CompilerError<'a>> {
@@ -1284,19 +1231,28 @@ fn get_expression<'a>(
             next.value
           );
           if let Some(binding_power) = binding_power {
-            // These prefix operators include what you might expect
-            // (+, -, ~), along with arrays, dicts, among other things!
-            parse_prefix(tokens, binding_power.1)?
+            // These prefix operators include what you might expect (+, -, ~),
+            // along with arrays, dicts, and parenthesis!
+            if next.value == "(" {
+              // Try getting an arrow function...
+              let checkpoint = tokens.get_checkpoint();
+              let arrow_fn = try_parse_arrow_function(tokens)?;
+              if let Some(arrow_fn) = arrow_fn {
+                arrow_fn
+              } else {
+                tokens.restore_checkpoint(checkpoint);
+                parse_prefix(tokens, binding_power.1)?
+              }
+            } else {
+              parse_prefix(tokens, binding_power.1)?
+            }
           } else if next.is_identifier() {
             // Could be a name...
             parse_name(tokens)?
           } else {
             // Not a name & no matching operators.
             return Err(CompilerError {
-              message: format!(
-                "Prefix operator not found: {:?}",
-                tokens.peek()
-              ),
+              message: "Prefix operator not found".to_owned(),
               token: tokens.consume()
             });
           }

@@ -1,14 +1,16 @@
 
 pub mod small_vec;
+pub mod spread;
 pub mod error_type;
 pub mod tokenizer;
 pub mod operations;
+pub mod declaration;
 pub mod types;
 pub mod ast;
-pub mod type_checking;
-pub mod ft;
 pub mod parser;
-pub mod minify;
+// pub mod type_checking;
+// pub mod ft;
+// pub mod minify;
 pub mod emit;
 
 /// Compiles a string of TypeScript code

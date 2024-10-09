@@ -8,12 +8,13 @@ use rstsc::parser::get_block;
 #[global_allocator]
 static ALLOCATOR: Cap<alloc::System> = Cap::new(alloc::System, usize::MAX);
 
-const SOURCE_TEST: &str = include_str!("./test.ts");
+const SOURCE_TEST: &str = include_str!("./speed.ts");
 
 fn main() {
   let start_mem = ALLOCATOR.allocated();
-  for _ in 0..10 { let _ = do_ast(); }
+  // for _ in 0..10 { let _ = do_ast(); }
   let ast = do_ast();
+  // dbg!(&ast);
 
   let total_allocated = ALLOCATOR.total_allocated() - start_mem;
   println!("total: {} KiB", (total_allocated as f32 / 10.24).round() / 100.0);

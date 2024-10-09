@@ -1,4 +1,6 @@
-use crate::{ast::{ASTNode, FunctionDefinition, NamedDeclaration, ObjectProperty}, small_vec::SmallVec};
+use crate::{ast::{ASTNode, ArrowFunctionDefinition, FunctionDefinition, ObjectProperty}, declaration::Declaration, small_vec::{SizeType, SmallVec}, spread::Spread};
+
+static NO_SPREAD: Spread = Spread::new();
 
 struct Emitter {
   output: String,
@@ -44,11 +46,11 @@ impl Emitter {
 
   pub fn emit_vec<I: std::fmt::Debug, F>(
     &mut self,
-    vector: SmallVec<I>,
-    traversal_fn: F,
+    vector: &SmallVec<I>,
+    mut traversal_fn: F,
     normal_separator: &str,
     compact_separator: &str
-  ) where F: Fn(I, &mut Emitter) {
+  ) where F: FnMut(&I, &mut Emitter) {
     let separator = if self.is_compact {
       compact_separator
     } else {
@@ -104,7 +106,7 @@ pub fn emit_code(ast: ASTNode, compact: bool) -> String {
   // Handle the program `Block` node
   match ast {
     ASTNode::Block { nodes } => {
-      for node in nodes {
+      for node in nodes.iter() {
         emit_single(node, &mut emitter);
         emitter.endline();
       }
@@ -116,7 +118,7 @@ pub fn emit_code(ast: ASTNode, compact: bool) -> String {
 }
 
 fn emit_single(
-  ast: ASTNode,
+  ast: &ASTNode,
   emitter: &mut Emitter
 ) {
   match ast {
@@ -132,13 +134,10 @@ fn emit_single(
       emitter.unindent();
       emitter.out("}", false);
     }
-    ASTNode::Declaration { on, .. } => {
-      emit_single(*on, emitter);
-    }
     ASTNode::VariableDeclaration { modifiers, def_type, defs } => {
       emitter.out(&modifiers.emit(true), false);
       emitter.out(&def_type.emit(), false);
-      emit_named_declarations(defs, emitter);
+      emit_declarations(defs, NO_SPREAD.clone(), emitter);
       emitter.out("", true);
     }
     ASTNode::StatementIf { condition, body, alternate } => {
@@ -146,11 +145,11 @@ fn emit_single(
 
       // Head
       emitter.out("if (", false);
-      emit_single(*condition, emitter);
+      emit_single(condition, emitter);
       emitter.out_diff(") ", ")", false);
 
       // Body
-      emit_single(*body, emitter);
+      emit_single(body, emitter);
 
       // Else (if any)
       if let Some(alternate) = alternate {
@@ -160,67 +159,67 @@ fn emit_single(
         } else {
           emitter.out(" else ", false);
         }
-        emit_single(*alternate, emitter);
+        emit_single(alternate, emitter);
       }
     }
     // ASTNode::StatementWhile { .. } => "StatementWhile"
     ASTNode::StatementFor { init, condition, update, body } => {
       // Head
       emitter.out_diff("for (", "for(", false);
-      emit_single(*init, emitter);
+      emit_single(init, emitter);
       emitter.out_diff("; ", ";", false);
-      emit_single(*condition, emitter);
+      emit_single(condition, emitter);
       emitter.out_diff("; ", ";", false);
-      emit_single(*update, emitter);
+      emit_single(update, emitter);
       emitter.out_diff(") ", ")", false);
 
       // Body
-      emit_single(*body, emitter);
+      emit_single(body, emitter);
     }
     ASTNode::StatementReturn { value } => {
       emitter.out("return", true);
       if let Some(value) = value {
         emitter.out(" ", false);
-        emit_single(*value, emitter);
+        emit_single(value, emitter);
       }
     }
     ASTNode::StatementBreak { value } => {
       emitter.out("break", true);
       if let Some(value) = value {
         emitter.out(" ", false);
-        emit_single(*value, emitter);
+        emit_single(value, emitter);
       }
     }
     ASTNode::StatementContinue { value } => {
       emitter.out("continue", true);
       if let Some(value) = value {
         emitter.out(" ", false);
-        emit_single(*value, emitter);
+        emit_single(value, emitter);
       }
     }
     ASTNode::StatementThrow { value } => {
       emitter.out("throw", true);
       if let Some(value) = value {
         emitter.out(" ", false);
-        emit_single(*value, emitter);
+        emit_single(value, emitter);
       }
     }
     ASTNode::FunctionDefinition { inner } => {
       if inner.body.is_some() {
         emit_function_definition(
-          *inner,
+          &*inner,
           true,
           emitter
         );
       }
     }
-    ASTNode::ArrowFunctionDefinition { params, body, .. } => {
+    ASTNode::ArrowFunctionDefinition { inner: arrow_fn } => {
       // Params
-      if params.len() == 1 && params[0].value.is_none() {
-        emitter.out(&params[0].name, false);
+      if arrow_fn.params.len() == 1 && arrow_fn.params[0].value().is_none() {
+        emitter.out(&arrow_fn.params[0].name(), false);
       } else {
         emitter.out("(", false);
-        emit_named_declarations(params, emitter);
+        emit_declarations(&arrow_fn.params, arrow_fn.spread.clone(), emitter);
         emitter.out(")", false);
       }
 
@@ -228,17 +227,17 @@ fn emit_single(
       emitter.out_diff(" => ", "=>", false);
 
       // Body
-      emit_single(*body, emitter);
+      emit_single(&*arrow_fn.body, emitter);
     }
     ASTNode::ClassDefinition { inner } => {
       emitter.out(&inner.modifiers.emit(true), false);
-      if let Some(name) = inner.name {
+      if let Some(name) = &inner.name {
         emitter.out("class ", false);
         emitter.out(&name, false);
       } else {
         emitter.out("class", false);
       }
-      if let Some(extends) = inner.extends {
+      if let Some(extends) = &inner.extends {
         emitter.out(" extends ", false);
         emitter.out(&extends.get_single_name(), false);
       }
@@ -246,14 +245,14 @@ fn emit_single(
       emitter.endline();
       emitter.indent();
 
-      for (decl_modifiers, declaration) in inner.declarations {
+      for (decl_modifiers, declaration) in inner.declarations.iter() {
         emitter.out(&decl_modifiers.emit(true), false);
-        emit_named_declaration(declaration, emitter);
+        emit_single_declaration(&declaration, emitter);
         emitter.endline();
       }
-      for method in inner.methods {
+      for method in inner.methods.iter() {
         if method.body.is_none() { continue; }
-        emit_function_definition(method, false, emitter);
+        emit_function_definition(&method, false, emitter);
         emitter.endline();
       }
 
@@ -266,14 +265,14 @@ fn emit_single(
     ASTNode::Parenthesis { nodes } => {
       emitter.out("(", false);
       emitter.emit_vec(nodes, |node, emitter| {
-        emit_single(node, emitter);
+        emit_single(&node, emitter);
       }, ", ", ",");
       emitter.out(")", true);
     }
     ASTNode::Array { nodes } => {
       emitter.out_diff("[ ", "[", false);
       emitter.emit_vec(nodes, |node, emitter| {
-        emit_single(node, emitter);
+        emit_single(&node, emitter);
       }, ", ", ",");
       emitter.out_diff(" ]", "]", true);
     }
@@ -283,12 +282,12 @@ fn emit_single(
         match prop {
           ObjectProperty::Spread { argument } => {
             emitter.out("...", false);
-            emit_single(argument, emitter);
+            emit_single(&argument, emitter);
           }
           ObjectProperty::Property { computed, key, value } => {
-            if computed { emitter.out("[", false); }
+            if *computed { emitter.out("[", false); }
             emit_single(key, emitter);
-            if computed { emitter.out("]", false); }
+            if *computed { emitter.out("]", false); }
             emitter.out_diff(": ", ":", false);
             emit_single(value, emitter);
           }
@@ -306,10 +305,10 @@ fn emit_single(
       emitter.out(&name, true);
     }
     ASTNode::ExprBoolLiteral { value } => {
-      emitter.out(if value { "true" } else { "false" }, true);
+      emitter.out(if *value { "true" } else { "false" }, true);
     }
     ASTNode::ExprFunctionCall { callee, generics: _, arguments } => {
-      emit_single(*callee, emitter);
+      emit_single(&*callee, emitter);
       emitter.out("(", false);
       emitter.emit_vec(arguments, |argument, emitter| {
         emit_single(argument, emitter);
@@ -317,17 +316,17 @@ fn emit_single(
       emitter.out(")", true);
     }
     ASTNode::ExprIndexing { callee, property } => {
-      emit_single(*callee, emitter);
+      emit_single(&*callee, emitter);
       emitter.out("[", false);
-      emit_single(*property, emitter);
+      emit_single(&*property, emitter);
       emitter.out("]", true);
     }
     ASTNode::ExprTernary { condition, if_true, if_false } => {
-      emit_single(*condition, emitter);
+      emit_single(&*condition, emitter);
       emitter.out_diff(" ? ", "?", false);
-      emit_single(*if_true, emitter);
+      emit_single(&*if_true, emitter);
       emitter.out_diff(" : ", ":", false);
-      emit_single(*if_false, emitter);
+      emit_single(&*if_false, emitter);
     }
     ASTNode::PrefixOpr { opr, expr } => {
       emitter.out(&opr, true);
@@ -340,7 +339,7 @@ fn emit_single(
         emitter.out(" ", false);
       }
 
-      emit_single(*expr, emitter);
+      emit_single(&*expr, emitter);
     }
     ASTNode::InfixOpr { left, opr, right } => {
       let can_have_spaces = match opr.as_str() {
@@ -349,21 +348,21 @@ fn emit_single(
         "," => (false, true),
         _ => (true, true)
       };
-      emit_single(*left, emitter);
+      emit_single(&*left, emitter);
       if can_have_spaces.0 { emitter.out_diff(" ", "", false); }
       emitter.out(&opr, false);
       if can_have_spaces.1 { emitter.out_diff(" ", "", false); }
-      emit_single(*right, emitter);
+      emit_single(&*right, emitter);
     }
     ASTNode::PostfixOpr { expr, opr } => {
-      emit_single(*expr, emitter);
+      emit_single(&*expr, emitter);
       emitter.out(&opr, true);
     }
     ASTNode::NonNullAssertion { expr } => {
-      emit_single(*expr, emitter);
+      emit_single(&*expr, emitter);
     }
-    ASTNode::ExprAs { value, .. } => { emit_single(*value, emitter); }
-    ASTNode::ExprTypeAssertion { value, .. } => { emit_single(*value, emitter); }
+    ASTNode::ExprAs { value, .. } => { emit_single(&*value, emitter); }
+    ASTNode::ExprTypeAssertion { value, .. } => { emit_single(&*value, emitter); }
     ASTNode::InterfaceDeclaration { .. } => {},
     ASTNode::Empty { .. } => {}
     other => {
@@ -372,32 +371,33 @@ fn emit_single(
   }
 }
 
-fn emit_named_declarations(
-  decls: SmallVec<NamedDeclaration>,
+fn emit_declarations(
+  decls: &SmallVec<Declaration>,
+  spread: Spread,
   emitter: &mut Emitter
 ) {
+  let mut i = 0;
   emitter.emit_vec(decls, |decl, emitter| {
-    emit_named_declaration(decl, emitter);
+    if i == spread.0 { emitter.out("...", false); }
+    emit_single_declaration(decl, emitter);
+    i += 1;
   }, ", ", ",");
 }
 
 #[inline]
-fn emit_named_declaration(
-  declaration: NamedDeclaration,
+fn emit_single_declaration(
+  declaration: &Declaration,
   emitter: &mut Emitter
 ) {
-  if declaration.spread {
-    emitter.out("...", false);
-  }
-  emitter.out(&declaration.name, true);
-  if let Some(value) = declaration.value {
+  emitter.out(&declaration.name(), true);
+  if let Some(value) = declaration.value() {
     emitter.out_diff(" = ", "=", false);
     emit_single(value, emitter);
   }
 }
 
 fn emit_function_definition(
-  function: FunctionDefinition,
+  function: &FunctionDefinition,
   function_statement: bool,
   emitter: &mut Emitter
 ) {
@@ -406,17 +406,17 @@ fn emit_function_definition(
   if function_statement {
     emitter.out("function ", false);
   }
-  if let Some(name) = function.name {
+  if let Some(name) = &function.name {
     emitter.out(&name, false);
   }
 
   // Params
   emitter.out("(", false);
-  emit_named_declarations(function.params, emitter);
+  emit_declarations(&function.params, function.spread.clone(), emitter);
   emitter.out_diff(") ", ")", false);
 
   // Body
-  if let Some(body) = function.body {
-    emit_single(*body, emitter);
+  if let Some(body) = &function.body {
+    emit_single(&body, emitter);
   }
 }

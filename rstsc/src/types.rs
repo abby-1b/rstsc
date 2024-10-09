@@ -2,18 +2,20 @@ use std::collections::hash_map::DefaultHasher;
 use std::fmt::{Display, Debug};
 use std::hash::{Hash, Hasher};
 
+use crate::ast::ASTNode;
+use crate::declaration::{ComputableDeclarationName, DeclarationTyped};
 use crate::error_type::CompilerError;
 use crate::operations::{get_type_operator_binding_power, ExprType};
-use crate::parser::INVERSE_GROUPINGS;
+use crate::parser::{self, INVERSE_GROUPINGS};
 use crate::small_vec::{SizeType, SmallVec};
 use crate::tokenizer::{Token, TokenList, TokenType};
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
-pub struct TypedNamedDeclaration {
-  pub name: String,
-  pub typ: Type,
-  pub computed: bool
-}
+// #[derive(Debug, PartialEq, Eq, Hash, Clone)]
+// pub struct TypedNamedDeclaration {
+//   pub name: String,
+//   pub typ: Type,
+//   pub computed: bool
+// }
 
 #[derive(Copy, Clone)]
 pub union CustomDouble {
@@ -52,7 +54,7 @@ pub struct KeyValueMap {
 #[derive(Debug)]
 pub enum KVMapOrComputedProp {
   KVMap(KeyValueMap),
-  ComputedProp(String)
+  ComputedProp(ASTNode)
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
@@ -104,7 +106,7 @@ pub enum Type {
   /// A typed object (dict)
   Object {
     key_value: SmallVec<KeyValueMap>,
-    parts: SmallVec<TypedNamedDeclaration>
+    parts: SmallVec<DeclarationTyped>
   },
 
   /// Used for type guards `x is string`
@@ -270,206 +272,206 @@ impl Type {
 
       Type::WithArgs(typ, _) => { typ.get_single_name() },
 
-      Type::Array(typ) => { typ.to_string() },
+      Type::Array(typ) => { typ.get_single_name() + "[]" },
 
-      _ => { "".to_string() }
+      _ => { panic!("`get_single_name()` not implemented for {:?}", self) }
     }
   }
 }
 
-impl Display for Type {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    match self {
-      Type::Any => { f.write_str("any") },
+// impl Display for Type {
+//   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//     match self {
+//       Type::Any => { f.write_str("any") },
 
-      Type::Number => { f.write_str("number") },
-      Type::NumberLiteral(number) => {
-        f.write_str(&unsafe { number.value }.to_string())
-      },
+//       Type::Number => { f.write_str("number") },
+//       Type::NumberLiteral(number) => {
+//         f.write_str(&unsafe { number.value }.to_string())
+//       },
 
-      Type::String => { f.write_str("string") },
-      Type::StringLiteral(string) => {
-        f.write_str(string)
-      },
+//       Type::String => { f.write_str("string") },
+//       Type::StringLiteral(string) => {
+//         f.write_str(string)
+//       },
 
-      Type::Boolean => { f.write_str("boolean") },
-      Type::BooleanLiteral(boolean) => {
-        f.write_str(if *boolean {
-          "true"
-        } else {
-          "false"
-        })
-      },
+//       Type::Boolean => { f.write_str("boolean") },
+//       Type::BooleanLiteral(boolean) => {
+//         f.write_str(if *boolean {
+//           "true"
+//         } else {
+//           "false"
+//         })
+//       },
 
-      Type::Unknown => { f.write_str("unknown") },
-      Type::Void => { f.write_str("void") },
+//       Type::Unknown => { f.write_str("unknown") },
+//       Type::Void => { f.write_str("void") },
 
-      Type::Union(types) => {
-        f.write_str(
-          &types.iter()
-            .map(|t| t.to_string()).collect::<SmallVec<String>>()
-            .join(" | ")
-        )
-      },
-      Type::Intersection(types) => {
-        f.write_str(
-          &types.iter()
-            .map(|t| t.to_string()).collect::<SmallVec<String>>()
-            .join(" & ")
-        )
-      },
+//       Type::Union(types) => {
+//         f.write_str(
+//           &types.iter()
+//             .map(|t| t.to_string()).collect::<SmallVec<String>>()
+//             .join(" | ")
+//         )
+//       },
+//       Type::Intersection(types) => {
+//         f.write_str(
+//           &types.iter()
+//             .map(|t| t.to_string()).collect::<SmallVec<String>>()
+//             .join(" & ")
+//         )
+//       },
 
-      Type::Custom(name) => { f.write_str(name) },
+//       Type::Custom(name) => { f.write_str(name) },
 
-      Type::WithArgs(typ, args) => {
-        f.write_str(&typ.to_string())?;
-        f.write_str(
-          &args.iter()
-            .map(|t| t.to_string()).collect::<SmallVec<String>>()
-            .join(" | ")
-        )
-      },
+//       Type::WithArgs(typ, args) => {
+//         f.write_str(&typ.to_string())?;
+//         f.write_str(
+//           &args.iter()
+//             .map(|t| t.to_string()).collect::<SmallVec<String>>()
+//             .join(" | ")
+//         )
+//       },
 
-      Type::Tuple { inner_types, spread_idx } => {
-        let spread_idx = *spread_idx;
-        f.write_str("[ ")?;
-        f.write_str(
-          &inner_types.iter().enumerate()
-            .map(|(index, typ)| {
-              if spread_idx == index as SizeType {
-                "...".to_owned() + &typ.to_string()
-              } else {
-                typ.to_string()
-              }
-            }).collect::<SmallVec<String>>()
-            .join(", ")
-        )?;
-        f.write_str(" ]")
-      },
+//       Type::Tuple { inner_types, spread_idx } => {
+//         let spread_idx = *spread_idx;
+//         f.write_str("[ ")?;
+//         f.write_str(
+//           &inner_types.iter().enumerate()
+//             .map(|(index, typ)| {
+//               if spread_idx == index as SizeType {
+//                 "...".to_owned() + &typ.to_string()
+//               } else {
+//                 typ.to_string()
+//               }
+//             }).collect::<SmallVec<String>>()
+//             .join(", ")
+//         )?;
+//         f.write_str(" ]")
+//       },
 
-      Type::Array(typ) => {
-        f.write_str(&typ.to_string())?;
-        f.write_str("[]")
-      },
+//       Type::Array(typ) => {
+//         f.write_str(&typ.to_string())?;
+//         f.write_str("[]")
+//       },
 
-      Type::Object{ key_value, parts } => {
-        f.write_str("{ ")?;
-        for kv in key_value {
-          f.write_str("[key: ")?;
-          f.write_str(&kv.key.to_string())?;
-          f.write_str("]: ")?;
-          f.write_str(&kv.value.to_string())?;
-          f.write_str(",")?;
-        }
-        f.write_str(
-          &parts.iter()
-            .map(|kv| {
-              kv.name.clone() + " " + &kv.typ.to_string()
-            }).collect::<SmallVec<String>>()
-            .join(", ")
-        )?;
-        f.write_str(" }")
-      },
+//       Type::Object{ key_value, parts } => {
+//         f.write_str("{ ")?;
+//         for kv in key_value {
+//           f.write_str("[key: ")?;
+//           f.write_str(&kv.key.to_string())?;
+//           f.write_str("]: ")?;
+//           f.write_str(&kv.value.to_string())?;
+//           f.write_str(",")?;
+//         }
+//         f.write_str(
+//           &parts.iter()
+//             .map(|kv| {
+//               kv.name.clone() + " " + &kv.typ.to_string()
+//             }).collect::<SmallVec<String>>()
+//             .join(", ")
+//         )?;
+//         f.write_str(" }")
+//       },
 
-      Type::Guard(name, typ) => {
-        f.write_str(name)?;
-        f.write_str(" is ")?;
-        f.write_str(&typ.to_string())
-      },
+//       Type::Guard(name, typ) => {
+//         f.write_str(name)?;
+//         f.write_str(" is ")?;
+//         f.write_str(&typ.to_string())
+//       },
 
-      Type::ColonDeclaration {
-        spread,
-        name,
-        typ,
-        conditional
-      } => {
-        if *spread { f.write_str("...")?; }
-        f.write_str(name)?;
-        if *conditional { f.write_str("?")?; }
-        f.write_str(": ")?;
-        f.write_str(&typ.to_string())
-      },
+//       Type::ColonDeclaration {
+//         spread,
+//         name,
+//         typ,
+//         conditional
+//       } => {
+//         if *spread { f.write_str("...")?; }
+//         f.write_str(name)?;
+//         if *conditional { f.write_str("?")?; }
+//         f.write_str(": ")?;
+//         f.write_str(&typ.to_string())
+//       },
 
-      Type::SpreadParameter { name } => {
-        f.write_str("...")?;
-        f.write_str(name)
-      },
+//       Type::SpreadParameter { name } => {
+//         f.write_str("...")?;
+//         f.write_str(name)
+//       },
 
-      Type::Function {
-        generics,
-        params,
-        return_type,
-        is_constructor
-      } => {
-        if *is_constructor { f.write_str("new ")?; }
-        if !generics.is_empty() {
-          f.write_str("<")?;
-          let mut remaining = generics.len();
-          for generic in generics {
-            f.write_str(&generic.to_string())?;
-            remaining -= 1;
-            if remaining > 0 { f.write_str(", ")?; }
-          }
-          f.write_str(">")?;
-        }
-        f.write_str("(")?;
-        let mut remaining = params.len();
-        for param in params {
-          if param.spread { f.write_str("...")?; }
-          f.write_str(&param.name)?;
-          if param.conditional { f.write_str("?")?; }
-          if let Some(typ) = &param.typ {
-            f.write_str(": ")?;
-            f.write_str(&typ.to_string())?;
-          }
-          remaining -= 1;
-          if remaining > 0 { f.write_str(", ")?; }
-        }
-        f.write_str(") => ")?;
-        f.write_str(&return_type.to_string())
-      }
-      Type::Index { callee, property } => {
-        f.write_str(&callee.to_string())?;
-        f.write_str("[")?;
-        f.write_str(&property.to_string())?;
-        f.write_str("]")
-      }
-      Type::TypeOf(inner) => {
-        f.write_str("typeof ")?;
-        std::fmt::Display::fmt(&inner, f)
-      }
-      Type::KeyOf(inner) => {
-        f.write_str("keyof ")?;
-        std::fmt::Display::fmt(&inner, f)
-      }
-      Type::Conditional {
-        cnd_left, cnd_right,
-        if_true, if_false
-      } => {
-        f.write_str(&cnd_left.to_string())?;
-        f.write_str(" extends ")?;
-        f.write_str(&cnd_right.to_string())?;
-        f.write_str(" ? ")?;
-        f.write_str(&if_true.to_string())?;
-        f.write_str(" : ")?;
-        f.write_str(&if_false.to_string())
-      }
-      Type::Extends(left, right) => {
-        f.write_str(&left.to_string())?;
-        f.write_str(" extends ")?;
-        f.write_str(&right.to_string())
-      }
-      Type::Infer(name) => {
-        f.write_str("infer ")?;
-        f.write_str(name)
-      }
-      Type::Readonly(inner) => {
-        f.write_str("readonly ")?;
-        std::fmt::Display::fmt(inner, f)
-      }
-    }
-  }
-}
+//       Type::Function {
+//         generics,
+//         params,
+//         return_type,
+//         is_constructor
+//       } => {
+//         if *is_constructor { f.write_str("new ")?; }
+//         if !generics.is_empty() {
+//           f.write_str("<")?;
+//           let mut remaining = generics.len();
+//           for generic in generics {
+//             f.write_str(&generic.to_string())?;
+//             remaining -= 1;
+//             if remaining > 0 { f.write_str(", ")?; }
+//           }
+//           f.write_str(">")?;
+//         }
+//         f.write_str("(")?;
+//         let mut remaining = params.len();
+//         for param in params {
+//           if param.spread { f.write_str("...")?; }
+//           f.write_str(&param.name)?;
+//           if param.conditional { f.write_str("?")?; }
+//           if let Some(typ) = &param.typ {
+//             f.write_str(": ")?;
+//             f.write_str(&typ.to_string())?;
+//           }
+//           remaining -= 1;
+//           if remaining > 0 { f.write_str(", ")?; }
+//         }
+//         f.write_str(") => ")?;
+//         f.write_str(&return_type.to_string())
+//       }
+//       Type::Index { callee, property } => {
+//         f.write_str(&callee.to_string())?;
+//         f.write_str("[")?;
+//         f.write_str(&property.to_string())?;
+//         f.write_str("]")
+//       }
+//       Type::TypeOf(inner) => {
+//         f.write_str("typeof ")?;
+//         std::fmt::Display::fmt(&inner, f)
+//       }
+//       Type::KeyOf(inner) => {
+//         f.write_str("keyof ")?;
+//         std::fmt::Display::fmt(&inner, f)
+//       }
+//       Type::Conditional {
+//         cnd_left, cnd_right,
+//         if_true, if_false
+//       } => {
+//         f.write_str(&cnd_left.to_string())?;
+//         f.write_str(" extends ")?;
+//         f.write_str(&cnd_right.to_string())?;
+//         f.write_str(" ? ")?;
+//         f.write_str(&if_true.to_string())?;
+//         f.write_str(" : ")?;
+//         f.write_str(&if_false.to_string())
+//       }
+//       Type::Extends(left, right) => {
+//         f.write_str(&left.to_string())?;
+//         f.write_str(" extends ")?;
+//         f.write_str(&right.to_string())
+//       }
+//       Type::Infer(name) => {
+//         f.write_str("infer ")?;
+//         f.write_str(name)
+//       }
+//       Type::Readonly(inner) => {
+//         f.write_str("readonly ")?;
+//         std::fmt::Display::fmt(inner, f)
+//       }
+//     }
+//   }
+// }
 
 impl Type {
   pub fn inner_count(&self) -> usize {
@@ -477,7 +479,7 @@ impl Type {
       Type::Union(inner) => inner.len(),
       Type::Intersection(inner) => inner.len(),
       Type::Object { parts, .. } => parts.len(),
-      _ => todo!("type.inner_count not implemented for `{}`", self)
+      _ => todo!("type.inner_count not implemented for `{:?}`", self)
     }
   }
 }
@@ -517,6 +519,8 @@ pub fn get_key_value_or_computed_property<'a, 'b>(
 
   tokens.skip_unchecked(); // Skip "["
   tokens.ignore_whitespace();
+
+  let checkpoint = tokens.get_checkpoint();
   
   // Although this is usually "key", it can be any identifier!
   let key_token = tokens.consume();
@@ -528,10 +532,13 @@ pub fn get_key_value_or_computed_property<'a, 'b>(
   }
 
   tokens.ignore_whitespace();
-  if tokens.peek_str() == "]" {
-    tokens.skip_unchecked(); // Skip "]"
+  if tokens.peek_str() != ":" {
+    // It's computed!
+    tokens.restore_checkpoint(checkpoint);
+    let computed = parser::get_expression(tokens, 0)?;
+    tokens.skip("]")?;
     return Ok(
-      KVMapOrComputedProp::ComputedProp(key_token.value.to_owned())
+      KVMapOrComputedProp::ComputedProp(computed)
     )
   }
   tokens.skip(":")?;
@@ -576,7 +583,7 @@ fn parse_infix<'a, 'b>(
       tokens.ignore_whitespace();
       Ok(Type::Guard(
         // The left side of a type guard is a variable from the scope!
-        left.to_string(),
+        left.get_single_name(),
         Box::new(get_expression(tokens, precedence)?)
       ))
     }
@@ -586,7 +593,7 @@ fn parse_infix<'a, 'b>(
       let typ = get_expression(tokens, precedence)?;
       Ok(Type::ColonDeclaration {
         spread: false,
-        name: left.to_string(),
+        name: left.get_single_name(),
         typ: Box::new(typ),
         conditional
       })
@@ -725,30 +732,24 @@ fn parse_prefix<'a, 'b>(
         // TODO: Handle `[key: string]: number`
 
         tokens.ignore_whitespace();
-        let mut is_computed_property = false;
-        let mut computed_name = None;
         if tokens.peek_str() == "}" {
           tokens.skip_unchecked();
           break;
-        } else if tokens.peek_str() == "[" {
+        }
+        
+        let property = if tokens.peek_str() == "[" {
           let kv_or_cmp = get_key_value_or_computed_property(tokens)?;
           match kv_or_cmp {
             KVMapOrComputedProp::KVMap(kv_map) => {
               kv_maps.push(kv_map);
               continue;
             }
-            KVMapOrComputedProp::ComputedProp(name) => {
-              computed_name = Some(name);
-              is_computed_property = true;
+            KVMapOrComputedProp::ComputedProp(value) => {
+              ComputableDeclarationName::new_computed(value)
             }
           }
-        }
-
-        // Get property name
-        let property = if let Some(property_name) = computed_name {
-          property_name
         } else {
-          tokens.consume().value.to_string()
+          ComputableDeclarationName::new_named(tokens.consume().value.to_string())
         };
         
         // Get property type (fallback to `any`)
@@ -761,11 +762,7 @@ fn parse_prefix<'a, 'b>(
         };
 
         // Push
-        obj_parts.push(TypedNamedDeclaration {
-          name: property,
-          typ: property_type,
-          computed: is_computed_property
-        });
+        obj_parts.push(DeclarationTyped::from_parts(property, property_type));
 
         // Ignore commas / exit
         tokens.ignore_whitespace();

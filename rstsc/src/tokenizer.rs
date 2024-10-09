@@ -62,7 +62,7 @@ impl<'a> Token<'a> {
   }
 
   pub fn is_identifier(&self) -> bool {
-    matches!(self.typ, TokenType::Identifier)
+    self.typ == TokenType::Identifier
   }
 
   pub fn from(value: &str) -> Token {
