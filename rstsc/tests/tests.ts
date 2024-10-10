@@ -670,3 +670,25 @@ const nonNullValueA = a[0]!;
 
 const maybeNullValueB: string | undefined = "hello!";
 const nonNullValueB = maybeNullValueB!;
+
+class Some {}
+const A = class extends Some {};
+
+function weirdOperation() {
+    return (
+        (((10 + 21) - 30) * 40)
+        + (function() {
+            return (
+                (((40 - 50) + 10) * 20) -
+                (function() {
+                    return (
+                        (((20 + 30) - 40) * 50) +
+                        (function() {
+                            return (((30 - 10) + 20) * 30) - (((40 - 50) + 10) * 20);
+                        })()
+                    );
+                })()
+            );
+        })()
+    );
+}
