@@ -728,6 +728,7 @@ fn parse_prefix<'a, 'b>(
       // Dictionary object
       let mut obj_parts = SmallVec::new();
       let mut kv_maps = SmallVec::new();
+      tokens.ignore_commas();
       loop {
         // TODO: Handle `[key: string]: number`
 
@@ -765,10 +766,7 @@ fn parse_prefix<'a, 'b>(
         obj_parts.push(DeclarationTyped::from_parts(property, property_type));
 
         // Ignore commas / exit
-        tokens.ignore_whitespace();
-        while tokens.peek_str() == "," {
-          tokens.skip_unchecked();
-        }
+        tokens.ignore_commas();
       }
 
       Ok(Type::Object {
@@ -780,6 +778,7 @@ fn parse_prefix<'a, 'b>(
       // Tuple
       let mut inner_types = SmallVec::new();
       let mut spread_idx = SizeType::MAX;
+      tokens.ignore_commas();
       loop {
         if tokens.peek_str() == "..." {
           // Get spread
@@ -796,19 +795,11 @@ fn parse_prefix<'a, 'b>(
         }
         inner_types.push(get_expression(tokens, precedence)?);
 
-        // Ignore commas
-        tokens.ignore_whitespace();
-        while tokens.peek_str() == "," {
-          tokens.skip_unchecked();
-          tokens.ignore_whitespace();
-        }
-
         // End on brackets
-        if tokens.peek_str() == "]" {
-          tokens.skip_unchecked();
-          break;
-        }
+        if tokens.peek_str() == "]" { break }
+        tokens.ignore_commas();
       }
+      tokens.skip("]")?;
       Ok(Type::Tuple { inner_types, spread_idx })
     }
     "(" => {
@@ -816,16 +807,16 @@ fn parse_prefix<'a, 'b>(
       // This could be an arrow function, too
 
       let mut params_as_types = SmallVec::with_capacity(4);
+      tokens.ignore_commas();
       loop {
         tokens.ignore_whitespace();
-        if tokens.peek_str() == "," {
-          tokens.skip_unchecked();
-        } else if tokens.peek_str() == ")" {
+        if tokens.peek_str() == ")" {
           tokens.skip_unchecked();
           break;
         }
 
         params_as_types.push(get_type(tokens)?);
+        if !tokens.ignore_commas() { break }
       }
       let mut params = SmallVec::new();
       for p in params_as_types.iter() {
@@ -1078,12 +1069,8 @@ pub fn get_comma_separated_types_until<'a, 'b>(
   until_str: &[&str]
 ) -> Result<SmallVec<Type>, CompilerError<'a>> where 'a: 'b {
   let mut types = SmallVec::new();
+  tokens.ignore_commas();
   loop {
-    tokens.ignore_whitespace();
-    while tokens.peek_str() == "," {
-      tokens.skip_unchecked();
-      tokens.ignore_whitespace();
-    }
     if until_str.contains(&tokens.peek_str()) {
       break
     }
@@ -1095,6 +1082,7 @@ pub fn get_comma_separated_types_until<'a, 'b>(
       tokens.skip_unchecked();
       get_type(tokens)?;
     }
+    if !tokens.ignore_commas() { break }
   }
   Ok(types)
 }

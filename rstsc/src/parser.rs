@@ -243,14 +243,7 @@ fn get_multiple_declarations<'a, 'b>(
     }
     declarations.push(get_declaration(tokens)?);
 
-    let mut found_comma = false;
-    tokens.ignore_whitespace();
-    while tokens.peek_str() == "," {
-      tokens.skip_unchecked(); // Skip ","
-      tokens.ignore_whitespace();
-      found_comma = true;
-    }
-    if !found_comma { break; }
+    if !tokens.ignore_commas() { break }
   }
   Ok((declarations, spread))
 }
@@ -1021,13 +1014,9 @@ fn parse_prefix<'a>(
       }
 
       // Ignore trailing commas (if any)
-      tokens.ignore_whitespace();
-      while tokens.peek_str() == "," {
-        tokens.skip_unchecked();
-        tokens.ignore_whitespace();
-      }
+      tokens.ignore_commas();
     }
-    tokens.skip_unchecked(); // Skip closing "}"
+    tokens.skip("}")?;
 
     Ok(ASTNode::Dict { properties })
   } else {
