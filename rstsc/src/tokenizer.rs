@@ -190,6 +190,19 @@ impl<'a> TokenList<'a> {
     }
   }
 
+  /// Consumes commas and whitespace until a non-whitespace,
+  /// non comma token is found.
+  pub fn ignore_commas(&mut self) -> bool {
+    let mut found_comma = false;
+    self.ignore_whitespace();
+    while self.peek_str() == "," {
+      self.skip_unchecked(); // Skip ","
+      self.ignore_whitespace();
+      found_comma = true;
+    }
+    found_comma
+  }
+
   /// Saves a checkpoint of the TokenList, so it can be returned to
   #[must_use]
   pub fn get_checkpoint<'b>(&self) -> TokenListCheckpoint<'b> where 'a: 'b {
@@ -227,7 +240,7 @@ impl<'a> TokenList<'a> {
           if curr_char == '\n' { has_newline = true; }
           self.char_iter.skip();
           curr_char = self.char_iter.peek().unwrap_or('.');
-          token_len += 1;
+          token_len += curr_char.len_utf8();
         }
         break 'token_done (
           token_len,
@@ -305,11 +318,11 @@ impl<'a> TokenList<'a> {
       }
 
       // Other symbols
-      let mut token_len = 1;
+      let mut token_len = curr_char.len_utf8();
       self.char_iter.skip();
       while should_chain(curr_char, self.char_iter.peek().unwrap_or(' ')) {
-        token_len += 1;
         curr_char = self.char_iter.consume().unwrap();
+        token_len += curr_char.len_utf8();
       }
       break 'token_done (
         token_len,

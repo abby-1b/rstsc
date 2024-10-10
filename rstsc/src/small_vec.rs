@@ -1,4 +1,4 @@
-use std::{alloc::Layout, hash::Hash, ops::Index};
+use std::{alloc::Layout, hash::Hash, ops::{Index, IndexMut}};
 use core::fmt::Debug;
 
 // Setting this to `u8` still makes the vec 16 bytes long due to alignment
@@ -55,11 +55,13 @@ impl<T: Debug> SmallVec<T> {
   }
 
   pub fn last(&self) -> Option<&T> {
-    if self.length == 0 {
-      None
-    } else {
-      Some(&self[self.len() - 1])
-    }
+    if self.length == 0 { return None }
+    Some(&self[self.len() - 1])
+  }
+  pub fn last_mut(&mut self) -> Option<&mut T> {
+    if self.length == 0 { return None }
+    let idx = self.length as usize - 1;
+    Some(&mut self[idx])
   }
 
   pub fn iter(&self) -> Iter<'_, T> {
@@ -231,12 +233,10 @@ impl<T: Debug> Index<usize> for SmallVec<T> {
   type Output = T;
   fn index(&self, index: usize) -> &Self::Output {
     #[cfg(debug_assertions)]
-    if index >= self.length as usize {
+    if index >= self.len() {
       panic!(
         "Tried indexing SmallVec at [{}], while length is {} and capacity is {}",
-        index,
-        self.length,
-        self.capacity
+        index, self.length, self.capacity
       );
     }
 
@@ -244,6 +244,22 @@ impl<T: Debug> Index<usize> for SmallVec<T> {
       self.memory.add(index)
     };
     unsafe { &*memory_index }
+  }
+}
+impl<T: Debug> IndexMut<usize> for SmallVec<T> {
+  fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+    #[cfg(debug_assertions)]
+    if index >= self.len() {
+      panic!(
+        "Tried indexing SmallVec at [{}], while length is {} and capacity is {}",
+        index, self.length, self.capacity
+      );
+    }
+
+    let memory_index = unsafe {
+      self.memory.add(index)
+    };
+    unsafe { &mut *memory_index }
   }
 }
 
@@ -302,7 +318,7 @@ impl<'a, T: Debug> Iterator for Iter<'a, T> {
   type Item = &'a T;
 
   fn next(&mut self) -> Option<Self::Item> {
-    if self.index < self.vec.length as usize {
+    if self.index < self.vec.len() {
       let item = unsafe { &*self.vec.memory.add(self.index) };
       self.index += 1;
       Some(item)
@@ -342,7 +358,7 @@ impl<T: Debug> Iterator for IntoIter<T> {
   type Item = T;
 
   fn next(&mut self) -> Option<Self::Item> {
-    if self.index < self.vec.length as usize {
+    if self.index < self.vec.len() {
       let item = unsafe { std::ptr::read(self.vec.memory.add(self.index)) };
       self.index += 1;
       Some(item)
