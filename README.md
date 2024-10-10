@@ -6,6 +6,8 @@ RSTSC is a TypeScript compiler written entirely in Rust. It provides a fast and 
 
 The focus on memory efficiency makes RSTSC well-suited for projects that deal with large TypeScript codebases.
 
+(Also, it's pronounced "rustic"!)
+
 # Roadmap
 
 ### Phase 1: Core Syntax Parsing (80% Completed)
@@ -50,4 +52,4 @@ Tasks:
 
 # License
 
-This project is licensed under the MIT License. See the [LICENSE] file for more details.
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for more details.
