@@ -4,5 +4,8 @@
 		"./test"
 	],
 	"deno.unstable": true,
-	"editor.insertSpaces": true
+	"editor.insertSpaces": true,
+	"lldb.displayFormat": "auto",
+	"lldb.dereferencePointers": true,
+	"lldb.consoleMode": "commands"
 }
