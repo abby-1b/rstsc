@@ -7,7 +7,7 @@ use crate::{
   error_type::CompilerError, operations::{get_operator_binding_power, ExprType},
   small_vec::SmallVec,
   spread::Spread,
-  tokenizer::{Token, TokenList, TokenType, EOF_TOKEN},
+  tokenizer::{Token, TokenList, TokenType},
   types::{
     get_comma_separated_types_until, get_generics,
     get_key_value_or_computed_property, get_optional_generics, get_type,
@@ -17,7 +17,7 @@ use crate::{
 
 lazy_static::lazy_static! {
   static ref ARROW_FN_PRECEDENCE: u8 = get_operator_binding_power(ExprType::Infx, "=>").unwrap().1;
-  static ref COLON_PRECEDENCE: u8 = get_operator_binding_power(ExprType::Infx, ":").unwrap().1;
+  static ref COLON_PRECEDENCE: u8 = get_operator_binding_power(ExprType::Special, ":").unwrap().1;
 }
 
 pub static INVERSE_GROUPINGS: phf::Map<&'static str, &'static str> = phf_map! {
@@ -52,8 +52,7 @@ pub fn get_block<'a>(tokens: &mut TokenList<'a>) -> Result<ASTNode, CompilerErro
 
   // Go through the tokens list
   loop {
-    let new_node = get_single_statement(tokens)?;
-    nodes.push(new_node);
+    nodes.push(get_single_statement(tokens)?);
 
     if tokens.peek_str() == ";" { tokens.skip_unchecked(); continue; }
     if tokens.is_done() { break; }
@@ -77,76 +76,48 @@ pub fn get_block<'a>(tokens: &mut TokenList<'a>) -> Result<ASTNode, CompilerErro
 fn get_single_statement<'a, 'b>(
   tokens: &'b mut TokenList<'a>
 ) -> Result<ASTNode, CompilerError<'a>> where 'a: 'b {
-  let mut nodes = SmallVec::new();
-
-  // Go through the tokens list
-  loop {
-    if !nodes.is_empty() { break; }
-    // Ignore whitespace
-    tokens.ignore_whitespace();
-
-    // Exit conditions
-    if
-      tokens.is_done() ||
-      tokens.peek_str() == ";" ||
-      [ ")", "]", "}" ].contains(&tokens.peek_str())
-    {
-      break;
-    }
-    
-    // Handlers
-    // Note that handlers don't consume `;`!
-    if
-      handle_blocks(tokens, &mut nodes)? ||
-      handle_vars(tokens, &mut nodes)? ||
-      handle_control_flow(tokens, &mut nodes)? ||
-      handle_function_declaration(tokens, &mut nodes)? ||
-      handle_class_declaration(tokens, &mut nodes)? ||
-      handle_modifiers(tokens, &mut nodes)? ||
-      handle_other_statements(tokens, &mut nodes)? ||
-      handle_type_declaration(tokens, &mut nodes)? ||
-      handle_interface(tokens, &mut nodes)?
-    {
-      continue;
-    }
-
-    // Expression fallback
-    // println!("Fallback to expression for {:?}", tokens.peek());
-    handle_expression(tokens, &mut nodes)?; // Fallback
-  }
+  // Ignore whitespace
+  tokens.ignore_whitespace();
+  
+  // Handlers
+  // Note that handlers don't consume `;`!
+  let ret = if let Some(block) = handle_blocks(tokens)? { block }
+  else if let Some(vars)                 = handle_vars(tokens)? { vars }
+  else if let Some(control_flow)         = handle_control_flow(tokens)? { control_flow }
+  else if let Some(function_declaration) = handle_function_declaration(tokens)? { function_declaration }
+  else if let Some(class_declaration)    = handle_class_declaration(tokens)? { class_declaration }
+  else if let Some(modifiers)            = handle_modifiers(tokens)? { modifiers }
+  else if let Some(other_statements)     = handle_other_statements(tokens)? { other_statements }
+  else if let Some(type_declaration)     = handle_type_declaration(tokens)? { type_declaration }
+  else if let Some(interface)            = handle_interface(tokens)? { interface }
+  else { handle_expression(tokens)? }; // Expression fallback
 
   tokens.ignore_whitespace();
   if tokens.peek_str() == ";" {
     tokens.skip_unchecked();
   }
 
-  // Return the single statement node
-  Ok(nodes.pop().unwrap_or(ASTNode::Empty))
+  Ok(ret)
 }
 
-/// Handles blocks in the middle of nowhere
+/// Handles blocks (defined as a non-expression `{` token)
 fn handle_blocks<'a>(
-  tokens: &mut TokenList<'a>,
-  out: &mut SmallVec<ASTNode>,
-) -> Result<bool, CompilerError<'a>> {
+  tokens: &mut TokenList<'a>
+) -> Result<Option<ASTNode>, CompilerError<'a>> {
   if tokens.peek_str() != "{" {
-    return Ok(false);
+    return Ok(None);
   }
-
-  tokens.skip_unchecked();
-  out.push(get_block(tokens)?);
-
-  Ok(true)
+  tokens.skip_unchecked(); // Skip "{"
+  Ok(Some(get_block(tokens)?))
 }
 
 /// Handles variable initialization
 fn handle_vars<'a, 'b>(
-  tokens: &'b mut TokenList<'a>,
-  out: &mut SmallVec<ASTNode>,
-) -> Result<bool, CompilerError<'a>> where 'a: 'b {
+  tokens: &'b mut TokenList<'a>
+) -> Result<Option<ASTNode>, CompilerError<'a>> where 'a: 'b {
   const VARIABLE_DECLARATIONS: &[&str] = &[ "var", "let", "const" ];
   if !VARIABLE_DECLARATIONS.contains(&tokens.peek_str()) {
-    return Ok(false);
+    return Ok(None);
   }
 
   let def_type = get_variable_def_type(tokens)?;
@@ -154,13 +125,11 @@ fn handle_vars<'a, 'b>(
   // Get the variable definitions
   let defs = get_multiple_declarations(tokens, false)?.0;
 
-  out.push(ASTNode::VariableDeclaration {
+  Ok(Some(ASTNode::VariableDeclaration {
     modifiers: Default::default(),
     def_type,
     defs
-  });
-
-  Ok(true)
+  }))
 }
 
 fn get_variable_def_type<'b>(
@@ -179,8 +148,8 @@ fn get_variable_def_type<'b>(
   }
 }
 
-/// Gets a single named (and optionally typed) declaration, with or without
-/// a value. Does NOT handle spreads!
+/// Gets a single named (and optionally typed) declaration,
+/// with or without a value. Does NOT handle spreads!
 fn get_declaration<'a, 'b>(
   tokens: &'b mut TokenList<'a>
 ) -> Result<Declaration, CompilerError<'a>> where 'a: 'b {
@@ -200,7 +169,7 @@ fn get_declaration<'a, 'b>(
       return Err(CompilerError {
         message: "Expected `:` after `?` in conditional declaration".to_owned(),
         token: conditional_token
-    })
+      })
     }
     let mut typ = get_type(tokens)?;
     typ.intersection(Type::Void);
@@ -231,6 +200,7 @@ fn get_multiple_declarations<'a, 'b>(
   tokens: &'b mut TokenList<'a>,
   allow_spread: bool
 ) -> Result<(SmallVec<Declaration>, Spread), CompilerError<'a>> where 'a: 'b {
+  tokens.ignore_whitespace();
   let mut declarations = SmallVec::new();
   let mut spread = Spread::new();
   while ![ ";", ")" ].contains(&tokens.peek_str()) {
@@ -250,18 +220,17 @@ fn get_multiple_declarations<'a, 'b>(
 
 /// Handles control flow, like `if`, `while`, and `for`
 fn handle_control_flow<'a>(
-  tokens: &mut TokenList<'a>,
-  out: &mut SmallVec<ASTNode>,
-) -> Result<bool, CompilerError<'a>> {
+  tokens: &mut TokenList<'a>
+) -> Result<Option<ASTNode>, CompilerError<'a>> {
   const CONTROL_FLOW: &[&str] = &[ "if", "while", "for", "switch" ];
   if !CONTROL_FLOW.contains(&tokens.peek_str()) {
-    return Ok(false);
+    return Ok(None);
   }
 
   let control_flow_type = tokens.consume().value.to_string();
   tokens.ignore_whitespace();
 
-  out.push(match control_flow_type.as_str() {
+  Ok(Some(match control_flow_type.as_str() {
     "if" | "while" => {
       // Get condition
       tokens.skip("(")?;
@@ -319,16 +288,13 @@ fn handle_control_flow<'a>(
     },
     // "switch" => {},
     other => { panic!("Control flow not implemented: {}", other); }
-  });
-
-  Ok(true)
+  }))
 }
 
 /// Handles `return`, `break`, `continue`, and `throw`
 fn handle_other_statements<'a>(
-  tokens: &mut TokenList<'a>,
-  out: &mut SmallVec<ASTNode>,
-) -> Result<bool, CompilerError<'a>> {
+  tokens: &mut TokenList<'a>
+) -> Result<Option<ASTNode>, CompilerError<'a>> {
   const STATEMENT_NAMES: &[&str] = &[
     "return",
     "break",
@@ -336,7 +302,7 @@ fn handle_other_statements<'a>(
     "throw"
   ];
   if !STATEMENT_NAMES.contains(&tokens.peek_str()) {
-    return Ok(false);
+    return Ok(None);
   }
 
   let statement_type = tokens.consume().value.to_string();
@@ -348,23 +314,20 @@ fn handle_other_statements<'a>(
     None
   };
 
-  out.push(match statement_type.as_str() {
+  Ok(Some(match statement_type.as_str() {
     "return" => ASTNode::StatementReturn { value },
     "break" => ASTNode::StatementBreak { value },
     "continue" => ASTNode::StatementContinue { value },
     "throw" => ASTNode::StatementThrow { value },
     other => { panic!("Statement not implemented: {}", other); }
-  });
-
-  Ok(true)
+  }))
 }
 
 fn handle_function_declaration<'a, 'b>(
   tokens: &'b mut TokenList<'a>,
-  out: &mut SmallVec<ASTNode>,
-) -> Result<bool, CompilerError<'a>> where 'a: 'b {
+) -> Result<Option<ASTNode>, CompilerError<'a>> where 'a: 'b {
   if tokens.peek_str() != "function" {
-    return Ok(false);
+    return Ok(None);
   }
 
   tokens.skip_unchecked(); // Skip `function`
@@ -379,14 +342,12 @@ fn handle_function_declaration<'a, 'b>(
     None
   };
 
-  out.push(ASTNode::FunctionDefinition {
+  Ok(Some(ASTNode::FunctionDefinition {
     inner: Box::new(get_function_after_name(
       tokens,
       name
     )?)
-  });
-
-  Ok(true)
+  }))
 }
 
 /// Gets a function once the name has been consumed.
@@ -423,7 +384,7 @@ fn get_function_after_name<'a, 'b>(
     params: params.0,
     spread: params.1,
     return_type,
-    body: body.map(Box::new)
+    body
   })
 }
 
@@ -507,19 +468,17 @@ fn get_constructor_after_name<'a, 'b>(
     params,
     spread,
     return_type,
-    body: body.map(Box::new)
+    body
   })
 }
 
 fn handle_class_declaration<'a, 'b>(
-  tokens: &'b mut TokenList<'a>,
-  out: &mut SmallVec<ASTNode>,
-) -> Result<bool, CompilerError<'a>> where 'a: 'b {
+  tokens: &'b mut TokenList<'a>
+) -> Result<Option<ASTNode>, CompilerError<'a>> where 'a: 'b {
   if tokens.peek_str() != "class" {
-    return Ok(false);
+    return Ok(None);
   }
-  out.push(get_class_expression(tokens)?);
-  Ok(true)
+  Ok(Some(get_class_expression(tokens)?))
 }
 
 fn get_class_expression<'a, 'b>(
@@ -564,6 +523,7 @@ fn get_class_expression<'a, 'b>(
 
     // Get the name (might be a property or a method, we don't know yet)
     if tokens.peek_str() == "[" {
+      tokens.ignore_checkpoint(checkpoint);
       // Key-value map!;
       // TODO: make this accept more than single-token computed properties
       // TODO: fix computed properties
@@ -588,6 +548,7 @@ fn get_class_expression<'a, 'b>(
     }
     let name = tokens.consume();
     if !name.is_identifier() {
+      tokens.ignore_checkpoint(checkpoint);
       return Err(CompilerError {
         message: "Expected identifier in class body!".to_string(),
         token: name
@@ -611,6 +572,7 @@ fn get_class_expression<'a, 'b>(
       }
     } else {
       // Otherwise, it's a method
+      tokens.ignore_checkpoint(checkpoint);
       let mut function = if name.value == "constructor" {
         get_constructor_after_name(
           tokens,
@@ -705,11 +667,10 @@ fn get_typed_header<'a>(
 }
 
 fn handle_modifiers<'a>(
-  tokens: &mut TokenList<'a>,
-  out: &mut SmallVec<ASTNode>,
-) -> Result<bool, CompilerError<'a>> {
+  tokens: &mut TokenList<'a>
+) -> Result<Option<ASTNode>, CompilerError<'a>> {
   if !MODIFIERS.contains(&tokens.peek_str()) {
-    return Ok(false);
+    return Ok(None);
   }
 
   // Get the modifiers
@@ -719,9 +680,7 @@ fn handle_modifiers<'a>(
   let mut node_after_modifiers = get_single_statement(tokens)?;
 
   node_after_modifiers.apply_modifiers(modifiers)?;
-  out.push(node_after_modifiers);
-
-  Ok(true)
+  Ok(Some(node_after_modifiers))
 }
 
 fn fetch_modifier_list(tokens: &mut TokenList) -> ModifierList {
@@ -744,11 +703,10 @@ fn fetch_modifier_list(tokens: &mut TokenList) -> ModifierList {
 }
 
 fn handle_type_declaration<'a>(
-  tokens: &mut TokenList<'a>,
-  out: &mut SmallVec<ASTNode>,
-) -> Result<bool, CompilerError<'a>> {
+  tokens: &mut TokenList<'a>
+) -> Result<Option<ASTNode>, CompilerError<'a>> {
   if tokens.peek_str() != "type" {
-    return Ok(false);
+    return Ok(None);
   }
   tokens.skip_unchecked(); // Skip `type`
 
@@ -777,22 +735,19 @@ fn handle_type_declaration<'a>(
   // Get the second type
   let equals_typ = get_type(tokens)?;
 
-  out.push(ASTNode::InterfaceDeclaration { inner: Box::new(InterfaceDeclaration {
+  Ok(Some(ASTNode::InterfaceDeclaration { inner: Box::new(InterfaceDeclaration {
     name,
     generics,
     extends,
     equals_type: equals_typ
-  }) });
-
-  Ok(true)
+  }) }))
 }
 
 fn handle_interface<'a>(
-  tokens: &mut TokenList<'a>,
-  out: &mut SmallVec<ASTNode>
-) -> Result<bool, CompilerError<'a>> {
+  tokens: &mut TokenList<'a>
+) -> Result<Option<ASTNode>, CompilerError<'a>> {
   if tokens.peek_str() != "interface" {
-    return Ok(false);
+    return Ok(None);
   }
 
   tokens.skip_unchecked();
@@ -809,7 +764,7 @@ fn handle_interface<'a>(
     })
   }
 
-  tokens.skip_unchecked(); // Skip "{"
+  tokens.skip("{")?;
 
   // Store the parts of the interface!
   // Stores the function types in a multi-function interface
@@ -819,19 +774,18 @@ fn handle_interface<'a>(
   // [key: type]
   let mut key_value = SmallVec::new();
 
-  loop {
+  while !tokens.is_done() {
     tokens.ignore_whitespace();
     let next = tokens.peek_str();
-    if next == "}" {
-      tokens.skip_unchecked();
-      break;
-    }
+    if next == "}" { break }
 
     if next == "(" {
       // Function
       let function = get_type(tokens)?;
       function_types.union(function);
     } else if next == "[" {
+      // This could be either a Key-value map,
+      // or a computed property
       match get_key_value_or_computed_property(tokens)? {
         KVMapOrComputedProp::KVMap(kv_map) => key_value.push(kv_map),
         KVMapOrComputedProp::ComputedProp(value) => {
@@ -849,6 +803,7 @@ fn handle_interface<'a>(
       // TODO: make this get a typed declaration directly (without using a type in-between)
       if tokens.peek_str() == "(" {
         // It's a function! (which is a member)
+        tokens.ignore_checkpoint(checkpoint);
         let function = get_type(tokens)?;
         named_parts.push(DeclarationTyped::named(
           function_name.value.to_owned(),
@@ -872,6 +827,8 @@ fn handle_interface<'a>(
     }
   }
 
+  tokens.skip("}")?;
+
   let named_dict = Type::Object {
     key_value,
     parts: named_parts
@@ -880,7 +837,7 @@ fn handle_interface<'a>(
   let mut equals_type = Type::Intersection(SmallVec::new());
   if function_types.inner_count() != 0 { equals_type.intersection(function_types); }
   if named_dict.inner_count() != 0 { equals_type.intersection(named_dict); }
-  out.push(ASTNode::InterfaceDeclaration { inner: Box::new(InterfaceDeclaration {
+  Ok(Some(ASTNode::InterfaceDeclaration { inner: Box::new(InterfaceDeclaration {
     name,
     generics,
     extends,
@@ -894,18 +851,14 @@ fn handle_interface<'a>(
     } else {
       equals_type
     }
-  }) });
-
-  Ok(true)
+  }) }))
 }
 
 /// Handles expressions. Basically a soft wrapper around `get_expression`
 fn handle_expression<'a>(
-  tokens: &mut TokenList<'a>,
-  out: &mut SmallVec<ASTNode>,
-) -> Result<(), CompilerError<'a>> {
-  out.push(get_expression(tokens, 0)?);
-  Ok(())
+  tokens: &mut TokenList<'a>
+) -> Result<ASTNode, CompilerError<'a>> {
+  get_expression(tokens, 0)
 }
 
 fn parse_number(tokens: &mut TokenList) -> ASTNode {
@@ -925,9 +878,7 @@ fn parse_name<'a>(
 ) -> Result<ASTNode, CompilerError<'a>> {
   if tokens.peek_str() == "function" {
     // Handle inline functions
-    let mut function_container = SmallVec::new();
-    handle_function_declaration(tokens, &mut function_container)?;
-    return Ok(function_container.pop().unwrap());
+    return Ok(handle_function_declaration(tokens)?.unwrap());
   }
 
   match tokens.consume().value {
@@ -1028,12 +979,13 @@ fn parse_prefix<'a>(
 }
 
 /// Parses an infix operator. Ran when the current token is known to be infix.
-fn parse_infix<'a>(
+fn parse_infix<'a, 'b>(
   left: ASTNode,
-  tokens: &mut TokenList<'a>,
+  tokens: &'b mut TokenList<'a>,
   precedence: u8
-) -> Result<ASTNode, CompilerError<'a>> {
-  let opr = tokens.consume().value.to_string();
+) -> Result<ASTNode, CompilerError<'a>> where 'a: 'b {
+  let opr_token = tokens.consume();
+  let opr = opr_token.value.to_string();
 
   if opr == "(" || opr == "[" {
     // Function call or property access (indexing)
@@ -1057,12 +1009,31 @@ fn parse_infix<'a>(
     };
   } else if opr == "=>" {
     // Arrow functions get special treatment!
-    let (params, return_type) = match left {
+    // This captures arrow functions that don't start with parenthesis, or those
+    // which don't have an arrow-function-specific header.
+
+    let params = match left {
       ASTNode::ExprIdentifier { name } => {
-        (
-          SmallVec::with_element(Declaration::new(name, Type::Unknown, None)),
-          None
-        )
+        SmallVec::with_element(Declaration::new(name, Type::Unknown, None))
+      }
+      ASTNode::Parenthesis { nodes } => {
+        let mut params = SmallVec::new();
+        for n in nodes {
+          params.push(match n {
+            ASTNode::ExprIdentifier { name } => Declaration::new(name, Type::Unknown, None),
+            ASTNode::InfixOpr {
+              left, opr, right
+            } if opr == "=" && matches!(*left, ASTNode::ExprIdentifier { .. }) => match *left {
+              ASTNode::ExprIdentifier { name } => Declaration::new(name, Type::Unknown, Some(*right)),
+              _ => panic!() // This won't happen
+            }
+            other => return Err(CompilerError {
+              message: format!("Arrow function expected parameter, found {:?}", other),
+              token: other.as_token()
+            })
+          });
+        }
+        params
       }
       other => {
         return Err(CompilerError {
@@ -1070,12 +1041,12 @@ fn parse_infix<'a>(
             "Arrow function expected parenthesis or identifier, found {:?}",
             other
           ),
-          token: EOF_TOKEN.clone()
+          token: other.as_token()
         })
       }
     };
 
-    return Ok(parse_arrow_function_after_arrow(tokens, params, Spread::new(), return_type)?);
+    return Ok(parse_arrow_function_after_arrow(tokens, params, Spread::new(), Type::Unknown)?);
   } else if opr == "?" {
     // Ternary (eg. `condition ? true : false`)
 
@@ -1110,6 +1081,7 @@ fn parse_infix<'a>(
     // Try parsing generics...
     if let Ok(mut generics) = get_generics(tokens) {
       if tokens.peek_str() == "(" {
+        tokens.ignore_checkpoint(checkpoint);
         let mut fn_call = parse_infix(left, tokens, precedence)?;
         if let ASTNode::ExprFunctionCall { generics: inner_generics, .. } = &mut fn_call {
           inner_generics.append(&mut generics);
@@ -1163,7 +1135,7 @@ fn try_parse_arrow_function<'a>(
   let return_type = try_get_type(tokens)?;
   if tokens.peek_str() != "=>" { return Ok(None) }
   tokens.skip_unchecked(); // Skip "=>"
-  Ok(Some(parse_arrow_function_after_arrow(tokens, params, spread, return_type)?))
+  Ok(Some(parse_arrow_function_after_arrow(tokens, params, spread, return_type.unwrap_or(Type::Unknown))?))
 }
 
 /// Parses an arrow function starting at the arrow (`=>`)
@@ -1171,7 +1143,7 @@ fn parse_arrow_function_after_arrow<'a>(
   tokens: &mut TokenList<'a>,
   params: SmallVec<Declaration>,
   spread: Spread,
-  return_type: Option<Type>
+  return_type: Type
 ) -> Result<ASTNode, CompilerError<'a>> {
   tokens.ignore_whitespace();
   let is_expression = tokens.peek_str() != "{";
@@ -1186,22 +1158,22 @@ fn parse_arrow_function_after_arrow<'a>(
     params,
     spread,
     return_type,
-    body: Box::new(body)
+    body
   }) })
 }
 
 /// Gets a single expression
-pub fn get_expression<'a>(
-  tokens: &mut TokenList<'a>,
+pub fn get_expression<'a, 'b>(
+  tokens: &'b mut TokenList<'a>,
   precedence: u8
-) -> Result<ASTNode, CompilerError<'a>> {
+) -> Result<ASTNode, CompilerError<'a>> where 'a: 'b {
   tokens.ignore_whitespace();
   
   // Get left (or sometimes only) side (which can be the prexfix!)
   let mut left = {
     let next = tokens.peek();
 
-    if [ ")", "]", "}", ",", ";" ].contains(&next.value) {
+    if [ ")", "]", "}", ",", ";" ].contains(&next.value) || next.typ == TokenType::EndOfFile {
       // End it here!
       return Ok(ASTNode::Empty);
     }
@@ -1223,14 +1195,32 @@ pub fn get_expression<'a>(
             // These prefix operators include what you might expect (+, -, ~),
             // along with arrays, dicts, and parenthesis!
             if next.value == "(" {
-              // Try getting an arrow function...
-              let checkpoint = tokens.get_checkpoint();
-              let arrow_fn = try_parse_arrow_function(tokens)?;
-              if let Some(arrow_fn) = arrow_fn {
-                arrow_fn
-              } else {
+              // A parenthesis could be either a normal expression, or an arrow
+              // function. Since normal expressions are more common,
+              // we try parsing those first.
+              loop {
+                let checkpoint = tokens.get_checkpoint();
+
+                // Try getting the parenthesis normally
+                let normal_result = parse_prefix(tokens, binding_power.1);
+                tokens.ignore_whitespace();
+                if !matches!(tokens.peek_str(), ":" | "=>") {
+                  if let Ok(node) = normal_result {
+                    tokens.ignore_checkpoint(checkpoint);
+                    break node;
+                  }
+                }
+
+                // If that fails, try getting an arrow function
                 tokens.restore_checkpoint(checkpoint);
-                parse_prefix(tokens, binding_power.1)?
+                let checkpoint = tokens.get_checkpoint();
+                if let Ok(Some(arrow_fn)) = try_parse_arrow_function(tokens) {
+                  tokens.ignore_checkpoint(checkpoint);
+                  break arrow_fn
+                }
+
+                // If everything fails, return the normal parsing error
+                break normal_result?;
               }
             } else {
               parse_prefix(tokens, binding_power.1)?
@@ -1274,7 +1264,7 @@ pub fn get_expression<'a>(
       let cast_type = get_type(tokens)?;
       left = ASTNode::ExprAs {
         value: Box::new(left),
-        cast_type
+        cast_type: Box::new(cast_type)
       };
       continue;
     }

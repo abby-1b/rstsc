@@ -1,6 +1,6 @@
 use core::str;
 
-use crate::{small_vec::SmallVec, tokenizer::{Token, TokenList}};
+use crate::{small_vec::SmallVec, tokenizer::{Token, TokenList, TokenType}};
 
 static PRINT_LINES_BEFORE: usize = 2;
 static PRINT_LINES_AFTER: usize = 1;
@@ -21,10 +21,19 @@ impl<'a> std::fmt::Debug for CompilerError<'a> {
 impl<'a> CompilerError<'a> {
   // Throws this error, exiting the program.
   pub fn throw(&self, tokens: TokenList) {
-    let token = self.token.value;
+    if self.token.typ != TokenType::EndOfFile {
+      Self::print_token_lines(&self.token, tokens);
+    }
+    print!("\n\x1b[31m{}", self.message);
+    println!("\x1b[0m");
+    std::process::exit(1);
+  }
+
+  fn print_token_lines(token: &Token, tokens: TokenList) {
+    let token = token.value;
     let code = tokens.source;
     let t_start_idx = (token.as_ptr() as usize).saturating_sub(code.as_ptr() as usize);
-    let t_end_idx = t_start_idx + token.as_bytes().len() - 1;
+    let t_end_idx = (t_start_idx + token.as_bytes().len()).saturating_sub(1);
 
     let mut t_start_line: Option<usize> = None;
     let mut t_end_line: Option<usize> = None;
@@ -72,14 +81,12 @@ impl<'a> CompilerError<'a> {
       println!();
     }
 
-    print!("\n\x1b[31m{}\non line", self.message);
-    if t_start_line != t_end_line {
-      print!("s {}-{}", t_start_line.unwrap() + 1, t_end_line.unwrap() + 1);
-    } else {
+    print!("on line");
+    if t_start_line == t_end_line {
       print!(" {}", t_start_line.unwrap() + 1);
+    } else {
+      print!("s {}-{}", t_start_line.unwrap() + 1, t_end_line.unwrap() + 1);
     }
-    println!("\x1b[0m");
-    std::process::exit(1);
   }
 
   pub fn expected(

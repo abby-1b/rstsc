@@ -107,14 +107,14 @@ impl Hash for ComputableDeclarationName {
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Declaration {
   name: String,
-  typ: Box<Type>,
+  typ: Type,
   value: Option<Box<ASTNode>>
 }
 impl Declaration {
   pub fn new(name: String, typ: Type, value: Option<ASTNode>) -> Declaration {
     Declaration {
       name,
-      typ: Box::new(typ),
+      typ,
       value: value.map(Box::new)
     }
   }

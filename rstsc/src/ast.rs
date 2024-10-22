@@ -1,7 +1,14 @@
 
 use core::fmt::Debug;
 
-use crate::{declaration::Declaration, error_type::CompilerError, small_vec::SmallVec, spread::Spread, tokenizer::EOF_TOKEN, types::{KeyValueMap, Type}};
+use crate::{
+  declaration::Declaration,
+  error_type::CompilerError,
+  small_vec::SmallVec,
+  spread::Spread,
+  tokenizer::Token,
+  types::{KeyValueMap, Type}
+};
 
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub enum VariableDefType {
@@ -143,15 +150,15 @@ pub struct FunctionDefinition {
   pub params: SmallVec<Declaration>,
   pub spread: Spread,
   pub return_type: Option<Type>,
-  pub body: Option<Box<ASTNode>>
+  pub body: Option<ASTNode>
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct ArrowFunctionDefinition {
   pub params: SmallVec<Declaration>,
   pub spread: Spread,
-  pub return_type: Option<Type>,
-  pub body: Box<ASTNode>
+  pub return_type: Type,
+  pub body: ASTNode
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -252,12 +259,12 @@ pub enum ASTNode {
   /// Casting something with the `as` keyword (eg. `obj as any`)
   ExprAs {
     value: Box<ASTNode>,
-    cast_type: Type
+    cast_type: Box<Type>
   },
 
   /// Casting something C-style (eg. `<any>obj`)
   ExprTypeAssertion {
-    cast_type: Type,
+    cast_type: Box<Type>,
     value: Box<ASTNode>,
   },
 
@@ -329,10 +336,15 @@ impl ASTNode {
             "{} can't have modifiers!",
             self.name()
           ),
-          token: EOF_TOKEN.clone()
+          token: self.as_token()
         });
       }
     }
     Ok(())
+  }
+
+  pub fn as_token<'a>(&self) -> Token<'a> {
+    // TODO: convert this node into a single token
+    Token::from("")
   }
 }

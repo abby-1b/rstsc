@@ -6,6 +6,9 @@ pub enum ExprType {
   Prefx,
   Infx,
   Pstfx,
+
+  /// Used for things that aren't really operators (like conditional `:`)
+  Special
 }
 
 impl ExprType {
@@ -83,7 +86,7 @@ pub fn get_operator_binding_power(
     (ExprType::Infx, "||") => Some((8, 9)),
     (ExprType::Infx, "??") => Some((8, 9)),
 
-    (ExprType::Infx, ":"    ) => Some((6, 7)), // Conditionals
+    (ExprType::Special, ":") => Some((6, 7)), // Conditional
 
     (ExprType::Infx,  "="   ) => Some((5, 4)),
     (ExprType::Infx,  "+="  ) => Some((5, 4)),

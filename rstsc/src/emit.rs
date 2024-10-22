@@ -1,4 +1,4 @@
-use crate::{ast::{ASTNode, ArrowFunctionDefinition, FunctionDefinition, ObjectProperty}, declaration::Declaration, small_vec::{SizeType, SmallVec}, spread::Spread};
+use crate::{ast::{ASTNode, FunctionDefinition, ObjectProperty}, declaration::Declaration, small_vec::SmallVec, spread::Spread};
 
 static NO_SPREAD: Spread = Spread::new();
 
@@ -227,7 +227,7 @@ fn emit_single(
       emitter.out_diff(" => ", "=>", false);
 
       // Body
-      emit_single(&*arrow_fn.body, emitter);
+      emit_single(&arrow_fn.body, emitter);
     }
     ASTNode::ClassDefinition { inner } => {
       emitter.out(&inner.modifiers.emit(true), false);

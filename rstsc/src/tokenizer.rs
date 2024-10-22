@@ -1,6 +1,14 @@
-use std::str::Chars;
+use std::{collections::VecDeque, str::Chars};
 
 use crate::error_type::CompilerError;
+
+pub static TOKEN_QUEUE_SIZE: usize = 8;
+
+/// The `End of File` token, which indicates the file has ended
+pub static EOF_TOKEN: Token = Token {
+  typ: TokenType::EndOfFile,
+  value: "",
+};
 
 fn should_chain(left: char, right: char) -> bool {
   match (left, right) {
@@ -45,14 +53,14 @@ pub enum TokenType {
   LineTerminator,
   EndOfFile,
 
-  /// Used when explicitly creating Tokens from a string.
+  /// Used when explicitly creating tokens from a string
   Unknown
 }
 
 #[derive(Debug, Clone)]
 pub struct Token<'a> {
-  pub typ: TokenType,
   pub value: &'a str,
+  pub typ: TokenType,
 }
 
 impl<'a> Token<'a> {
@@ -73,18 +81,16 @@ impl<'a> Token<'a> {
   }
 }
 
-/// The `End of File` token, which indicates the file has ended
-pub static EOF_TOKEN: Token = Token {
-  typ: TokenType::EndOfFile,
-  value: "",
-};
-
 
 pub struct TokenList<'a> {
   pub source: &'a str,
 
-  /// The upcoming token, which can be peeked at or consumed
-  next_token: Token<'a>,
+  /// The upcoming tokens, which can be peeked at or consumed
+  next_tokens: VecDeque<Token<'a>>,
+  on_token: usize,
+
+  /// The number of active checkpoints
+  checkpoints: usize,
 
   /// The index currently being read for finding a token
   find_index: usize,
@@ -92,18 +98,30 @@ pub struct TokenList<'a> {
   char_iter: CustomCharIterator<'a>,
 }
 
-pub struct TokenListCheckpoint<'a> {
-  next_token: Token<'a>,
-  find_index: usize,
-  char_iter: CustomCharIterator<'a>
+pub struct TokenListCheckpoint {
+  /// The index of the last token in the TokenList when this struct was made
+  last_token_idx: usize,
+
+  #[cfg(debug_assertions)]
+  can_drop: bool
+}
+
+#[cfg(debug_assertions)]
+impl<'a, 'b> Drop for TokenListCheckpoint {
+  fn drop(&mut self) {
+    if !self.can_drop {
+      panic!("Didn't manually restore checkpoint!")
+    }
+  }
 }
 
 impl<'a> TokenList<'a> {
-
   pub fn from(source: &str) -> TokenList {
-    let mut token_list = TokenList {
+    TokenList {
       source,
-      next_token: EOF_TOKEN.clone(),
+      next_tokens: VecDeque::with_capacity(TOKEN_QUEUE_SIZE),
+      on_token: 0,
+      checkpoints: 0,
       find_index: 0,
       char_iter: {
         let mut c = CustomCharIterator {
@@ -114,37 +132,34 @@ impl<'a> TokenList<'a> {
         c.skip();
         c
       }
-    };
-    token_list.queue_token(); // Queue the first token
-    token_list
-  }
-
-  /// Gets a token that points at the first index of the target file, but has
-  /// a length of zero. Used for returning general file errors.
-  pub fn null_token<'b>(&self) -> Token<'b> where 'a: 'b {
-    Token::from(&self.source[0..0])
+    }
   }
 
   /// Checks if the token list is over
   pub fn is_done(&self) -> bool {
-    matches!(self.peek().typ, TokenType::EndOfFile)
+    // println!("Checking is done {} - {}", self.find_index, self.source.len());
+    self.find_index >= self.source.len() - 1
   }
 
   /// Peeks at the next token without consuming it
   #[must_use]
-  pub fn peek<'b>(&self) -> &Token<'b> where 'a: 'b {
-    &self.next_token
+  pub fn peek<'b>(&mut self) -> &Token<'b> where 'a: 'b {
+    if self.on_token >= self.next_tokens.len() {
+      self.queue_token();
+    }
+    &self.next_tokens[self.on_token]
   }
 
   #[must_use]
-  pub fn peek_str(&self) -> &str {
-    self.next_token.value
+  pub fn peek_str(&mut self) -> &str {
+    self.peek().value
   }
 
   /// Consumes the next token
   #[must_use]
   pub fn consume<'b>(&mut self) -> Token<'b> where 'a: 'b {
-    let ret = self.next_token.clone();
+    let ret = self.peek().clone();
+    self.on_token += 1;
     self.queue_token();
     ret
   }
@@ -153,14 +168,15 @@ impl<'a> TokenList<'a> {
   #[must_use]
   pub fn consume_single_character<'b>(&mut self) -> &'b str where 'a: 'b {
     // Get character
-    let single_character = &self.next_token.value[0..1];
+    let single_character = &self.next_tokens[self.on_token].value[0..1];
+    self.next_tokens.insert(self.on_token, Token::from(single_character));
 
     // Skip character in source string
-    self.next_token.value = &self.next_token.value[1..];
+    self.next_tokens[self.on_token].value = &self.next_tokens[self.on_token].value[1..];
 
-    if self.next_token.value.is_empty() {
-      // Make sure we aren't left with an empty string!
-      self.queue_token();
+    if self.next_tokens[self.on_token].value.is_empty() {
+      // Ensure we aren't left with an empty string!
+      self.next_tokens.remove(self.on_token);
     }
 
     // Return
@@ -180,18 +196,22 @@ impl<'a> TokenList<'a> {
   }
 
   pub fn skip_unchecked(&mut self) {
-    self.queue_token();
+    self.on_token += 1;
   }
 
   /// Consumes tokens until a non-whitespace token is found
   pub fn ignore_whitespace(&mut self) {
-    while self.next_token.is_whitespace() {
-      self.queue_token();
+    loop {
+      if self.on_token >= self.next_tokens.len() {
+        self.queue_token();
+      }
+      if !self.next_tokens[self.on_token].is_whitespace() { break; }
+      self.on_token += 1;
     }
   }
 
-  /// Consumes commas and whitespace until a non-whitespace,
-  /// non comma token is found.
+  /// Consumes commas and whitespace until a non-whitespace, non comma token is
+  /// found. Returns true if at least one comma was found.
   pub fn ignore_commas(&mut self) -> bool {
     let mut found_comma = false;
     self.ignore_whitespace();
@@ -205,29 +225,49 @@ impl<'a> TokenList<'a> {
 
   /// Saves a checkpoint of the TokenList, so it can be returned to
   #[must_use]
-  pub fn get_checkpoint<'b>(&self) -> TokenListCheckpoint<'b> where 'a: 'b {
+  pub fn get_checkpoint(&mut self) -> TokenListCheckpoint {
+    self.checkpoints += 1;
     TokenListCheckpoint {
-      find_index: self.find_index,
-      next_token: self.next_token.clone(),
-      char_iter: self.char_iter.clone()
+      last_token_idx: self.on_token,
+      #[cfg(debug_assertions)]
+      can_drop: false
     }
   }
 
   /// Loads a checkpoint of the TokenList, leaving it as it was
-  pub fn restore_checkpoint(&mut self, checkpoint: TokenListCheckpoint<'a>) {
-    self.next_token = checkpoint.next_token;
-    self.find_index = checkpoint.find_index;
-    self.char_iter = checkpoint.char_iter;
+  pub fn restore_checkpoint(&mut self, mut checkpoint: TokenListCheckpoint) {
+    self.checkpoints -= 1;
+    self.on_token = checkpoint.last_token_idx;
+    #[cfg(debug_assertions)]
+    { checkpoint.can_drop = true; }
+  }
+
+  /// Ignores a checkpoint
+  pub fn ignore_checkpoint(&mut self, mut checkpoint: TokenListCheckpoint) {
+    self.checkpoints -= 1;
+    #[cfg(debug_assertions)]
+    { checkpoint.can_drop = true; }
   }
 
   /// Queues `self.next_token`
   fn queue_token(&mut self) {
+    // TODO: figure out why token deletion doesn't work
+    if self.checkpoints == 0 && self.on_token > 0 && self.next_tokens.len() >= TOKEN_QUEUE_SIZE {
+      self.next_tokens.pop_front();
+      self.on_token -= 1;
+    }
+
+    // If reached end of file, stop
+    if self.on_token < self.next_tokens.len() && self.next_tokens[self.on_token].typ == TokenType::EndOfFile {
+      return;
+    }
+
     let mut curr_char = if let Some(c) = self.char_iter.peek() {
       // Found a char
       c
     } else {
       // Reached the end
-      self.next_token = EOF_TOKEN.clone();
+      self.next_tokens.push_back(EOF_TOKEN.clone());
       return;
     };
 
@@ -334,10 +374,10 @@ impl<'a> TokenList<'a> {
   }
 
   fn finish_token(&mut self, len: usize, t: TokenType) {
-    self.next_token = Token {
+    self.next_tokens.push_back(Token {
       typ: t,
       value: &self.source[self.find_index..self.find_index + len]
-    };
+    });
     self.find_index += len;
   }
 }

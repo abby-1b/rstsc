@@ -10,13 +10,6 @@ use crate::parser::{self, INVERSE_GROUPINGS};
 use crate::small_vec::{SizeType, SmallVec};
 use crate::tokenizer::{Token, TokenList, TokenType};
 
-// #[derive(Debug, PartialEq, Eq, Hash, Clone)]
-// pub struct TypedNamedDeclaration {
-//   pub name: String,
-//   pub typ: Type,
-//   pub computed: bool
-// }
-
 #[derive(Copy, Clone)]
 pub union CustomDouble {
   value: f64,
@@ -279,200 +272,6 @@ impl Type {
   }
 }
 
-// impl Display for Type {
-//   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//     match self {
-//       Type::Any => { f.write_str("any") },
-
-//       Type::Number => { f.write_str("number") },
-//       Type::NumberLiteral(number) => {
-//         f.write_str(&unsafe { number.value }.to_string())
-//       },
-
-//       Type::String => { f.write_str("string") },
-//       Type::StringLiteral(string) => {
-//         f.write_str(string)
-//       },
-
-//       Type::Boolean => { f.write_str("boolean") },
-//       Type::BooleanLiteral(boolean) => {
-//         f.write_str(if *boolean {
-//           "true"
-//         } else {
-//           "false"
-//         })
-//       },
-
-//       Type::Unknown => { f.write_str("unknown") },
-//       Type::Void => { f.write_str("void") },
-
-//       Type::Union(types) => {
-//         f.write_str(
-//           &types.iter()
-//             .map(|t| t.to_string()).collect::<SmallVec<String>>()
-//             .join(" | ")
-//         )
-//       },
-//       Type::Intersection(types) => {
-//         f.write_str(
-//           &types.iter()
-//             .map(|t| t.to_string()).collect::<SmallVec<String>>()
-//             .join(" & ")
-//         )
-//       },
-
-//       Type::Custom(name) => { f.write_str(name) },
-
-//       Type::WithArgs(typ, args) => {
-//         f.write_str(&typ.to_string())?;
-//         f.write_str(
-//           &args.iter()
-//             .map(|t| t.to_string()).collect::<SmallVec<String>>()
-//             .join(" | ")
-//         )
-//       },
-
-//       Type::Tuple { inner_types, spread_idx } => {
-//         let spread_idx = *spread_idx;
-//         f.write_str("[ ")?;
-//         f.write_str(
-//           &inner_types.iter().enumerate()
-//             .map(|(index, typ)| {
-//               if spread_idx == index as SizeType {
-//                 "...".to_owned() + &typ.to_string()
-//               } else {
-//                 typ.to_string()
-//               }
-//             }).collect::<SmallVec<String>>()
-//             .join(", ")
-//         )?;
-//         f.write_str(" ]")
-//       },
-
-//       Type::Array(typ) => {
-//         f.write_str(&typ.to_string())?;
-//         f.write_str("[]")
-//       },
-
-//       Type::Object{ key_value, parts } => {
-//         f.write_str("{ ")?;
-//         for kv in key_value {
-//           f.write_str("[key: ")?;
-//           f.write_str(&kv.key.to_string())?;
-//           f.write_str("]: ")?;
-//           f.write_str(&kv.value.to_string())?;
-//           f.write_str(",")?;
-//         }
-//         f.write_str(
-//           &parts.iter()
-//             .map(|kv| {
-//               kv.name.clone() + " " + &kv.typ.to_string()
-//             }).collect::<SmallVec<String>>()
-//             .join(", ")
-//         )?;
-//         f.write_str(" }")
-//       },
-
-//       Type::Guard(name, typ) => {
-//         f.write_str(name)?;
-//         f.write_str(" is ")?;
-//         f.write_str(&typ.to_string())
-//       },
-
-//       Type::ColonDeclaration {
-//         spread,
-//         name,
-//         typ,
-//         conditional
-//       } => {
-//         if *spread { f.write_str("...")?; }
-//         f.write_str(name)?;
-//         if *conditional { f.write_str("?")?; }
-//         f.write_str(": ")?;
-//         f.write_str(&typ.to_string())
-//       },
-
-//       Type::SpreadParameter { name } => {
-//         f.write_str("...")?;
-//         f.write_str(name)
-//       },
-
-//       Type::Function {
-//         generics,
-//         params,
-//         return_type,
-//         is_constructor
-//       } => {
-//         if *is_constructor { f.write_str("new ")?; }
-//         if !generics.is_empty() {
-//           f.write_str("<")?;
-//           let mut remaining = generics.len();
-//           for generic in generics {
-//             f.write_str(&generic.to_string())?;
-//             remaining -= 1;
-//             if remaining > 0 { f.write_str(", ")?; }
-//           }
-//           f.write_str(">")?;
-//         }
-//         f.write_str("(")?;
-//         let mut remaining = params.len();
-//         for param in params {
-//           if param.spread { f.write_str("...")?; }
-//           f.write_str(&param.name)?;
-//           if param.conditional { f.write_str("?")?; }
-//           if let Some(typ) = &param.typ {
-//             f.write_str(": ")?;
-//             f.write_str(&typ.to_string())?;
-//           }
-//           remaining -= 1;
-//           if remaining > 0 { f.write_str(", ")?; }
-//         }
-//         f.write_str(") => ")?;
-//         f.write_str(&return_type.to_string())
-//       }
-//       Type::Index { callee, property } => {
-//         f.write_str(&callee.to_string())?;
-//         f.write_str("[")?;
-//         f.write_str(&property.to_string())?;
-//         f.write_str("]")
-//       }
-//       Type::TypeOf(inner) => {
-//         f.write_str("typeof ")?;
-//         std::fmt::Display::fmt(&inner, f)
-//       }
-//       Type::KeyOf(inner) => {
-//         f.write_str("keyof ")?;
-//         std::fmt::Display::fmt(&inner, f)
-//       }
-//       Type::Conditional {
-//         cnd_left, cnd_right,
-//         if_true, if_false
-//       } => {
-//         f.write_str(&cnd_left.to_string())?;
-//         f.write_str(" extends ")?;
-//         f.write_str(&cnd_right.to_string())?;
-//         f.write_str(" ? ")?;
-//         f.write_str(&if_true.to_string())?;
-//         f.write_str(" : ")?;
-//         f.write_str(&if_false.to_string())
-//       }
-//       Type::Extends(left, right) => {
-//         f.write_str(&left.to_string())?;
-//         f.write_str(" extends ")?;
-//         f.write_str(&right.to_string())
-//       }
-//       Type::Infer(name) => {
-//         f.write_str("infer ")?;
-//         f.write_str(name)
-//       }
-//       Type::Readonly(inner) => {
-//         f.write_str("readonly ")?;
-//         std::fmt::Display::fmt(inner, f)
-//       }
-//     }
-//   }
-// }
-
 impl Type {
   pub fn inner_count(&self) -> usize {
     match self {
@@ -485,6 +284,7 @@ impl Type {
 }
 
 /// Gets a type, regardless of whether it starts with `:` or not.
+/// If it *does* start with a `:`, that gets consumed and the type is returned.
 pub fn get_type<'a, 'b>(
   tokens: &'b mut TokenList<'a>
 ) -> Result<Type, CompilerError<'a>> where 'a: 'b {
@@ -540,6 +340,8 @@ pub fn get_key_value_or_computed_property<'a, 'b>(
     return Ok(
       KVMapOrComputedProp::ComputedProp(computed)
     )
+  } else {
+    tokens.ignore_checkpoint(checkpoint);
   }
   tokens.skip(":")?;
 
@@ -713,9 +515,53 @@ fn parse_name(
     "boolean" => Type::Boolean,
     "true" => Type::BooleanLiteral(true),
     "false" => Type::BooleanLiteral(false),
-    "void" => Type::Void,
+    "void" | "undefined" => Type::Void,
     other => { Type::Custom(other.to_string()) }
   }
+}
+
+fn types_into_params<'a>(types: SmallVec<Type>) -> Result<SmallVec<TypeFunctionArgument>, CompilerError<'a>> {
+  let mut params = SmallVec::with_capacity(types.len());
+  for p in types.iter() {
+    params.push(match p {
+      Type::ColonDeclaration {
+        spread, name, typ, conditional
+      } => {
+        TypeFunctionArgument {
+          spread: *spread,
+          name: name.clone(),
+          conditional: *conditional,
+          typ: Some((**typ).clone())
+        }
+      }
+      Type::SpreadParameter { name } => {
+        TypeFunctionArgument {
+          spread: true,
+          name: name.clone(),
+          conditional: false,
+          typ: None
+        }
+      }
+      Type::Custom(name) => {
+        TypeFunctionArgument {
+          spread: false,
+          name: name.clone(),
+          conditional: false,
+          typ: None
+        }
+      }
+      other => {
+        return Err(CompilerError {
+          message: format!(
+            "Expected type argument, found type {:?}",
+            other
+          ),
+          token: Token::from("")
+        })
+      }
+    });
+  }
+  Ok(params)
 }
 
 fn parse_prefix<'a, 'b>(
@@ -806,66 +652,37 @@ fn parse_prefix<'a, 'b>(
       // Parenthesized type!
       // This could be an arrow function, too
 
-      let mut params_as_types = SmallVec::with_capacity(4);
+      let mut paren_contents = SmallVec::with_capacity(4);
       tokens.ignore_commas();
       loop {
         tokens.ignore_whitespace();
-        if tokens.peek_str() == ")" {
-          tokens.skip_unchecked();
-          break;
-        }
+        if tokens.peek_str() == ")" { break }
 
-        params_as_types.push(get_type(tokens)?);
+        paren_contents.push(get_type(tokens)?);
         if !tokens.ignore_commas() { break }
       }
-      let mut params = SmallVec::new();
-      for p in params_as_types.iter() {
-        params.push(match p {
-          Type::ColonDeclaration {
-            spread, name, typ, conditional
-          } => {
-            TypeFunctionArgument {
-              spread: *spread,
-              name: name.clone(),
-              conditional: *conditional,
-              typ: Some((**typ).clone())
-            }
-          }
-          Type::SpreadParameter { name } => {
-            TypeFunctionArgument {
-              spread: true,
-              name: name.clone(),
-              conditional: false,
-              typ: None
-            }
-          }
-          Type::Custom(name) => {
-            TypeFunctionArgument {
-              spread: false,
-              name: name.clone(),
-              conditional: false,
-              typ: None
-            }
-          }
-          other if !params.is_empty() => {
-            return Err(CompilerError {
-              message: format!(
-                "Expected type argument, found type {:?}",
-                other
-              ),
-              token: Token::from("")
-            })
-          }
-          _ => {
-            // Not an arrow function
-            break;
-          }
-        });
-      }
-
+      tokens.skip_unchecked(); // Skip ")"
       tokens.ignore_whitespace();
-      if tokens.peek_str() == "=>" || tokens.peek_str() == ":" {
+
+      if tokens.peek_str() != "=>" && tokens.peek_str() != ":" {
+        // Normal parenthesized type
+        if paren_contents.is_empty() {
+          // Empty parenthesis?
+          Err(CompilerError::expected("=>", tokens.consume()))
+        } else if paren_contents.len() == 1 {
+          // Remove the type from inside!
+          Ok(paren_contents.pop().unwrap())
+        } else {
+          Ok(Type::Function {
+            generics: SmallVec::new(),
+            params: types_into_params(paren_contents)?,
+            return_type: Box::new(Type::Unknown),
+            is_constructor: false
+          })
+        }
+      } else {
         // Function
+        let params = types_into_params(paren_contents)?;
         tokens.skip_unchecked();
         let return_type = get_expression(tokens, precedence)?;
         Ok(Type::Function {
@@ -874,16 +691,6 @@ fn parse_prefix<'a, 'b>(
           return_type: Box::new(return_type),
           is_constructor: false
         })
-      } else if params.len() != 1 {
-        Ok(Type::Function {
-          generics: SmallVec::new(),
-          params,
-          return_type: Box::new(Type::Unknown),
-          is_constructor: false
-        })
-      } else {
-        // Simple parenthesis, remove the type from inside
-        Ok(params_as_types.pop().unwrap())
       }
     }
     "new" => {

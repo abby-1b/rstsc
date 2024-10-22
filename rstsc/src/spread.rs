@@ -1,6 +1,6 @@
 use crate::{error_type::CompilerError, small_vec::SizeType, tokenizer::{Token, TokenList}};
 
-
+/// Stores the index of a spread parameter within a function
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Spread(pub SizeType);
 impl Spread {
