@@ -186,6 +186,13 @@ pub struct InterfaceDeclaration {
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
+pub struct EnumDeclaration {
+  pub name: String,
+  pub members: SmallVec<(String, ASTNode)>,
+  pub is_const: bool
+}
+
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub enum ASTNode {
   /// A block of code
   Block { nodes: SmallVec<ASTNode> },
@@ -268,6 +275,7 @@ pub enum ASTNode {
     value: Box<ASTNode>,
   },
 
+  EnumDeclaration { inner: Box<EnumDeclaration> },
   InterfaceDeclaration { inner: Box<InterfaceDeclaration> },
 
   /// Used in situations like `[ 1, 2, ]` where there's an empty expression
@@ -306,6 +314,7 @@ impl ASTNode {
       ASTNode::NonNullAssertion { .. } => "NonNullAssertion",
       ASTNode::ExprAs { .. } => "ExprAs",
       ASTNode::ExprTypeAssertion { .. } => "ExprTypeAssertion",
+      ASTNode::EnumDeclaration { .. } => "EnumDeclaration",
       ASTNode::InterfaceDeclaration { .. } => "InterfaceDeclaration",
       ASTNode::Empty { .. } => "Empty",
     }.to_string()

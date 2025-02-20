@@ -104,14 +104,13 @@ pub fn emit_code(ast: ASTNode, compact: bool) -> String {
   };
 
   // Handle the program `Block` node
-  match ast {
-    ASTNode::Block { nodes } => {
-      for node in nodes.iter() {
-        emit_single(node, &mut emitter);
-        emitter.endline();
-      }
+  if let ASTNode::Block { nodes } = ast {
+    for node in nodes.iter() {
+      emit_single(node, &mut emitter);
+      emitter.endline();
     }
-    _ => { panic!("Expected `Block` node in `emit`!"); }
+  } else {
+    panic!("Expected `Block` node in `emit`!");
   }
 
   emitter.finalize()
@@ -363,6 +362,38 @@ fn emit_single(
     }
     ASTNode::ExprAs { value, .. } => { emit_single(&*value, emitter); }
     ASTNode::ExprTypeAssertion { value, .. } => { emit_single(&*value, emitter); }
+    ASTNode::EnumDeclaration { inner } => {
+      emitter.out("var ", false);
+      emitter.out(&inner.name, true);
+      emitter.endline();
+
+      emitter.out("(function(", false);
+      emitter.out(&inner.name, false);
+      emitter.out("){", false);
+      emitter.endline();
+      emitter.indent();
+
+      for (name, value) in &inner.members {
+        emitter.out(&inner.name, false);
+        emitter.out("[", false);
+        emitter.out(&inner.name, false);
+        emitter.out("[", false);
+        emitter.out(name, false);
+        emitter.out("]=", false);
+        emit_single(value, emitter);
+        emitter.out("]=", false);
+        emitter.out(name, true);
+        emitter.endline();
+      }
+
+      emitter.endline();
+      emitter.unindent();
+      emitter.out("})(", false);
+      emitter.out(&inner.name, true);
+      emitter.out("||(", false);
+      emitter.out(&inner.name, true);
+      emitter.out("={}))", true);
+    },
     ASTNode::InterfaceDeclaration { .. } => {},
     ASTNode::Empty { .. } => {}
     other => {

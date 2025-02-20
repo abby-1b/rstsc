@@ -1,7 +1,7 @@
 use phf::{phf_map, phf_set};
 use crate::{
   ast::{
-    ASTNode, ArrowFunctionDefinition, ClassDefinition, FunctionDefinition, InterfaceDeclaration, Modifier, ModifierList, ObjectProperty, VariableDefType, ACCESSIBILITY_MODIFIERS, MODIFIERS
+    ASTNode, ArrowFunctionDefinition, ClassDefinition, EnumDeclaration, FunctionDefinition, InterfaceDeclaration, Modifier, ModifierList, ObjectProperty, VariableDefType, ACCESSIBILITY_MODIFIERS, MODIFIERS
   },
   declaration::{Declaration, DeclarationTyped},
   error_type::CompilerError, operations::{get_operator_binding_power, ExprType},
@@ -89,6 +89,7 @@ fn get_single_statement<'a, 'b>(
   else if let Some(modifiers)            = handle_modifiers(tokens)? { modifiers }
   else if let Some(other_statements)     = handle_other_statements(tokens)? { other_statements }
   else if let Some(type_declaration)     = handle_type_declaration(tokens)? { type_declaration }
+  else if let Some(result_enum)          = handle_enum(tokens, false)? { result_enum }
   else if let Some(interface)            = handle_interface(tokens)? { interface }
   else { handle_expression(tokens)? }; // Expression fallback
 
@@ -121,6 +122,12 @@ fn handle_vars<'a, 'b>(
   }
 
   let def_type = get_variable_def_type(tokens)?;
+  tokens.ignore_whitespace();
+
+  if matches!(def_type, VariableDefType::Const) && tokens.peek_str() == "enum" {
+    // Const enums
+    return handle_enum(tokens, true);
+  }
 
   // Get the variable definitions
   let defs = get_multiple_declarations(tokens, false)?.0;
@@ -636,7 +643,7 @@ fn get_typed_header<'a>(
   } else if require_name {
     let t = tokens.consume();
     return Err(CompilerError {
-      message: format!("Expected class name, found {:?}", t.value),
+      message: format!("Expected header name, found {:?}", t.value),
       token: t
     });
   } else {
@@ -743,13 +750,78 @@ fn handle_type_declaration<'a>(
   }) }))
 }
 
+fn handle_enum<'a>(
+  tokens: &mut TokenList<'a>,
+  is_const: bool
+) -> Result<Option<ASTNode>, CompilerError<'a>> {
+  if tokens.peek_str() != "enum" {
+    return Ok(None)
+  }
+  tokens.skip_unchecked();
+  tokens.ignore_whitespace();
+
+  let name = match tokens.consume() {
+    token if token.value.len() == 0 => {
+      return Err(CompilerError {
+        message: "Expected enum name".to_owned(),
+        token: token
+      })
+    },
+    token => token.value.to_owned()
+  };
+
+  tokens.ignore_whitespace();
+  tokens.skip("{")?;
+
+  let mut counter: u32 = 0;
+  let mut members: SmallVec<(String, ASTNode)> = SmallVec::new();
+
+  while !tokens.is_done() {
+    tokens.ignore_whitespace();
+    let next = tokens.peek_str();
+    if next == "}" { break }
+
+    let token = tokens.consume();
+    let name = match token.typ {
+      TokenType::String => token.value.to_owned(),
+      TokenType::Identifier => "\"".to_owned() + token.value + "\"",
+      _ => {
+        return Err(CompilerError {
+          message: "Expected string or identifier".to_owned(),
+          token: token
+        })
+      }
+    };
+    tokens.ignore_whitespace();
+    let value = if tokens.peek_str() == "=" {
+      tokens.skip_unchecked();
+      get_expression(tokens, 1)?
+    } else {
+      let number = counter.to_string();
+      counter += 1;
+      ASTNode::ExprNumLiteral { number }
+    };
+    members.push((name, value));
+
+    tokens.ignore_whitespace();
+    tokens.ignore_commas();
+  }
+
+  tokens.skip("}")?;
+
+  Ok(Some(ASTNode::EnumDeclaration { inner: Box::new(EnumDeclaration {
+    name,
+    members,
+    is_const,
+  }) }))
+}
+
 fn handle_interface<'a>(
   tokens: &mut TokenList<'a>
 ) -> Result<Option<ASTNode>, CompilerError<'a>> {
   if tokens.peek_str() != "interface" {
     return Ok(None);
   }
-
   tokens.skip_unchecked();
   
   let TypedHeader {
@@ -1122,20 +1194,16 @@ fn separate_commas(node: ASTNode) -> SmallVec<ASTNode> {
 /// Tries parsing an arrow function, returning None if none is present.
 /// Caller is responsible for restoring the tokenizer back to its origial state
 /// if this function returns None.
-fn try_parse_arrow_function<'a>(
+fn parse_arrow_function<'a>(
   tokens: &mut TokenList<'a>,
-) -> Result<Option<ASTNode>, CompilerError<'a>> {
+) -> Result<ASTNode, CompilerError<'a>> {
   tokens.skip("(")?;
-  let (params, spread) = {
-    if let Ok(d) = get_multiple_declarations(tokens, true) { d }
-    else { return Ok(None) }
-  };
-  if tokens.skip(")").is_err() { return Ok(None) }
+  let (params, spread) = get_multiple_declarations(tokens, true)?;
+  tokens.skip(")")?;
   tokens.ignore_whitespace();
   let return_type = try_get_type(tokens)?;
-  if tokens.peek_str() != "=>" { return Ok(None) }
-  tokens.skip_unchecked(); // Skip "=>"
-  Ok(Some(parse_arrow_function_after_arrow(tokens, params, spread, return_type.unwrap_or(Type::Unknown))?))
+  tokens.skip("=>")?;
+  Ok(parse_arrow_function_after_arrow(tokens, params, spread, return_type.unwrap_or(Type::Unknown))?)
 }
 
 /// Parses an arrow function starting at the arrow (`=>`)
@@ -1186,6 +1254,11 @@ pub fn get_expression<'a, 'b>(
         // prefix feels strange... I'm going to handle it here
         if next.value == "class" {
           get_class_expression(tokens)?
+        } else if next.value == "function" {
+          tokens.skip_unchecked(); // Skip "function"
+          let function = get_function_after_name(tokens, None)?;
+          dbg!(&function);
+          ASTNode::FunctionDefinition { inner: Box::new(function) }
         } else {
           let binding_power = get_operator_binding_power(
             ExprType::Prefx,
@@ -1198,29 +1271,29 @@ pub fn get_expression<'a, 'b>(
               // A parenthesis could be either a normal expression, or an arrow
               // function. Since normal expressions are more common,
               // we try parsing those first.
-              loop {
-                let checkpoint = tokens.get_checkpoint();
 
-                // Try getting the parenthesis normally
-                let normal_result = parse_prefix(tokens, binding_power.1);
-                tokens.ignore_whitespace();
-                if !matches!(tokens.peek_str(), ":" | "=>") {
-                  if let Ok(node) = normal_result {
-                    tokens.ignore_checkpoint(checkpoint);
-                    break node;
-                  }
+              // Check if it ends with a type!
+              let checkpoint = tokens.get_checkpoint();
+              let mut paren_nesting = 1;
+              tokens.skip_unchecked(); // Skip `(`
+              let mut skipped_tokens = 0;
+              while paren_nesting != 0 {
+                skipped_tokens += 1;
+                match tokens.consume().value {
+                  "(" => paren_nesting += 1,
+                  ")" => paren_nesting -= 1,
+                  _ => {}
                 }
+              }
+              dbg!(skipped_tokens);
+              tokens.ignore_whitespace();
+              let is_arrow_function = ["=>", ":"].contains(&tokens.peek_str());
+              tokens.restore_checkpoint(checkpoint);
 
-                // If that fails, try getting an arrow function
-                tokens.restore_checkpoint(checkpoint);
-                let checkpoint = tokens.get_checkpoint();
-                if let Ok(Some(arrow_fn)) = try_parse_arrow_function(tokens) {
-                  tokens.ignore_checkpoint(checkpoint);
-                  break arrow_fn
-                }
-
-                // If everything fails, return the normal parsing error
-                break normal_result?;
+              if is_arrow_function {
+                parse_arrow_function(tokens)?
+              } else {
+                parse_prefix(tokens, binding_power.1)?
               }
             } else {
               parse_prefix(tokens, binding_power.1)?
