@@ -2,7 +2,7 @@ use std::{collections::VecDeque, str::Chars};
 
 use crate::error_type::CompilerError;
 
-pub static TOKEN_QUEUE_SIZE: usize = 8;
+pub static TOKEN_QUEUE_SIZE: usize = 32;
 
 /// The `End of File` token, which indicates the file has ended
 pub static EOF_TOKEN: Token = Token {
@@ -137,7 +137,14 @@ impl<'a> TokenList<'a> {
 
   /// Checks if the token list is over
   pub fn is_done(&self) -> bool {
+    if self.next_tokens.len() == 0 { return false }
     // println!("Checking is done {} - {}", self.find_index, self.source.len());
+    let last_token_idx = self.next_tokens.len().saturating_sub(1);
+    if self.on_token < last_token_idx { return false }
+    if
+      self.on_token == last_token_idx &&
+      matches!(self.next_tokens[self.on_token].typ, TokenType::EndOfFile)
+    { return true; }
     self.find_index >= self.source.len() - 1
   }
 
@@ -159,8 +166,9 @@ impl<'a> TokenList<'a> {
   #[must_use]
   pub fn consume<'b>(&mut self) -> Token<'b> where 'a: 'b {
     let ret = self.peek().clone();
-    self.on_token += 1;
-    self.queue_token();
+    if !matches!(ret.typ, TokenType::EndOfFile) {
+      self.on_token += 1;
+    }
     ret
   }
 
@@ -196,12 +204,18 @@ impl<'a> TokenList<'a> {
   }
 
   pub fn skip_unchecked(&mut self) {
+    if
+      self.on_token == self.next_tokens.len() - 1 &&
+      matches!(self.next_tokens[self.on_token].typ, TokenType::EndOfFile)
+    {
+      return
+    }
     self.on_token += 1;
   }
 
   /// Consumes tokens until a non-whitespace token is found
   pub fn ignore_whitespace(&mut self) {
-    loop {
+    while !self.is_done() {
       if self.on_token >= self.next_tokens.len() {
         self.queue_token();
       }
