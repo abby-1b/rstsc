@@ -71,6 +71,13 @@ impl<T: Debug> SmallVec<T> {
     }
   }
 
+  pub fn iter_mut(&mut self) -> IterMut<'_, T> {
+    IterMut {
+      vec: self,
+      index: 0
+    }
+  }
+
   pub fn push(&mut self, value: T) {
     if self.capacity == 0 || self.length == self.capacity {
       debug_assert!(self.len() != Self::MAX_LEN, "TinyVec exceeded max capacity while pushing");
@@ -320,6 +327,25 @@ impl<'a, T: Debug> Iterator for Iter<'a, T> {
   fn next(&mut self) -> Option<Self::Item> {
     if self.index < self.vec.len() {
       let item = unsafe { &*self.vec.memory.add(self.index) };
+      self.index += 1;
+      Some(item)
+    } else {
+      None
+    }
+  }
+}
+
+pub struct IterMut<'a, T: Debug> {
+  vec: &'a mut SmallVec<T>,
+  index: usize,
+}
+
+impl<'a, T: Debug> Iterator for IterMut<'a, T> {
+  type Item = &'a mut T;
+
+  fn next(&mut self) -> Option<Self::Item> {
+    if self.index < self.vec.len() {
+      let item = unsafe { &mut *self.vec.memory.add(self.index) };
       self.index += 1;
       Some(item)
     } else {
