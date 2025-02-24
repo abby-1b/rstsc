@@ -22,17 +22,16 @@ impl<'a> CompilerError<'a> {
   // Throws this error, exiting the program.
   pub fn throw(&self, tokens: TokenList) {
     if self.token.typ != TokenType::EndOfFile {
-      Self::print_token_lines(&self.token, tokens);
+      Self::print_token_lines(&self.token, tokens.source);
     }
     print!("\n\x1b[31m{}", self.message);
     println!("\x1b[0m");
     std::process::exit(1);
   }
 
-  fn print_token_lines(token: &Token, tokens: TokenList) {
+  fn print_token_lines(token: &Token, source: &str) {
     let token = token.value;
-    let code = tokens.source;
-    let t_start_idx = (token.as_ptr() as usize).saturating_sub(code.as_ptr() as usize);
+    let t_start_idx = (token.as_ptr() as usize).saturating_sub(source.as_ptr() as usize);
     let t_end_idx = (t_start_idx + token.as_bytes().len()).saturating_sub(1);
 
     let mut t_start_line: Option<usize> = None;
@@ -41,7 +40,7 @@ impl<'a> CompilerError<'a> {
     let mut line_idx: usize = 0;
     let mut lines = SmallVec::with_element((String::new(), 0, 0));
 
-    for (i, c) in code.char_indices() {
+    for (i, c) in source.char_indices() {
       if c == '\n' {
         lines.last_mut().unwrap().2 = i;
         line_idx += 1;
