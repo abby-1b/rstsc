@@ -11,6 +11,7 @@ use crate::{ft::ASTNode, types::Type};
 // }
 
 /// Infers a type from an AST node, as specifically as possible
+#[must_use]
 fn infer_type_from_node(node: &ASTNode) -> Type {
     match node {
         ASTNode::ExprNumLiteral { .. } => Type::Number,
@@ -45,7 +46,7 @@ fn infer_type_from_node(node: &ASTNode) -> Type {
             if opr_str == "=" {
                 infer_type_from_node(right)
             } else {
-                // TODO: properly infer (eg. `a += 1` might be string or number, depending on the type of A)
+                // TODO: properly infer (eg. `a += 1` might be string or number, depending on the type of `a`)
                 Type::Unknown
             }
         },
@@ -56,22 +57,16 @@ fn infer_type_from_node(node: &ASTNode) -> Type {
 /// Infers the return type of a function, and annotates it with the type
 pub fn infer_return_type(node: &mut ASTNode) {
     match &node {
-        ASTNode::FunctionDefinition {
-            inner: _
-        } => {
+        ASTNode::FunctionDefinition(inner) => {
             // TODO: infer function return type
         }
-        ASTNode::ArrowFunctionDefinition {
-            params: _,
-            return_type: _,
-            body
-        } => {
+        ASTNode::ArrowFunctionDefinition(inner) => {
             // TODO: make this work
-            if let ASTNode::Block { nodes: _ } = &**body {
+            if let ASTNode::Block { nodes: _ } = &*inner.body {
                 // Body is a block
             } else {
                 // Body is a single expression
-                infer_type_from_node(body);
+                infer_type_from_node(&*inner.body);
             }
         }
         other => {

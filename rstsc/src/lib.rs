@@ -6,11 +6,12 @@ pub mod tokenizer;
 pub mod operations;
 pub mod declaration;
 pub mod types;
+pub mod ast_common;
 pub mod ast;
 pub mod parser;
-// pub mod type_checking;
-// pub mod ft;
-// pub mod minify;
+pub mod ft;
+pub mod type_checking;
+pub mod minify;
 pub mod emit;
 
 /// Compiles a string of TypeScript code

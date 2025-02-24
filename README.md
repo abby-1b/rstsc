@@ -41,10 +41,10 @@ Completed Tasks:
  - Ternary operations
  - Conditional chaining
  - Non-null assertion removal
- - Automatic semicolon insertion (ASI, basic and context-based)
+ - Basic Automatic Semicolon Insertion (ASI)
+ - Enum transformation
 
 Remaining Tasks:
- - Enum transformation
  - String literal support (types inside literals)
  - Switch statements
  - Full non-null assertion handling
@@ -56,6 +56,7 @@ Tasks:
  - Variable scope tracking
  - Module import removal (unused import handling and emission)
  - Source map generation
+ - Full ASI
 
 ### Phase 3: Test Coverage & Efficiency
 

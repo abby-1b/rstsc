@@ -1,22 +1,19 @@
-use crate::{ast::{self}, declaration::Declaration, small_vec::SmallVec, spread::Spread, type_checking::infer_return_type, types::Type};
+use crate::{
+  ast,
+  ast_common::{ModifierList, VariableDefType},
+  declaration::Declaration,
+  operations::{get_operator_binding_power, ExprType},
+  small_vec::SmallVec,
+  spread::Spread,
+  types::Type
+};
 
-impl ExprType {
-  pub fn from_typed(node: &ft::ASTNode) -> Option<ExprType> {
-    match node {
-      ft::ASTNode::PrefixOpr { .. } => Some(ExprType::Prefx),
-      ft::ASTNode::InfixOpr { .. } => Some(ExprType::Infx),
-      ft::ASTNode::PostfixOpr { .. } => Some(ExprType::Pstfx),
-      _ => None
-    }
-  }
-}
-
-pub fn get_operator_binding_power_from_node_typed(node: &ft::ASTNode) -> Option<(u8, u8)> {
+pub fn get_operator_binding_power_from_node_typed(node: &ASTNode) -> Option<(u8, u8)> {
   if let Some(opr_type) = ExprType::from_typed(node) {
     get_operator_binding_power(opr_type, match node {
-      ft::ASTNode::PrefixOpr { opr, .. } => opr,
-      ft::ASTNode::InfixOpr { opr, .. } => opr,
-      ft::ASTNode::PostfixOpr { opr, .. } => opr,
+      ASTNode::PrefixOpr { opr, .. } => opr,
+      ASTNode::InfixOpr { opr, .. } => opr,
+      ASTNode::PostfixOpr { opr, .. } => opr,
       _ => " "
     })
   } else {
@@ -57,7 +54,7 @@ impl ObjectProperty {
 
 #[derive(Debug, Clone)]
 pub struct FunctionDefinition {
-  pub modifiers: ast::ModifierList,
+  pub modifiers: ModifierList,
   pub name: Option<String>,
   pub generics: SmallVec<Type>,
   pub params: SmallVec<Declaration>,
@@ -79,8 +76,8 @@ pub enum ASTNode {
   Block { nodes: Vec<ASTNode> },
 
   VariableDeclaration {
-    modifiers: ast::ModifierList,
-    def_type: ast::VariableDefType,
+    modifiers: ModifierList,
+    def_type: VariableDefType,
     defs: SmallVec<Declaration>
   },
 
@@ -263,10 +260,10 @@ impl ASTNode {
       },
       ast::ASTNode::ExprAs { value, cast_type } => ASTNode::ExprAs {
         value: Box::new(ASTNode::from(value)),
-        cast_type: cast_type.clone(),
+        cast_type: (**cast_type).clone(),
       },
       ast::ASTNode::ExprTypeAssertion { cast_type, value } => ASTNode::ExprTypeAssertion {
-        cast_type: cast_type.clone(),
+        cast_type: (**cast_type).clone(),
         value: Box::new(ASTNode::from(value)),
       },
       ast::ASTNode::Empty => ASTNode::Empty,
@@ -283,5 +280,16 @@ impl ASTNode {
       self,
       ASTNode::ExprNumLiteral { .. } | ASTNode::ExprStrLiteral { .. } | ASTNode::ExprBoolLiteral { .. }
     )
+  }
+}
+
+impl ExprType {
+  pub fn from_typed(node: &ASTNode) -> Option<ExprType> {
+    match node {
+      ASTNode::PrefixOpr { .. } => Some(ExprType::Prefx),
+      ASTNode::InfixOpr { .. } => Some(ExprType::Infx),
+      ASTNode::PostfixOpr { .. } => Some(ExprType::Pstfx),
+      _ => None
+    }
   }
 }

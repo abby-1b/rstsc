@@ -1,14 +1,8 @@
 use phf::{phf_map, phf_set};
 use crate::{
   ast::{
-    ASTNode, ArrowFunctionDefinition, ClassDefinition, EnumDeclaration, FunctionDefinition, InterfaceDeclaration, Modifier, ModifierList, ObjectProperty, VariableDefType, ACCESSIBILITY_MODIFIERS, MODIFIERS
-  },
-  declaration::{Declaration, DeclarationTyped},
-  error_type::CompilerError, operations::{get_operator_binding_power, ExprType},
-  small_vec::SmallVec,
-  spread::Spread,
-  tokenizer::{Token, TokenList, TokenType},
-  types::{
+    ASTNode, ArrowFunctionDefinition, ClassDefinition, EnumDeclaration, FunctionDefinition, InterfaceDeclaration, ObjectProperty
+  }, ast_common::{Modifier, ModifierList, VariableDefType, ACCESSIBILITY_MODIFIERS, MODIFIERS}, declaration::{Declaration, DeclarationTyped}, error_type::CompilerError, operations::{get_operator_binding_power, ExprType}, small_vec::SmallVec, spread::Spread, tokenizer::{Token, TokenList, TokenType}, types::{
     get_comma_separated_types_until, get_generics,
     get_key_value_or_computed_property, get_optional_generics, get_type,
     try_get_type, KVMapOrComputedProp, Type

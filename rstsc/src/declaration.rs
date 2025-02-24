@@ -106,9 +106,9 @@ impl Hash for ComputableDeclarationName {
 /// Used for variables, parameters
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Declaration {
-  name: String,
-  typ: Type,
-  value: Option<Box<ASTNode>>
+  pub name: String,
+  pub typ: Type,
+  pub value: Option<Box<ASTNode>>
 }
 impl Declaration {
   pub fn new(name: String, typ: Type, value: Option<ASTNode>) -> Declaration {
