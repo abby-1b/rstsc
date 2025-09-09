@@ -4,9 +4,9 @@ use crate::{
     ASTNode, ArrowFunctionDefinition, ClassDefinition, EnumDeclaration, FunctionDefinition, GetterSetter, ImportDefinition, IndividualImport, InterfaceDeclaration, ObjectProperty
   },
   ast_common::{
-    Modifier, ModifierList, VariableDefType, ACCESSIBILITY_MODIFIERS, MODIFIERS
+    DestructurePattern, Modifier, ModifierList, VariableDefType, ACCESSIBILITY_MODIFIERS, MODIFIERS
   },
-  declaration::{ComputableDeclarationName, Declaration, DeclarationComputable, DeclarationTyped},
+  declaration::{ComputableDeclarationName, Declaration, DeclarationComputable, DeclarationTyped, SingleVariableDeclaration},
   error_type::CompilerError,
   operations::{get_operator_binding_power, ExprType},
   small_vec::SmallVec,
@@ -16,11 +16,6 @@ use crate::{
     get_comma_separated_types_until, get_generics, get_optional_generics, get_type, parse_object_square_bracket, try_get_type, ObjectSquareBracketReturn, Type
   }
 };
-
-lazy_static::lazy_static! {
-  static ref ARROW_FN_PRECEDENCE: u8 = get_operator_binding_power(ExprType::Infx, "=>").unwrap().1;
-  static ref COLON_PRECEDENCE: u8 = get_operator_binding_power(ExprType::Special, ":").unwrap().1;
-}
 
 pub static INVERSE_GROUPINGS: phf::Map<&'static str, &'static str> = phf_map! {
   "(" => ")",
@@ -133,7 +128,7 @@ fn handle_vars<'a, 'b>(
   }
 
   // Get the variable definitions
-  let defs = get_multiple_declarations(tokens, false)?.0;
+  let defs = get_multiple_variable_declarations(tokens)?;
 
   Ok(Some(ASTNode::VariableDeclaration {
     modifiers: Default::default(),
@@ -191,7 +186,7 @@ fn get_declaration_after_name<'a, 'b>(
   tokens.ignore_whitespace();
   let value = if tokens.peek_str() == "=" {
     tokens.skip_unchecked();
-    Some(get_expression(tokens, 0)?)
+    Some(get_expression(tokens, *crate::operations::COMMA_PRECEDENCE)?)
   } else {
     None
   };
@@ -227,6 +222,151 @@ fn get_multiple_declarations<'a, 'b>(
     if !tokens.ignore_commas() { break }
   }
   Ok((declarations, spread))
+}
+
+fn get_multiple_variable_declarations<'a, 'b>(
+  tokens: &'b mut TokenList<'a>,
+) -> Result<SmallVec<SingleVariableDeclaration>, CompilerError<'a>> where 'a: 'b {
+  tokens.ignore_whitespace();
+  let mut declarations: SmallVec<SingleVariableDeclaration> = SmallVec::new();
+  while ![ ";", ")" ].contains(&tokens.peek_str()) {
+    if tokens.peek_str() == "[" || tokens.peek_str() == "{" {
+      // Destructuring declaration
+      let pattern = parse_destructure_pattern(tokens)?;
+      tokens.ignore_whitespace();
+      if tokens.peek_str() == ":" {
+        return Err(CompilerError {
+          message: "Destructure pattern cannot be typed".to_owned(),
+          token: tokens.consume()
+        })
+      }
+      if let Some(value) = get_declaration_after_name(tokens)?.1 {
+        declarations.push(SingleVariableDeclaration::Destructured(pattern, value));
+      } else {
+        return Err(CompilerError {
+          message: "Destructure pattern must have an initializer".to_owned(),
+          token: tokens.consume()
+        })
+      }
+    } else {
+      declarations.push(SingleVariableDeclaration::from(
+        get_declaration(tokens)?
+      ));
+    }
+
+    if !tokens.ignore_commas() { break }
+  }
+  Ok(declarations)
+}
+
+fn parse_destructure_pattern<'a>(
+  tokens: &mut TokenList<'a>
+) -> Result<DestructurePattern, CompilerError<'a>> {
+  tokens.ignore_whitespace();
+  match tokens.peek_str() {
+    "[" => {
+      // Array destructure
+      tokens.skip_unchecked(); // Skip "["
+      let mut elements = SmallVec::new();
+      let mut spread = None;
+      while tokens.peek_str() != "]" {
+        tokens.ignore_whitespace();
+        if tokens.peek_str() == "..." {
+          if spread.is_some() {
+            return Err(CompilerError {
+              message: "Only one spread allowed in array destructure".to_owned(),
+              token: tokens.consume()
+            })
+          }
+          tokens.skip_unchecked();
+          spread = Some(Box::new(parse_destructure_pattern(tokens)?));
+        } else if tokens.peek_str() == "," {
+          if spread.is_some() {
+            return Err(CompilerError {
+              message: "A spread may not have a trailing comma".to_owned(),
+              token: tokens.consume()
+            })
+          }
+          tokens.skip_unchecked();
+          elements.push(DestructurePattern::Ignore);
+        } else {
+          if spread.is_some() {
+            return Err(CompilerError {
+              message: "A spread must be last in a destructuring pattern".to_owned(),
+              token: tokens.consume()
+            })
+          }
+          elements.push(parse_destructure_pattern(tokens)?);
+        }
+        tokens.ignore_whitespace();
+        if tokens.peek_str() == "," {
+          tokens.skip_unchecked();
+        }
+      }
+      tokens.skip_unchecked(); // Skip "]"
+      Ok(DestructurePattern::Array { elements, spread })
+    },
+    "{" => {
+      // Object destructure
+      tokens.skip_unchecked(); // Skip "{"
+      let mut properties = SmallVec::new();
+      let mut spread = None;
+      while tokens.peek_str() != "}" {
+        tokens.ignore_whitespace();
+        if tokens.peek_str() == "..." {
+          if spread.is_some() {
+            return Err(CompilerError {
+              message: "Only one spread allowed in object destructure".to_owned(),
+              token: tokens.consume()
+            })
+          }
+          tokens.skip_unchecked();
+          spread = Some(Box::new(parse_destructure_pattern(tokens)?));
+        } else if tokens.peek_str() == "," {
+          if spread.is_some() {
+            return Err(CompilerError {
+              message: "A spread may not have a trailing comma".to_owned(),
+              token: tokens.consume()
+            })
+          }
+          tokens.skip_unchecked();
+        } else {
+          if spread.is_some() {
+            return Err(CompilerError {
+              message: "A spread must be last in a destructuring pattern".to_owned(),
+              token: tokens.consume()
+            })
+          }
+          let property = tokens.consume();
+          tokens.ignore_whitespace();
+          let alias = if tokens.peek_str() == ":" {
+            tokens.skip_unchecked();
+            parse_destructure_pattern(tokens)?
+          } else {
+            if !property.is_identifier() {
+              return Err(CompilerError {
+                message: "Only identifiers can be left un-renamed when destructuring".to_owned(),
+                token: property
+              })
+            }
+            DestructurePattern::Identifier { name: property.value.to_owned() }
+          };
+          properties.push((property.value.to_owned(), alias));
+        }
+        tokens.ignore_whitespace();
+        if tokens.peek_str() == "," {
+          tokens.skip_unchecked();
+        }
+      }
+      tokens.skip_unchecked(); // Skip "}"
+      Ok(DestructurePattern::Object { properties, spread })
+    },
+    _ => {
+      // Identifier or rename
+      let name = tokens.consume_type(TokenType::Identifier)?.value.to_owned();
+      Ok(DestructurePattern::Identifier { name })
+    }
+  }
 }
 
 /// Handles control flow, like `if`, `while`, and `for`
@@ -1249,7 +1389,7 @@ fn parse_infix<'a, 'b>(
     // Ternary (eg. `condition ? true : false`)
 
     // Get the first part, up until the `:`
-    let mut if_true = get_expression(tokens, *COLON_PRECEDENCE)?;
+    let mut if_true = get_expression(tokens, *crate::operations::COLON_PRECEDENCE)?;
     while tokens.peek_str() != ":" {
       if tokens.is_done() {
         return Err(CompilerError {
@@ -1260,7 +1400,7 @@ fn parse_infix<'a, 'b>(
       if_true = parse_infix(
         if_true,
         tokens,
-        *COLON_PRECEDENCE
+        *crate::operations::COLON_PRECEDENCE
       )?;
       tokens.ignore_whitespace();
     }
@@ -1342,7 +1482,7 @@ fn parse_arrow_function_after_arrow<'a>(
   tokens.ignore_whitespace();
   let is_expression = tokens.peek_str() != "{";
   let body = if is_expression {
-    get_expression(tokens, *ARROW_FN_PRECEDENCE)?
+    get_expression(tokens, *crate::operations::ARROW_FN_PRECEDENCE)?
   } else {
     tokens.skip_unchecked(); // Skip "{"
     get_block(tokens)?

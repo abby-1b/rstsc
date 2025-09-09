@@ -1,3 +1,4 @@
+use crate::ast_common::DestructurePattern;
 use crate::{ast::ASTNode, types::Type};
 use std::ptr::NonNull;
 use std::hash::Hash;
@@ -198,5 +199,16 @@ impl DeclarationTyped {
       name,
       typ: Box::new(typ)
     }
+  }
+}
+
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub enum SingleVariableDeclaration {
+  Regular(Declaration),
+  Destructured(DestructurePattern, ASTNode)
+}
+impl SingleVariableDeclaration {
+  pub fn from(decl: Declaration) -> SingleVariableDeclaration {
+    SingleVariableDeclaration::Regular(decl)
   }
 }

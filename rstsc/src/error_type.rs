@@ -19,13 +19,18 @@ impl<'a> std::fmt::Debug for CompilerError<'a> {
 }
 
 impl<'a> CompilerError<'a> {
-  // Throws this error, exiting the program.
-  pub fn throw(&self, tokens: TokenList) {
+  /// Prints this error to the console, but does not exit the program
+  pub fn print(&self, tokens: &TokenList) {
     if self.token.typ != TokenType::EndOfFile {
       Self::print_token_lines(&self.token, tokens.source);
     }
     print!("\n\x1b[31m{}", self.message);
     println!("\x1b[0m");
+  }
+
+  /// Throws this error, exiting the program
+  pub fn throw(&self, tokens: TokenList) {
+    self.print(&tokens);
     std::process::exit(1);
   }
 
@@ -104,10 +109,10 @@ impl<'a> CompilerError<'a> {
   }
 
   /// Used for testing purposes only
-  pub fn test(token: Token<'a>) -> CompilerError<'a> {
+  pub fn test(tokens: &mut TokenList<'a>) {
     CompilerError {
       message: "Test error".to_string(),
-      token
-    }
+      token: tokens.peek().clone()
+    }.print(tokens);
   }
 }

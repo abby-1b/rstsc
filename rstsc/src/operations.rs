@@ -169,3 +169,9 @@ pub fn get_operator_binding_power_from_node(node: &ASTNode) -> Option<(u8, u8)> 
     None
   }
 }
+
+lazy_static::lazy_static! {
+  pub static ref ARROW_FN_PRECEDENCE: u8 = get_operator_binding_power(ExprType::Infx, "=>").unwrap().1;
+  pub static ref COLON_PRECEDENCE: u8 = get_operator_binding_power(ExprType::Special, ":").unwrap().1;
+  pub static ref COMMA_PRECEDENCE: u8 = get_operator_binding_power(ExprType::Infx, ",").unwrap().1;
+}

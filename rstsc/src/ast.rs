@@ -1,6 +1,6 @@
 
 use crate::{
-  ast_common::*, declaration::{Declaration, DeclarationComputable}, error_type::CompilerError, small_vec::SmallVec, spread::Spread, tokenizer::Token, types::{KeyValueMap, Type}
+  ast_common::*, declaration::{Declaration, DeclarationComputable, SingleVariableDeclaration}, error_type::CompilerError, small_vec::SmallVec, spread::Spread, tokenizer::Token, types::{KeyValueMap, Type}
 };
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -108,7 +108,7 @@ pub enum ASTNode {
   VariableDeclaration {
     modifiers: ModifierList,
     def_type: VariableDefType,
-    defs: SmallVec<Declaration>
+    defs: SmallVec<SingleVariableDeclaration>
   },
 
   StatementImport { inner: Box<ImportDefinition> },

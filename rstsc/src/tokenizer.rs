@@ -100,7 +100,7 @@ impl<'a> Token<'a> {
     self.typ == TokenType::Identifier
   }
 
-  pub fn from(value: &str) -> Token {
+  pub fn from(value: &'a str) -> Token<'a> {
     Token {
       typ: TokenType::Unknown,
       value
@@ -145,7 +145,7 @@ impl<'a, 'b> Drop for TokenListCheckpoint {
 }
 
 impl<'a> TokenList<'a> {
-  pub fn from(source: &str) -> TokenList {
+  pub fn from(source: &'a str) -> TokenList<'a> {
     TokenList {
       source,
       next_tokens: VecDeque::with_capacity(TOKEN_QUEUE_SIZE),

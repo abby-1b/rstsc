@@ -738,7 +738,7 @@ fn parse_curly_braces<'a, 'b>(
     tokens.ignore_whitespace();
     let property_type = if tokens.peek_str() == ":" {
       tokens.skip_unchecked(); // Skip ":"
-      get_expression(tokens, precedence)?
+      get_expression(tokens, *crate::operations::COMMA_PRECEDENCE)?
     } else {
       Type::Any
     };

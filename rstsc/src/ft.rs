@@ -1,7 +1,7 @@
 use crate::{
   ast,
   ast_common::{ModifierList, VariableDefType},
-  declaration::Declaration,
+  declaration::{Declaration, SingleVariableDeclaration},
   operations::{get_operator_binding_power, ExprType},
   small_vec::SmallVec,
   spread::Spread,
@@ -78,7 +78,7 @@ pub enum ASTNode {
   VariableDeclaration {
     modifiers: ModifierList,
     def_type: VariableDefType,
-    defs: SmallVec<Declaration>
+    defs: SmallVec<SingleVariableDeclaration>
   },
 
   StatementIf {

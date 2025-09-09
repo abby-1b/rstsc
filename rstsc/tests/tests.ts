@@ -692,3 +692,9 @@ function weirdOperation() {
         })()
     );
 }
+
+function frame(
+    delta: number,
+    shouldProcessNodes: boolean = true,
+    ...processSystemPriorityLessThan: number[] = []
+) {}

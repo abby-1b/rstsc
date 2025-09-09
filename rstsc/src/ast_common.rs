@@ -1,5 +1,7 @@
 use core::fmt::Debug;
 
+use crate::small_vec::SmallVec;
+
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub enum VariableDefType {
   Var,
@@ -119,4 +121,12 @@ impl Debug for ModifierList {
       )
       .finish()
   }
+}
+
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub enum DestructurePattern {
+  Array { elements: SmallVec<DestructurePattern>, spread: Option<Box<DestructurePattern>> },
+  Object { properties: SmallVec<(String, DestructurePattern)>, spread: Option<Box<DestructurePattern>> },
+  Identifier { name: String },
+  Ignore
 }

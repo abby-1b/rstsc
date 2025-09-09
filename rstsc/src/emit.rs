@@ -1,4 +1,4 @@
-use crate::{ast::{ASTNode, FunctionDefinition, ObjectProperty}, declaration::{Declaration, DeclarationComputable}, small_vec::SmallVec, spread::Spread};
+use crate::{ast::{ASTNode, FunctionDefinition, ObjectProperty}, ast_common::DestructurePattern, declaration::{Declaration, DeclarationComputable, SingleVariableDeclaration}, small_vec::SmallVec, spread::Spread};
 
 static NO_SPREAD: Spread = Spread::new();
 
@@ -133,10 +133,14 @@ fn emit_single(
       emitter.unindent();
       emitter.out("}", false);
     }
-    ASTNode::VariableDeclaration { modifiers, def_type, defs } => {
+    ASTNode::VariableDeclaration {
+      modifiers,
+      def_type,
+      defs
+    } => {
       emitter.out(&modifiers.emit(true), false);
       emitter.out(&def_type.emit(), false);
-      emit_declarations(defs, NO_SPREAD.clone(), emitter);
+      emit_variable_declarations(defs, NO_SPREAD.clone(), emitter);
       emitter.out("", true);
     }
     ASTNode::StatementImport { inner } => {
@@ -460,6 +464,19 @@ fn emit_declarations(
   }, ", ", ",");
 }
 
+fn emit_variable_declarations(
+  declarations: &SmallVec<SingleVariableDeclaration>,
+  spread: Spread,
+  emitter: &mut Emitter
+) {
+  let mut i = 0;
+  emitter.emit_vec(declarations, |declaration, emitter| {
+    if i == spread.0 { emitter.out("...", false); }
+    emit_single_variable_declaration(declaration, emitter);
+    i += 1;
+  }, ", ", ",");
+}
+
 fn emit_single_declaration_computable(
   declaration: &DeclarationComputable,
   emitter: &mut Emitter
@@ -491,6 +508,70 @@ fn emit_single_declaration(
   if let Some(value) = declaration.value() {
     emitter.out_diff(" = ", "=", false);
     emit_single(value, emitter);
+  }
+}
+
+fn emit_single_variable_declaration(
+  declaration: &SingleVariableDeclaration,
+  emitter: &mut Emitter
+) {
+  match declaration {
+    SingleVariableDeclaration::Regular(declaration) => {
+      emit_single_declaration(declaration, emitter);
+    }
+    SingleVariableDeclaration::Destructured(pattern, value) => {
+      emit_destructure_pattern(pattern, emitter);
+      emitter.out_diff(" = ", "=", false);
+      emit_single(value, emitter);
+    }
+  }
+}
+
+fn emit_destructure_pattern(
+  pattern: &DestructurePattern,
+  emitter: &mut Emitter
+) {
+  match pattern {
+    DestructurePattern::Array { elements, spread } => {
+      emitter.out_diff("[ ", "[", false);
+      emitter.emit_vec(elements, |element, emitter| {
+        emit_destructure_pattern(element, emitter);
+      }, ", ", ",");
+      if let Some(spread) = spread {
+        if elements.len() > 0 {
+          emitter.out_diff(", ", ",", false);
+        }
+        emitter.out("...", false);
+        emit_destructure_pattern(spread, emitter);
+      }
+      emitter.out_diff(" ]", "]", true);
+    }
+    DestructurePattern::Object { properties, spread } => {
+      emitter.out_diff("{ ", "{", false);
+      emitter.emit_vec(properties, |(name, pattern), emitter| {
+        emitter.out(name, false);
+        emitter.out_diff(": ", ":", false);
+        emit_destructure_pattern(pattern, emitter);
+      }, ", ", ",");
+      if let Some(spread) = spread {
+        if properties.len() > 0 {
+          emitter.out_diff(", ", ",", false);
+        }
+        emitter.out("...", false);
+        emit_destructure_pattern(spread, emitter);
+      }
+      emitter.out_diff(" }", "}", true);
+    }
+    DestructurePattern::Identifier { name } => {
+      emitter.out(name, true);
+    }
+    // ast::DestructurePattern::Rename { source: _, alias: _ } => {
+    //   // TODO
+    //   emitter.out("[Rename]", true);
+    // }
+    DestructurePattern::Ignore => {
+      emitter.out("", true);
+    }
   }
 }
 
