@@ -1,6 +1,6 @@
 use std::{collections::VecDeque, str::Chars};
 
-use crate::error_type::CompilerError;
+use crate::{error_type::CompilerError};
 
 pub static TOKEN_QUEUE_SIZE: usize = 32;
 
@@ -27,6 +27,10 @@ fn should_chain(left: char, right: char) -> bool {
     ('%', '=') => true,
     ('&', '=') => true,
     ('|', '=') => true,
+
+    // And / Or
+    ('&', '&') => true,
+    ('|', '|') => true,
     
     // Bit-shifting
     ('>', '>') => true,
@@ -39,6 +43,8 @@ fn should_chain(left: char, right: char) -> bool {
     ('.', '.') => true, // Spread `...`
     ('?', '.') => true, // Conditional chain
     ('=', '>') => true, // Arrow function
+
+    ('?', '?') => true, // Non-nullish coalescing
     _ => false
   }
 }
@@ -49,12 +55,33 @@ pub enum TokenType {
   Number,
   Symbol,
   String,
+  StringTemplateStart,
+  StringTemplateMiddle,
+  StringTemplateEnd,
   Spacing,
   LineTerminator,
   EndOfFile,
 
   /// Used when explicitly creating tokens from a string
   Unknown
+}
+
+impl TokenType {
+  pub fn as_str(&self) -> &'static str {
+    match self {
+      Self::Identifier => "Identifier",
+      Self::Number => "Number",
+      Self::Symbol => "Symbol",
+      Self::String => "String",
+      Self::StringTemplateStart => "StringTemplateStart",
+      Self::StringTemplateMiddle => "StringTemplateMiddle",
+      Self::StringTemplateEnd => "StringTemplateEnd",
+      Self::Spacing => "Spacing",
+      Self::LineTerminator => "LineTerminator",
+      Self::EndOfFile => "EndOfFile",
+      Self::Unknown => "Unknown"
+    }
+  }
 }
 
 #[derive(Debug, Clone)]
@@ -94,6 +121,8 @@ pub struct TokenList<'a> {
 
   /// The index currently being read for finding a token
   find_index: usize,
+
+  // TODO: string literal nesting
 
   char_iter: CustomCharIterator<'a>,
 }
@@ -143,7 +172,7 @@ impl<'a> TokenList<'a> {
     if self.on_token < last_token_idx { return false }
     if
       self.on_token == last_token_idx &&
-      matches!(self.next_tokens[self.on_token].typ, TokenType::EndOfFile)
+      self.next_tokens[self.on_token].typ == TokenType::EndOfFile
     { return true; }
     self.find_index >= self.source.len() - 1
   }
@@ -166,10 +195,26 @@ impl<'a> TokenList<'a> {
   #[must_use]
   pub fn consume<'b>(&mut self) -> Token<'b> where 'a: 'b {
     let ret = self.peek().clone();
-    if !matches!(ret.typ, TokenType::EndOfFile) {
+    if ret.typ != TokenType::EndOfFile {
       self.on_token += 1;
     }
     ret
+  }
+
+  #[must_use]
+  pub fn consume_type<'b>(&mut self, typ: TokenType) -> Result<Token<'b>, CompilerError<'b>> where 'a: 'b {
+    let ret = self.consume();
+    if ret.typ != typ {
+      Err(CompilerError {
+        message: format!(
+          "Expected {}, found {}",
+          typ.as_str(), ret.typ.as_str()
+        ),
+        token: ret
+      })
+    } else {
+      Ok(ret)
+    }
   }
 
   /// Skips a single character in the currently-loaded token
@@ -177,20 +222,20 @@ impl<'a> TokenList<'a> {
   pub fn consume_single_character<'b>(&mut self) -> &'b str where 'a: 'b {
     // Get character
     let single_character = &self.next_tokens[self.on_token].value[0..1];
-    self.next_tokens.insert(self.on_token, Token::from(single_character));
 
     // Skip character in source string
     self.next_tokens[self.on_token].value = &self.next_tokens[self.on_token].value[1..];
 
     if self.next_tokens[self.on_token].value.is_empty() {
       // Ensure we aren't left with an empty string!
-      self.next_tokens.remove(self.on_token);
+      self.next_tokens.remove(self.on_token + 1);
     }
 
     // Return
     single_character
   }
 
+  #[must_use]
   pub fn skip(&mut self, candidate: &str) -> Result<(), CompilerError<'a>> {
     if candidate == self.peek_str() {
       self.skip_unchecked();
@@ -206,7 +251,7 @@ impl<'a> TokenList<'a> {
   pub fn skip_unchecked(&mut self) {
     if
       self.on_token == self.next_tokens.len() - 1 &&
-      matches!(self.next_tokens[self.on_token].typ, TokenType::EndOfFile)
+      self.next_tokens[self.on_token].typ == TokenType::EndOfFile
     {
       return
     }
@@ -216,7 +261,7 @@ impl<'a> TokenList<'a> {
   /// Consumes tokens until a non-whitespace token is found
   pub fn ignore_whitespace(&mut self) {
     while !self.is_done() {
-      if self.on_token >= self.next_tokens.len() {
+      while self.on_token >= self.next_tokens.len() && !self.is_done() {
         self.queue_token();
       }
       if !self.next_tokens[self.on_token].is_whitespace() { break; }
@@ -263,7 +308,7 @@ impl<'a> TokenList<'a> {
     { checkpoint.can_drop = true; }
   }
 
-  /// Queues `self.next_token`
+  /// Queues into `self.next_tokens`
   fn queue_token(&mut self) {
     // TODO: figure out why token deletion doesn't work
     if self.checkpoints == 0 && self.on_token > 0 && self.next_tokens.len() >= TOKEN_QUEUE_SIZE {
@@ -323,8 +368,8 @@ impl<'a> TokenList<'a> {
         let mut is_escaped = false;
         break 'token_done (
           loop {
-            token_len += 1;
             if let Some(curr_char) = self.char_iter.peek() {
+              token_len += curr_char.len_utf8();
               if curr_char == '\n' { break token_len - 1; }
               self.char_iter.consume();
               let is_start_char = curr_char == start_char && !is_escaped;
@@ -354,7 +399,7 @@ impl<'a> TokenList<'a> {
             self.char_iter.skip();
             while self.char_iter.peek().is_some_and(|x| x != '/') || curr_char != '*' {
               if curr_char == '\n' { has_newline = true; }
-              token_len += 1;
+              token_len += curr_char.len_utf8();
               curr_char = self.char_iter.consume().unwrap();
             }
             self.char_iter.skip();
@@ -436,4 +481,25 @@ impl<'a> CustomCharIterator<'a> {
   fn bytes_left(&self) -> usize {
     unsafe { self.inner_iter.size_hint().1.unwrap_unchecked() }
   }
+}
+
+fn print_last_three(tokens: &TokenList) {
+  let start = tokens.next_tokens.len().saturating_sub(3);
+  for i in start..tokens.next_tokens.len() {
+    if i < tokens.next_tokens.len() {
+      println!(" Token(\"{}\")", tokens.next_tokens[i].value);
+    }
+  }
+  println!();
+}
+
+fn print_all_tokens(tokens: &TokenList) {
+  for i in 0..tokens.next_tokens.len() {
+    if tokens.on_token == i {
+      print!(" >\"{}\"<", str::escape_debug(tokens.next_tokens[i].value));
+    } else {
+      print!(" \"{}\"", str::escape_debug(tokens.next_tokens[i].value));
+    }
+  }
+  println!();
 }

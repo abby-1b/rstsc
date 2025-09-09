@@ -1,6 +1,6 @@
 
 use crate::{
-  ast_common::*, declaration::Declaration, error_type::CompilerError, small_vec::SmallVec, spread::Spread, tokenizer::Token, types::{KeyValueMap, Type}
+  ast_common::*, declaration::{Declaration, DeclarationComputable}, error_type::CompilerError, small_vec::SmallVec, spread::Spread, tokenizer::Token, types::{KeyValueMap, Type}
 };
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -18,6 +18,7 @@ pub enum ObjectProperty {
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct FunctionDefinition {
   pub modifiers: ModifierList,
+
   pub name: Option<String>,
 
   pub generics: SmallVec<Type>,
@@ -36,6 +37,23 @@ pub struct ArrowFunctionDefinition {
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
+pub enum GetterSetter {
+  None,
+  Getter,
+  Setter
+}
+
+impl GetterSetter {
+  pub fn as_str(&self) -> &str {
+    match self {
+      GetterSetter::None => "",
+      GetterSetter::Getter => "get",
+      GetterSetter::Setter => "set"
+    }
+  }
+}
+
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct ClassDefinition {
   pub modifiers: ModifierList,
   pub name: Option<String>,
@@ -45,10 +63,25 @@ pub struct ClassDefinition {
   pub kv_maps: SmallVec<KeyValueMap>,
 
   /// Named declarations
-  pub declarations: SmallVec<(ModifierList, Declaration)>,
+  pub declarations: SmallVec<(DeclarationComputable, ModifierList)>,
 
   /// Functions
-  pub methods: SmallVec<FunctionDefinition>
+  pub methods: SmallVec<(FunctionDefinition, GetterSetter)>
+}
+
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub struct IndividualImport {
+  pub name: String,
+  pub alias: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub struct ImportDefinition {
+  pub default_alias: Option<String>,
+  pub wildcard: Option<String>,
+  pub individual: SmallVec<IndividualImport>,
+
+  pub source: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -77,6 +110,8 @@ pub enum ASTNode {
     def_type: VariableDefType,
     defs: SmallVec<Declaration>
   },
+
+  StatementImport { inner: Box<ImportDefinition> },
 
   StatementIf {
     condition: Box<ASTNode>,
@@ -162,6 +197,7 @@ impl ASTNode {
     match self {
       ASTNode::Block { .. } => "Block",
       ASTNode::VariableDeclaration { .. } => "VariableDeclaration",
+      ASTNode::StatementImport { .. } => "StatementImport",
       ASTNode::StatementIf { .. } => "StatementIf",
       ASTNode::StatementWhile { .. } => "StatementWhile",
       ASTNode::StatementFor { .. } => "StatementFor",

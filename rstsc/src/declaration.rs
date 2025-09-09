@@ -4,6 +4,17 @@ use std::hash::Hash;
 use core::fmt::Debug;
 
 /// A declaration name that can be computed (ASTNode) or assigned (String)
+/// 
+/// Stores a pointer to either a boxed ASTNode or a boxed String
+/// by using the lowest bit as a tag. Functionally equivalent to an enum:
+/// ```
+/// enum ComputableDeclarationName {
+///   Computed(ASTNode),
+///   Named(String)
+/// }
+/// ```
+/// but more memory efficient (one pointer instead of two),
+/// at the cost of some unsafe code and complexity.
 pub struct ComputableDeclarationName(NonNull<()>);
 impl ComputableDeclarationName {
   pub fn new_computed(value: ASTNode) -> ComputableDeclarationName {
@@ -30,13 +41,20 @@ impl ComputableDeclarationName {
     !self.is_computed()
   }
 
+  pub unsafe fn get_computed_unchecked(&self) -> &ASTNode {
+    &*(self.0.as_ptr() as *const ASTNode)
+  }
+  pub unsafe fn get_named_unchecked(&self) -> &String {
+    &*((self.0.as_ptr() as usize & !1) as *const String)
+  }
+
   pub fn get_computed(&self) -> Option<&ASTNode> {
     if !self.is_computed() { return None }
-    Some(unsafe { &*(self.0.as_ptr() as *const ASTNode) })
+    Some(unsafe { self.get_computed_unchecked() })
   }
   pub fn get_named(&self) -> Option<&String> {
     if !self.is_named() { return None }
-    Some(unsafe { &*((self.0.as_ptr() as usize & !1) as *const String) })
+    Some(unsafe { self.get_named_unchecked() })
   }
 }
 
@@ -127,25 +145,31 @@ impl Declaration {
 }
 
 /// Used for class declarations and dictionary values, which are computable
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct DeclarationComputable {
-  name: ComputableDeclarationName,
-  typ: Box<Type>,
-  value: Option<Box<ASTNode>>
+  pub name: ComputableDeclarationName,
+  pub typ: Type,
+  pub value: Option<ASTNode>
 }
 impl DeclarationComputable {
   pub fn computed(inner: ASTNode, typ: Type, value: Option<ASTNode>) -> DeclarationComputable {
     DeclarationComputable {
       name: ComputableDeclarationName::new_computed(inner),
-      typ: Box::new(typ),
-      value: value.map(Box::new)
+      typ, value
     }
   }
   pub fn named(name: String, typ: Type, value: Option<ASTNode>) -> DeclarationComputable {
     DeclarationComputable {
       name: ComputableDeclarationName::new_named(name),
-      typ: Box::new(typ),
-      value: value.map(Box::new)
+      typ, value
+    }
+  }
+
+  pub fn from(declaration: &Declaration) -> DeclarationComputable {
+    DeclarationComputable {
+      name: ComputableDeclarationName::new_named(declaration.name.clone()),
+      typ: declaration.typ.clone(),
+      value: declaration.value.as_ref().map(|v| (**v).clone())
     }
   }
 }

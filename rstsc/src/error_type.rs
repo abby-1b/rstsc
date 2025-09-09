@@ -92,12 +92,21 @@ impl<'a> CompilerError<'a> {
     expect: &str,
     token: Token<'a>
   ) -> CompilerError<'a> {
+    println!("Custom backtrace:\n{}", std::backtrace::Backtrace::capture());
     CompilerError {
       message: format!(
         "Expected {:?}, found {:?}",
         expect,
         token.value
       ),
+      token
+    }
+  }
+
+  /// Used for testing purposes only
+  pub fn test(token: Token<'a>) -> CompilerError<'a> {
+    CompilerError {
+      message: "Test error".to_string(),
       token
     }
   }

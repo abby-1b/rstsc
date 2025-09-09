@@ -34,13 +34,17 @@ fn main() {
     durations.push(elapsed);
   }
 
+  let lines = SOURCE_TEST.split('\n')
+    .filter(|l| l.chars().filter(|c| !c.is_whitespace()).collect::<Vec<char>>().len() > 0)
+    .collect::<Vec<&str>>().len();
+
   durations.sort();
   let total = durations.iter().fold(Duration::from_millis(0), |a, b| a + *b);
   let mean = total / tests as u32;
   let median = durations[durations.len() / 2];
 
-  println!("average: {:.3?}", mean);
-  println!("middle : {:.3?}", median);
-  println!("min    : {:.3?}", durations[0]);
-  println!("max    : {:.3?}", durations[durations.len() - 1]);
+  println!("average: {: >12?} ({: >8?} loc/s)", mean                          , ((Duration::from_secs(1).as_secs_f64() / (mean                          ).as_secs_f64()) * lines as f64).round() as usize);
+  println!("middle : {: >12?} ({: >8?} loc/s)", median                        , ((Duration::from_secs(1).as_secs_f64() / (median                        ).as_secs_f64()) * lines as f64).round() as usize);
+  println!("min    : {: >12?} ({: >8?} loc/s)", durations[0]                  , ((Duration::from_secs(1).as_secs_f64() / (durations[0]                  ).as_secs_f64()) * lines as f64).round() as usize);
+  println!("max    : {: >12?} ({: >8?} loc/s)", durations[durations.len() - 1], ((Duration::from_secs(1).as_secs_f64() / (durations[durations.len() - 1]).as_secs_f64()) * lines as f64).round() as usize);
 }

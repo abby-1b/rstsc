@@ -67,10 +67,10 @@ pub fn test_code<'a>(source: &str, compiled: &str, whitespace: &WhiteSpace) -> R
 	// Get the `rstsc` output
 	// println!("RSTSC compiling: {:?}", code);
 	let out = rstsc::compile(code);
-	let mut actual: String = if let Ok(out) = out {
-		out
+	let mut actual: String = if let Ok(out) = &out {
+		out.clone()
 	} else {
-		format!("{:?}", out.err().unwrap())
+		format!("{:?}", out.as_ref().err().unwrap())
 	};
 	let actual_untransformed: String = actual.clone();
 
@@ -94,6 +94,8 @@ pub fn test_code<'a>(source: &str, compiled: &str, whitespace: &WhiteSpace) -> R
 		}
 		WhiteSpace::Exact => {}
 	}
+
+	// if out.is_ok() { return Ok(()) }
 
 	if actual != expect {
 		Err(format!(

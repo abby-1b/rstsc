@@ -10,13 +10,13 @@ pub mod ast_common;
 pub mod ast;
 pub mod parser;
 pub mod ft;
-pub mod type_checking;
-pub mod minify;
+// pub mod type_checking;
+// pub mod minify;
 pub mod emit;
 
 /// Compiles a string of TypeScript code
 pub fn compile(code: &str) -> Result<String, error_type::CompilerError> {
-    let mut tokens = tokenizer::TokenList::from(code);
-    let ast = parser::get_block(&mut tokens)?;
-    Ok(emit::emit_code(ast, false))
+  let mut tokens = tokenizer::TokenList::from(code);
+  let ast = parser::get_block(&mut tokens)?;
+  Ok(emit::emit_code(ast, false))
 }

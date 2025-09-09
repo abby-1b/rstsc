@@ -1,5 +1,6 @@
 /// This file is used for less rigorous testing during development.
 
+// use rstsc::ft;
 // use rstsc::minify::minify_ast;
 use rstsc::tokenizer::TokenList;
 use rstsc::parser::get_block;
@@ -21,6 +22,9 @@ fn main() {
 
   // minify_ast(&mut ast);
   dbg!(&ast);
+
+  // let ft_ast = ft::ASTNode::from(&ast);
+  // dbg!(ft_ast);
 
   let out = emit_code(ast, false);
   println!("{}", out);

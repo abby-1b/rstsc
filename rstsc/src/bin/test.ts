@@ -1,19 +1,72 @@
-// let obj = {
-//     a: 123,
-//     b: 'nice',
-//     c: false
+
+type PartialWithOptional<T> = { [K in keyof T]?: T[K] };
+let partialOptional: PartialWithOptional<{ a: number; b: string }> = { a: 42 };
+
+type DeepPartial<T> = T extends Function
+  ? T
+  : T extends object
+  ? { [P in keyof T]?: DeepPartial<T[P]> }
+  : T;
+type NestedObj = {a: {b: {c: number}}};
+type WeirdPartial = DeepPartial<NestedObj>;
+
+// export class Tab<T extends Record<string, any>> {
+//   public horizontalNumbers<N extends string, K extends [...string[]]>(
+//     label: N, labels: K, hideLabel = true
+//   ): Tab<T & Record<N, { [J in keyof K]: number }>> {
+//     return this;
+//   }
+// }
+
+// const COMPOST_TYPES: Record<string, number> = {
+//   'Composta de madera': 1010,
+//   'Composta de gallinaza': 1333,
+//   'Composta de setas': 1333,
+//   'Composta de pulpa de café': 626,
+//   'Composta de estiercol de caballo': 866,
+//   'Composta de estiércol de vaca': 1131,
+//   'Biosólidos compostados': 1131,
 // };
-// console.log(obj);
+
+// const maybeNullValueA: (number | undefined)[] = [ 1, 2 ];
+// const nonNullValueA = a[0]!;
+
+// interface Test {
+//   area(): number
+// }
+
 // let fn = () => 123;
 
-// function test(x: number | string = 0): number {
-//     const a = 2 * 3 + 1 * (((2 * 2 - 4 + 28) - 1) + 4);
-//     if (x + '' === x) {
-//         return parseFloat(x);
-//     } else {
-//         return x as number;
-//     }
+// function some<number 123() {
+  
 // }
+
+// const ĸ = ""
+// console.log(ĸ)
+// const b = 123;
+
+// class GetSet {
+//   private _value: number = 0;
+//   get value(): number {
+//     return this._value;
+//   }
+//   set value(v: number) {
+//     if (v >= 0) this._value = v;
+//   }
+// }
+
+// let convertToArray: <T>(x: T | T[]) => T[] = x => Array.isArray(x) ? x : [x];
+// const a = `number ${ 'a' + `fuck my ${2} life` }` as const;
+
+// const enum MixedComputedEnum {
+//   A,
+//   B,
+//   C,
+//   D = "D".length,
+//   E = "nice"
+// }
+// let b = 123;
+// const a = MixedComputedEnum["nice"];
 
 // function weirdOperation() {
 //   return (
@@ -33,141 +86,9 @@
 //     })()
 //   );
 // }
-// console.log(weirdOperation());
 
-// function lol() {
-//     let a = 123;
-//     return a;
+// function weirdOperation() {
+//   return (function() {
+//     return 1;
+//   })();
 // }
-
-// function log(message: string, userId?: string) {
-//     console.log(message);
-// }
-
-// type Some = 123;
-// function isString(x: any): x is string {
-//     return typeof x === 'string';
-// }
-
-// let test1: () => void, test2: (x: number) => void, test3: (string | number)[], test4: (x: number, y: number) => void;
-
-// function doLog(message: any, ...optionalParams: any[]) {
-//     console.log(message, ...optionalParams);
-// }
-// doLog('Message', 1, 2, 3);
-
-// function assertIsString(val: any): asserts val is string {
-//     if (typeof val !== 'string') throw new Error('Not a string');
-// }
-// let maybeString: any = 'I\'m a string';
-// assertIsString(maybeString);
-
-// interface TestFn {
-//     (x: number, y: number);
-//     (x: number, y: number, z: string);
-//     something: number
-// }
-
-// const a: {
-//     (x: number, y: number)
-//     lmao: 123
-// } = () => 123;
-
-// const m = (a: number, b: number) => 123;
-// m.something = 456;
-// const a: TestFn = m;
-
-// interface TestProps {
-//     a: number;
-//     b: string,
-//     c: number | string
-//     d: TestFn
-//     e
-// }
-
-// type A = { some: number } | { lol: string } & { other: boolean }
-// type B = { some: number } & { lol: string } | { other: boolean }
-// const a: A = { some: 123 };
-// const b: A = { lol: 'ok', other: true };
-// const c: B = { some: 123, lol: 'ok' };
-// const d: string | number & boolean = 'hello!';
-
-// type SOME = {
-//     someVoid: void,
-//     someUndf: undefined
-// };
-// const a: SOME['someVoid'] = void 0;
-// const b: SOME['someVoid'] = undefined;
-// const c: SOME['someUndf'] = void 0;
-// const d: SOME['someUndf'] = undefined;
-
-// function assertIsString(val: any): asserts val is string {
-//     if (typeof val !== 'string') throw new Error('Not a string');
-// }
-// let maybeString: any = 'I\'m a string';
-// assertIsString(maybeString);
-
-// type A = number;
-// type B = string;
-// let a: () => number;
-
-// type RecursiveConditional<T> = T extends (infer U)[] ? RecursiveConditional<U> : T;
-// let deepArrayValue: RecursiveConditional<number[][][][]> = 42;
-
-// type ValueOf<T> = T[keyof T];
-// type ObjectWithValues = { a: number; b: string; c: boolean };
-// let valueOfObject: ValueOf<ObjectWithValues> = true;
-
-// let some: true extends true ? true : false;
-// let nestedConditional: true extends (true extends false ? true : false) ? true : false = false;
-
-// type Callback = () => void;
-// let callback: Callback = () => { console.log('Callback called'); }
-
-// let neverFunction: () => never = () => { throw new Error('Never returns'); };
-
-// let a: { [key: string]: number } = { 'hey': 123, 'there': 456 };
-
-// let identityValue: number = identityFunction<number>(42);
-
-// type Point = { x: number; y: number; };
-// function logPoint(p: Point): void { console.log(`x: ${p.x}, y: ${p.y}`); }
-// type PartialPoint = Partial<Point>;
-// let partialPoint: PartialPoint = { x: 10 };
-// type RequiredPoint = Required<PartialPoint>;
-// let requiredPoint: RequiredPoint = { x: 10, y: 20 };
-
-// interface Shape { area(): number; }
-// interface Another {}
-// class Circle implements Shape {
-//   constructor(public radius: number) {}
-//   area(): number { return Math.PI * this.radius * this.radius; }
-//   lmao(some?: number) { return some; }
-// }
-
-// TODO: deal with the things below
-
-// let convertToArray: <T>(x: T | T[]) => T[] = x => Array.isArray(x) ? x : [x];
-
-// const lol: string = "123";
-// function test(a: number, b?: string) {}
-
-// const theKey = 'lol';
-// type SomeType = {
-//   [theKey]: number
-// };
-
-
-// class OtherIndexSignature {
-//   knownProp: number = 1;
-//   [key: string]: number | string;
-//   [key: number]: string;
-// }
-// (new OtherIndexSignature())[lol]
-
-// type ElementType<T> = T extends (infer U)[] ? U : never;
-// type T8 = ElementType<string[]>;
-
-// const sym = Symbol();
-// type T7 = { [n: number]: string, [sym]: number }[typeof sym];
-// type T7 = { [n: number]: string, [sym]: number }[typeof sym];

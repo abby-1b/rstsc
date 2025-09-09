@@ -1,11 +1,19 @@
 use phf::{phf_map, phf_set};
 use crate::{
   ast::{
-    ASTNode, ArrowFunctionDefinition, ClassDefinition, EnumDeclaration, FunctionDefinition, InterfaceDeclaration, ObjectProperty
-  }, ast_common::{Modifier, ModifierList, VariableDefType, ACCESSIBILITY_MODIFIERS, MODIFIERS}, declaration::{Declaration, DeclarationTyped}, error_type::CompilerError, operations::{get_operator_binding_power, ExprType}, small_vec::SmallVec, spread::Spread, tokenizer::{Token, TokenList, TokenType}, types::{
-    get_comma_separated_types_until, get_generics,
-    get_key_value_or_computed_property, get_optional_generics, get_type,
-    try_get_type, KVMapOrComputedProp, Type
+    ASTNode, ArrowFunctionDefinition, ClassDefinition, EnumDeclaration, FunctionDefinition, GetterSetter, ImportDefinition, IndividualImport, InterfaceDeclaration, ObjectProperty
+  },
+  ast_common::{
+    Modifier, ModifierList, VariableDefType, ACCESSIBILITY_MODIFIERS, MODIFIERS
+  },
+  declaration::{ComputableDeclarationName, Declaration, DeclarationComputable, DeclarationTyped},
+  error_type::CompilerError,
+  operations::{get_operator_binding_power, ExprType},
+  small_vec::SmallVec,
+  spread::Spread,
+  tokenizer::{Token, TokenList, TokenType},
+  types::{
+    get_comma_separated_types_until, get_generics, get_optional_generics, get_type, parse_object_square_bracket, try_get_type, ObjectSquareBracketReturn, Type
   }
 };
 
@@ -81,6 +89,7 @@ fn get_single_statement<'a, 'b>(
   else if let Some(function_declaration) = handle_function_declaration(tokens)? { function_declaration }
   else if let Some(class_declaration)    = handle_class_declaration(tokens)? { class_declaration }
   else if let Some(modifiers)            = handle_modifiers(tokens)? { modifiers }
+  else if let Some(import)               = handle_import(tokens)? { import }
   else if let Some(other_statements)     = handle_other_statements(tokens)? { other_statements }
   else if let Some(type_declaration)     = handle_type_declaration(tokens)? { type_declaration }
   else if let Some(result_enum)          = handle_enum(tokens, false)? { result_enum }
@@ -155,14 +164,14 @@ fn get_declaration<'a, 'b>(
   tokens: &'b mut TokenList<'a>
 ) -> Result<Declaration, CompilerError<'a>> where 'a: 'b {
   tokens.ignore_whitespace();
-  let name_token = tokens.consume();
-  if !name_token.is_identifier() {
-    return Err(CompilerError {
-      message: "Expected identifier".to_owned(),
-      token: name_token
-    })
-  }
-  let name = name_token.value.to_owned();
+  let name = tokens.consume_type(TokenType::Identifier)?.value.to_owned();
+  let (typ, value) = get_declaration_after_name(tokens)?;
+  Ok(Declaration::new(name, typ, value))
+}
+
+fn get_declaration_after_name<'a, 'b>(
+  tokens: &'b mut TokenList<'a>,
+) -> Result<(Type, Option<ASTNode>), CompilerError<'a>> where 'a: 'b {
   let typ = if tokens.peek_str() == "?" {
     let conditional_token = tokens.consume();
     tokens.ignore_whitespace();
@@ -186,7 +195,8 @@ fn get_declaration<'a, 'b>(
   } else {
     None
   };
-  Ok(Declaration::new(name, typ, value))
+
+  Ok((typ, value))
 }
 
 /// Gets multiple named declarations, with or without values.
@@ -292,6 +302,79 @@ fn handle_control_flow<'a>(
   }))
 }
 
+/// Handles import statements
+fn handle_import<'a>(
+  tokens: &mut TokenList<'a>
+) -> Result<Option<ASTNode>, CompilerError<'a>> {
+  if tokens.peek_str() != "import" {
+    return Ok(None);
+  }
+  tokens.skip_unchecked();
+  tokens.ignore_whitespace();
+
+  let mut has_distinction = false;
+
+  // Default imports `import Defaults from '...'`
+  let default_alias = if tokens.peek().is_identifier() {
+    let alias = Some(tokens.consume().value.to_owned());
+    tokens.ignore_whitespace();
+    if tokens.peek_str() == "," { tokens.skip_unchecked(); }
+    has_distinction = true;
+    alias
+  } else {
+    None
+  };
+  tokens.ignore_whitespace();
+
+  // Wildcard imports `import * as Identifier from '...'`
+  let wildcard = if tokens.peek_str() == "*" {
+    tokens.skip_unchecked();
+    tokens.ignore_whitespace();
+    tokens.skip("as")?;
+    tokens.ignore_whitespace();
+    has_distinction = true;
+    Some(tokens.consume_type(TokenType::Identifier)?.value.to_owned())
+  } else {
+    None
+  };
+  tokens.ignore_whitespace();
+
+  // Individual imports `import { A, B } from '...'`
+  let mut individual = SmallVec::new();
+  if tokens.peek_str() == "{" {
+    tokens.skip_unchecked();
+    tokens.ignore_whitespace();
+    while !tokens.is_done() && tokens.peek_str() != "}" {
+      let name = tokens.consume_type(TokenType::Identifier)?.value.to_owned();
+      let alias = if tokens.peek_str() == "as" {
+        tokens.skip_unchecked();
+        tokens.ignore_whitespace();
+        Some(tokens.consume_type(TokenType::Identifier)?.value.to_owned())
+      } else { None };
+      tokens.ignore_whitespace();
+      if tokens.peek_str() == "," { tokens.skip_unchecked(); }
+      tokens.ignore_whitespace();
+      individual.push(IndividualImport { name, alias });
+    }
+    tokens.skip("}")?;
+    has_distinction = true;
+  }
+  tokens.ignore_whitespace();
+
+  if has_distinction {
+    tokens.skip("from")?;
+    tokens.ignore_whitespace();
+  }
+  let source = tokens.consume_type(TokenType::String)?;
+
+  Ok(Some(ASTNode::StatementImport { inner: Box::new(ImportDefinition {
+    default_alias,
+    wildcard,
+    individual,
+    source: source.value.to_owned()
+  }) }))
+}
+
 /// Handles `return`, `break`, `continue`, and `throw`
 fn handle_other_statements<'a>(
   tokens: &mut TokenList<'a>
@@ -300,7 +383,7 @@ fn handle_other_statements<'a>(
     "return",
     "break",
     "continue",
-    "throw"
+    "throw",
   ];
   if !STATEMENT_NAMES.contains(&tokens.peek_str()) {
     return Ok(None);
@@ -392,7 +475,7 @@ fn get_function_after_name<'a, 'b>(
 /// Similar to `get_function_after_name`, gets a class constructor.
 fn get_constructor_after_name<'a, 'b>(
   tokens: &'b mut TokenList<'a>,
-  declarations: &mut SmallVec<(ModifierList, Declaration)>
+  declarations: &mut SmallVec<(DeclarationComputable, ModifierList)>
 ) -> Result<FunctionDefinition, CompilerError<'a>> where 'a: 'b {
   tokens.ignore_whitespace();
 
@@ -417,7 +500,7 @@ fn get_constructor_after_name<'a, 'b>(
       spread.try_set(tokens, params.len_natural())?;
       params.push(declaration.clone());
       declaration.clear_value();
-      declarations.push((modifiers, declaration.clone()));
+      declarations.push((DeclarationComputable::from(&declaration), modifiers));
       set_properties.push(ASTNode::InfixOpr {
         left: Box::new(ASTNode::InfixOpr {
           left: Box::new(ASTNode::ExprIdentifier { name: "this".to_owned() }),
@@ -505,7 +588,7 @@ fn get_class_expression<'a, 'b>(
 
   // Classes change the way things are parsed!
   let mut kv_maps = SmallVec::new();
-  let mut declarations = SmallVec::new();
+  let mut declarations: SmallVec<(DeclarationComputable, ModifierList)> = SmallVec::new();
   let mut methods = SmallVec::new();
 
   tokens.ignore_whitespace();
@@ -523,17 +606,33 @@ fn get_class_expression<'a, 'b>(
     let checkpoint = tokens.get_checkpoint();
 
     // Get the name (might be a property or a method, we don't know yet)
+
     if tokens.peek_str() == "[" {
-      tokens.ignore_checkpoint(checkpoint);
       // Key-value map!;
+      tokens.ignore_checkpoint(checkpoint);
       // TODO: make this accept more than single-token computed properties
       // TODO: fix computed properties
-      match get_key_value_or_computed_property(tokens)? {
-        KVMapOrComputedProp::KVMap(kv_map) => {
+      let init_token = tokens.peek().clone();
+      match parse_object_square_bracket(tokens)? {
+        ObjectSquareBracketReturn::KVMap(kv_map) => {
           kv_maps.push(kv_map);
         }
-        KVMapOrComputedProp::ComputedProp(..) => {
-          todo!();
+        ObjectSquareBracketReturn::ComputedProp(name) => {
+          let (typ, value) = get_declaration_after_name(tokens)?;
+          declarations.push((
+            DeclarationComputable {
+              name: ComputableDeclarationName::new_computed(name),
+              typ: typ,
+              value
+            },
+            modifiers.clone()
+          ));
+        }
+        ObjectSquareBracketReturn::MappedType(..) => {
+          return Err(CompilerError {
+            message: "Mapped types are not allowed in class bodies".to_owned(),
+            token: init_token
+          })
         }
       }
       
@@ -547,6 +646,16 @@ fn get_class_expression<'a, 'b>(
       tokens.ignore_whitespace();
       continue;
     }
+
+    // Check for getter/setter
+    let is_getter = tokens.peek_str() == "get";
+    let is_setter = tokens.peek_str() == "set";
+    if is_getter || is_setter {
+      tokens.skip_unchecked();
+      tokens.ignore_whitespace();
+    }
+
+    // TODO: replace below with `let name = tokens.consume_type(TokenType::Identifier)?;`
     let name = tokens.consume();
     if !name.is_identifier() {
       tokens.ignore_checkpoint(checkpoint);
@@ -561,14 +670,21 @@ fn get_class_expression<'a, 'b>(
       // Normal property
       tokens.restore_checkpoint(checkpoint);
 
+      if is_getter || is_setter {
+        return Err(CompilerError {
+          message: "Getters and setters must be followed by a method body!".to_owned(),
+          token: tokens.peek().clone()
+        });
+      }
+
       // Get the declaration
       let gotten_declarations = get_multiple_declarations(tokens, false)?.0;
 
       // Add the declaration
       for declaration in gotten_declarations {
         declarations.push((
-          modifiers.clone(),
-          declaration
+          DeclarationComputable::from(&declaration),
+          modifiers.clone()
         ));
       }
     } else {
@@ -585,13 +701,23 @@ fn get_class_expression<'a, 'b>(
           Some(name.value.to_string())
         )?
       };
+
       function.modifiers.flags |= modifiers.flags;
       if !function.modifiers.has(Modifier::Public) &&
         !function.modifiers.has(Modifier::Private) &&
         !function.modifiers.has(Modifier::Protected) {
         function.modifiers.set(Modifier::Public);
       }
-      methods.push(function);
+      methods.push((
+        function,
+        if is_getter {
+          GetterSetter::Getter
+        } else if is_setter {
+          GetterSetter::Setter
+        } else {
+          GetterSetter::None
+        }
+      ));
     }
 
     tokens.ignore_whitespace();
@@ -852,13 +978,19 @@ fn handle_interface<'a>(
     } else if next == "[" {
       // This could be either a Key-value map,
       // or a computed property
-      match get_key_value_or_computed_property(tokens)? {
-        KVMapOrComputedProp::KVMap(kv_map) => key_value.push(kv_map),
-        KVMapOrComputedProp::ComputedProp(value) => {
+      match parse_object_square_bracket(tokens)? {
+        ObjectSquareBracketReturn::KVMap(kv_map) => key_value.push(kv_map),
+        ObjectSquareBracketReturn::ComputedProp(value) => {
           named_parts.push(DeclarationTyped::computed(
             value,
             try_get_type(tokens)?.unwrap_or(Type::Unknown)
           ))
+        },
+        ObjectSquareBracketReturn::MappedType(..) => {
+          return Err(CompilerError {
+            message: "Mapped types are not allowed in interface bodies".to_owned(),
+            token: Token::from("")
+          })
         }
       }
     } else {
@@ -1251,7 +1383,6 @@ pub fn get_expression<'a, 'b>(
         } else if next.value == "function" {
           tokens.skip_unchecked(); // Skip "function"
           let function = get_function_after_name(tokens, None)?;
-          dbg!(&function);
           ASTNode::FunctionDefinition { inner: Box::new(function) }
         } else {
           let binding_power = get_operator_binding_power(
@@ -1270,16 +1401,13 @@ pub fn get_expression<'a, 'b>(
               let checkpoint = tokens.get_checkpoint();
               let mut paren_nesting = 1;
               tokens.skip_unchecked(); // Skip `(`
-              let mut skipped_tokens = 0;
               while paren_nesting != 0 {
-                skipped_tokens += 1;
                 match tokens.consume().value {
                   "(" => paren_nesting += 1,
                   ")" => paren_nesting -= 1,
                   _ => {}
                 }
               }
-              dbg!(skipped_tokens);
               tokens.ignore_whitespace();
               let is_arrow_function = ["=>", ":"].contains(&tokens.peek_str());
               tokens.restore_checkpoint(checkpoint);

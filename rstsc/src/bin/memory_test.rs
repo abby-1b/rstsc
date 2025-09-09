@@ -11,7 +11,11 @@ static ALLOCATOR: Cap<alloc::System> = Cap::new(alloc::System, usize::MAX);
 const SOURCE_TEST: &str = include_str!("./speed.ts");
 
 fn main() {
+  // ALLOCATOR.set_limit(50128).unwrap();
+
   let start_mem = ALLOCATOR.allocated();
+  println!("start: {} KiB", (start_mem as f32 / 10.24).round() / 100.0);
+
   // for _ in 0..10 { let _ = do_ast(); }
   let ast = do_ast();
   // dbg!(&ast);
@@ -26,7 +30,6 @@ fn main() {
 
   let allocated = ALLOCATOR.allocated() - start_mem;
   println!("final: {} KiB", (allocated as f32 / 10.24).round() / 100.0);
-
 }
 
 fn do_ast() -> Result<ASTNode, ()> {
@@ -34,10 +37,17 @@ fn do_ast() -> Result<ASTNode, ()> {
   let mut tokens = TokenList::from(SOURCE_TEST);
 
   let ast = get_block(&mut tokens);
+
   if ast.is_err() {
     ast.err().unwrap().throw(tokens);
     return Err(());
   }
 
   Ok(ast.unwrap())
+}
+
+#[inline(never)]
+fn in_between(start_mem: usize) {
+  let total_allocated = ALLOCATOR.total_allocated() - start_mem;
+  println!("  in-between: {} KiB", (total_allocated as f32 / 10.24).round() / 100.0);
 }

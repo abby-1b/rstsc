@@ -80,11 +80,13 @@ pub struct ModifierList {
 
 impl ModifierList {
   /// Sets the modifier in the list
+  #[inline]
   pub fn set(&mut self, modifier: Modifier) {
     self.flags |= modifier as u8;
   }
 
   /// Checks if the modifier exists within the list
+  #[inline]
   pub fn has(&self, modifier: Modifier) -> bool {
     self.flags & modifier as u8 != 0
   }

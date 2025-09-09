@@ -6,7 +6,7 @@ use crate::ast::ASTNode;
 use crate::declaration::{ComputableDeclarationName, DeclarationTyped};
 use crate::error_type::CompilerError;
 use crate::operations::{get_type_operator_binding_power, ExprType};
-use crate::parser::{self, INVERSE_GROUPINGS};
+use crate::parser;
 use crate::small_vec::{SizeType, SmallVec};
 use crate::tokenizer::{Token, TokenList, TokenType};
 
@@ -45,9 +45,10 @@ pub struct KeyValueMap {
 }
 
 #[derive(Debug)]
-pub enum KVMapOrComputedProp {
+pub enum ObjectSquareBracketReturn {
   KVMap(KeyValueMap),
-  ComputedProp(ASTNode)
+  ComputedProp(ASTNode),
+  MappedType(Type)
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
@@ -100,6 +101,14 @@ pub enum Type {
   Object {
     key_value: SmallVec<KeyValueMap>,
     parts: SmallVec<DeclarationTyped>
+  },
+
+  /// A mapped object (eg. `{ [K in keyof T]: ... }`)
+  /// Different from `Object` because mapped objects can't have specific keys
+  Mapped {
+    key_name: String,
+    key_type: Box<Type>,
+    value_type: Box<Type>,
   },
 
   /// Used for type guards `x is string`
@@ -307,59 +316,6 @@ pub fn try_get_type<'a, 'b>(
   }
 }
 
-pub fn get_key_value_or_computed_property<'a, 'b>(
-  tokens: &'b mut TokenList<'a>
-) -> Result<KVMapOrComputedProp, CompilerError<'a>> where 'a: 'b {
-  if tokens.peek_str() != "[" {
-    return Err(CompilerError {
-      message: "Expected key-value type!".to_string(),
-      token: tokens.consume()
-    });
-  }
-
-  tokens.skip_unchecked(); // Skip "["
-  tokens.ignore_whitespace();
-
-  let checkpoint = tokens.get_checkpoint();
-  
-  // Although this is usually "key", it can be any identifier!
-  let key_token = tokens.consume();
-  if !key_token.is_identifier() {
-    return Err(CompilerError {
-      message: "Expected identifier for \"[key: type]: type\" declaration".to_string(),
-      token: key_token
-    });
-  }
-
-  tokens.ignore_whitespace();
-  if tokens.peek_str() != ":" {
-    // It's computed!
-    tokens.restore_checkpoint(checkpoint);
-    let computed = parser::get_expression(tokens, 0)?;
-    tokens.skip("]")?;
-    return Ok(
-      KVMapOrComputedProp::ComputedProp(computed)
-    )
-  } else {
-    tokens.ignore_checkpoint(checkpoint);
-  }
-  tokens.skip(":")?;
-
-  let key_type = get_expression(tokens, 0)?;
-
-  tokens.ignore_whitespace();
-  tokens.skip("]")?;
-
-  tokens.ignore_whitespace();
-  tokens.skip(":")?;
-
-  let value_type = get_expression(tokens, 0)?;
-
-  Ok(KVMapOrComputedProp::KVMap(
-    KeyValueMap { key: key_type, value: value_type }
-  ))
-}
-
 fn parse_infix<'a, 'b>(
   mut left: Type,
   tokens: &'b mut TokenList<'a>,
@@ -400,14 +356,12 @@ fn parse_infix<'a, 'b>(
         conditional
       })
     }
-    "[" | "<" => {
-      // Type indexing and generics
-      let group_start = infix_opr.value.to_string();
-      let group_end = INVERSE_GROUPINGS[infix_opr.value];
+    "[" => {
+      // Type indexing
 
       let mut arguments: SmallVec<Type> = SmallVec::new();
       tokens.ignore_whitespace();
-      if tokens.peek_str() != group_end {
+      if tokens.peek_str() != "]" {
         loop {
           tokens.ignore_whitespace();
           arguments.push(get_expression(tokens, 0)?);
@@ -417,44 +371,48 @@ fn parse_infix<'a, 'b>(
           tokens.skip_unchecked(); // Skip comma
         }
       }
+      tokens.skip("]")?;
 
-      if group_start == "<" && tokens.peek_str().len() != 1 {
-        // Some bunched-up closing brackets (eg. `>>`)
-        // This happens due to bit-shifting using this token.
-
-        let first_char = tokens.consume_single_character();
-        if first_char == ">" {
-          // Skipped!
-        } else {
-          // Wrong character!
-          return Err(CompilerError::expected("<", Token::from(first_char)));
-        }
+      if arguments.is_empty() {
+        // Normal array notation
+        Ok(Type::Array(Box::new(left)))
+      } else if arguments.len() == 1 {
+        Ok(Type::Index {
+          callee: Box::new(left),
+          property: Box::new(arguments.pop().unwrap())
+        })
       } else {
-        tokens.skip(group_end)?;
+        Err(CompilerError {
+          message: format!(
+            "Type indices need exactly one argument, found {}",
+            arguments.len()
+          ),
+          token: infix_opr
+        })
       }
+    }
+    "<" => {
+      // panic!("GETTING GENERICS!!!!!!!!!!!");
+      // let group_start = infix_opr.value.to_string();
+      // if group_start == "<" && tokens.peek_str().len() != 1 {
+      //   // Some bunched-up closing brackets (eg. `>>`)
+      //   // This happens due to bit-shifting using this token.
 
-      if group_start == "[" {
-        if arguments.is_empty() {
-          // Normal array notation
-          Ok(Type::Array(Box::new(left)))
-        } else if arguments.len() == 1 {
-          Ok(Type::Index {
-            callee: Box::new(left),
-            property: Box::new(arguments.pop().unwrap())
-          })
-        } else {
-          Err(CompilerError {
-            message: format!(
-              "Type indices need exactly one argument, found {}",
-              arguments.len()
-            ),
-            token: infix_opr
-          })
-        }
-      } else {
-        // Generic arguments
-        Ok(Type::WithArgs(Box::new(left), arguments))
-      }
+      //   let first_char = tokens.consume_single_character();
+      //   if first_char == ">" {
+      //     // Skipped!
+      //   } else {
+      //     // Wrong character!
+      //     return Err(CompilerError::expected("<", Token::from(first_char)));
+      //   }
+      // } else {
+      //   tokens.skip(group_end)?;
+      // }
+
+      // Ok(Type::WithArgs(Box::new(left), arguments))
+
+      Ok(Type::WithArgs(Box::new(left), get_generics(tokens)?))
+      // Ok()
     }
     "extends" => {
       // This could be a normal `extends` (like generics), or a conditional
@@ -571,54 +529,8 @@ fn parse_prefix<'a, 'b>(
   let prefix_opr = tokens.consume();
   match prefix_opr.value {
     "{" => {
-      // Dictionary object
-      let mut obj_parts = SmallVec::new();
-      let mut kv_maps = SmallVec::new();
-      tokens.ignore_commas();
-      loop {
-        // TODO: Handle `[key: string]: number`
-
-        tokens.ignore_whitespace();
-        if tokens.peek_str() == "}" {
-          tokens.skip_unchecked();
-          break;
-        }
-        
-        let property = if tokens.peek_str() == "[" {
-          let kv_or_cmp = get_key_value_or_computed_property(tokens)?;
-          match kv_or_cmp {
-            KVMapOrComputedProp::KVMap(kv_map) => {
-              kv_maps.push(kv_map);
-              continue;
-            }
-            KVMapOrComputedProp::ComputedProp(value) => {
-              ComputableDeclarationName::new_computed(value)
-            }
-          }
-        } else {
-          ComputableDeclarationName::new_named(tokens.consume().value.to_string())
-        };
-        
-        // Get property type (fallback to `any`)
-        tokens.ignore_whitespace();
-        let property_type = if tokens.peek_str() == ":" {
-          tokens.skip_unchecked(); // Skip ":"
-          get_expression(tokens, precedence)?
-        } else {
-          Type::Any
-        };
-
-        // Push
-        obj_parts.push(DeclarationTyped::from_parts(property, property_type));
-
-        // Ignore commas / exit
-        tokens.ignore_commas();
-      }
-
-      Ok(Type::Object {
-        key_value: kv_maps,
-        parts: obj_parts,
-      })
+      // Curly brace types (Objects or Mapped types)
+      parse_curly_braces(tokens, precedence)
     }
     "[" => {
       // Tuple
@@ -781,6 +693,161 @@ fn parse_prefix<'a, 'b>(
   }
 }
 
+fn parse_curly_braces<'a, 'b>(
+  tokens: &'b mut TokenList<'a>,
+  precedence: u8
+) -> Result<Type, CompilerError<'a>> where 'a: 'b {
+  let mut obj_parts = SmallVec::new();
+  let mut kv_maps = SmallVec::new();
+  let mut mapped_type: Option<Type> = None;
+
+  tokens.ignore_commas();
+  loop {
+    tokens.ignore_whitespace();
+    if tokens.peek_str() == "}" {
+      tokens.skip_unchecked();
+      break;
+    }
+    
+    let property = if tokens.peek_str() == "[" {
+      let osbr = parse_object_square_bracket(tokens)?;
+      match osbr {
+        ObjectSquareBracketReturn::KVMap(kv_map) => {
+          kv_maps.push(kv_map);
+          continue;
+        }
+        ObjectSquareBracketReturn::ComputedProp(value) => {
+          ComputableDeclarationName::new_computed(value)
+        }
+        ObjectSquareBracketReturn::MappedType(typ) => {
+          if mapped_type.is_some() {
+            return Err(CompilerError {
+              message: "Can't have multiple mapped types in one object.".to_string(),
+              token: tokens.consume()
+            });
+          }
+          mapped_type = Some(typ.clone());
+          continue;
+        }
+      }
+    } else {
+      ComputableDeclarationName::new_named(tokens.consume().value.to_string())
+    };
+    
+    // Get property type (fallback to `any`)
+    tokens.ignore_whitespace();
+    let property_type = if tokens.peek_str() == ":" {
+      tokens.skip_unchecked(); // Skip ":"
+      get_expression(tokens, precedence)?
+    } else {
+      Type::Any
+    };
+
+    // Push
+    obj_parts.push(DeclarationTyped::from_parts(property, property_type));
+
+    // Ignore commas / exit
+    tokens.ignore_commas();
+  }
+
+  if mapped_type .is_some() {
+    return Ok(mapped_type.unwrap());
+  }
+
+  Ok(Type::Object {
+    key_value: kv_maps,
+    parts: obj_parts,
+  })
+}
+
+pub fn parse_object_square_bracket<'a, 'b>(
+  tokens: &'b mut TokenList<'a>
+) -> Result<ObjectSquareBracketReturn, CompilerError<'a>> where 'a: 'b {
+  tokens.skip("[")?;
+  tokens.ignore_whitespace();
+
+  let checkpoint = tokens.get_checkpoint();
+  
+  // Although this is usually "key", it can be any identifier!
+  let key_token = tokens.consume_type(TokenType::Identifier)?;
+  tokens.ignore_whitespace();
+
+  if tokens.peek_str() == "in" {
+    tokens.ignore_checkpoint(checkpoint);
+    return get_kvc_complex_key(key_token, tokens);
+  }
+
+  tokens.ignore_whitespace();
+  if tokens.peek_str() != ":" {
+    // It's computed!
+    tokens.restore_checkpoint(checkpoint);
+    let computed = parser::get_expression(tokens, 0)?;
+    tokens.skip("]")?;
+    return Ok(
+      ObjectSquareBracketReturn::ComputedProp(computed)
+    )
+  } else {
+    tokens.ignore_checkpoint(checkpoint);
+  }
+  tokens.skip(":")?;
+
+  let key_type = get_expression(tokens, 0)?;
+
+  tokens.ignore_whitespace();
+  tokens.skip("]")?;
+
+  tokens.ignore_whitespace();
+  let is_optional = if tokens.peek_str() == "?" {
+    // Optional key
+    tokens.skip_unchecked();
+    tokens.ignore_whitespace();
+    true
+  } else { false };
+  tokens.skip(":")?;
+
+  let mut value_type = get_expression(tokens, 0)?;
+  if is_optional {
+    // Make value type also include `undefined`
+    value_type.union(Type::Void);
+  }
+
+  Ok(ObjectSquareBracketReturn::KVMap(
+    KeyValueMap { key: key_type, value: value_type }
+  ))
+}
+
+fn get_kvc_complex_key<'a, 'b>(
+  key_token: Token<'a>,
+  tokens: &'b mut TokenList<'a>
+) -> Result<ObjectSquareBracketReturn, CompilerError<'a>> where 'a: 'b {
+  let key_name = key_token.value.to_string();
+  tokens.skip("in")?;
+  tokens.ignore_whitespace();
+  let key_type = get_expression(tokens, 0)?;
+  tokens.ignore_whitespace();
+  tokens.skip("]")?;
+  tokens.ignore_whitespace();
+  let is_optional = if tokens.peek_str() == "?" {
+    // Optional mapped type
+    tokens.skip_unchecked();
+    tokens.ignore_whitespace();
+    true
+  } else { false };
+  tokens.skip(":")?;
+  let mut value_type = get_expression(tokens, 0)?;
+  if is_optional {
+    // Make value type also include `undefined`
+    value_type.union(Type::Void);
+  }
+  return Ok(ObjectSquareBracketReturn::MappedType(
+    Type::Mapped {
+      key_name,
+      key_type: Box::new(key_type),
+      value_type: Box::new(value_type)
+    }
+  ));
+}
+
 fn get_expression<'a, 'b>(
   tokens: &'b mut TokenList<'a>,
   precedence: u8
@@ -847,8 +914,8 @@ fn get_expression<'a, 'b>(
     if next.typ == TokenType::EndOfFile { break; }
 
     // println!(
-    //     "Handling infix/postfix (w/ min precedence {}) in type: {:?}",
-    //     precedence, next
+    //   "Handling infix/postfix (w/ min precedence {}) in type: {:?}",
+    //   precedence, next
     // );
 
     // Handle infix
@@ -912,9 +979,13 @@ pub fn get_generics<'a, 'b>(
   let generics = get_comma_separated_types_until(
     tokens, &[ ">", ")", ";" ]
   )?;
-  if tokens.peek_str() != ">" {
+  if !tokens.peek_str().starts_with(">") {
     return Err(CompilerError::expected(">", tokens.consume()));
   }
-  tokens.skip_unchecked(); // Skip ">"
+  if tokens.peek_str().len() > 1 {
+    let _ = tokens.consume_single_character();
+  } else {
+    tokens.skip_unchecked(); // Skip ">"
+  }
   Ok(generics)
 }

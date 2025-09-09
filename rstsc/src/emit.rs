@@ -1,4 +1,4 @@
-use crate::{ast::{ASTNode, FunctionDefinition, ObjectProperty}, declaration::Declaration, small_vec::SmallVec, spread::Spread};
+use crate::{ast::{ASTNode, FunctionDefinition, ObjectProperty}, declaration::{Declaration, DeclarationComputable}, small_vec::SmallVec, spread::Spread};
 
 static NO_SPREAD: Spread = Spread::new();
 
@@ -17,8 +17,8 @@ impl Emitter {
   }
 
   /// Output the same string, no matter if the mode is compact or not
-  pub fn out(&mut self, same: &str, can_put_semicolon: bool) {
-    self.out_diff(same, same, can_put_semicolon);
+  pub fn out(&mut self, out: &str, can_put_semicolon: bool) {
+    self.out_diff(out, out, can_put_semicolon);
   }
 
   /// Outputs different strings depending on if compact mode is on or off
@@ -139,6 +139,47 @@ fn emit_single(
       emit_declarations(defs, NO_SPREAD.clone(), emitter);
       emitter.out("", true);
     }
+    ASTNode::StatementImport { inner } => {
+      emitter.out("import ", false);
+      let mut parts =
+        inner.default_alias.is_some() as i8 +
+        inner.wildcard.is_some() as i8 +
+        (inner.individual.len() > 0) as i8;
+      let has_distinction = parts > 0;
+      if let Some(default_alias) = &inner.default_alias {
+        emitter.out(default_alias, false);
+        if parts > 1 {
+          emitter.out_diff(", ", ",", false);
+          parts -= 1;
+        }
+      }
+
+      if let Some(wildcard) = &inner.wildcard {
+        emitter.out("* as ", false);
+        emitter.out(&wildcard, false);
+        if parts > 1 {
+          emitter.out_diff(", ", ",", false);
+          // parts -= 1;
+        }
+      }
+
+      if inner.individual.len() > 0 {
+        emitter.out_diff("{ ", "{", false);
+        emitter.emit_vec(&inner.individual, |i, emitter| {
+          emitter.out(&i.name, false);
+          if let Some(alias) = &i.alias {
+            emitter.out(" as ", false);
+            emitter.out(&alias, false);
+          }
+        }, ", ", ",");
+        emitter.out_diff(" }", "}", false);
+      }
+
+      if has_distinction {
+        emitter.out(" from ", false);
+      }
+      emitter.out(&inner.source, true);
+    }
     ASTNode::StatementIf { condition, body, alternate } => {
       let start_line = emitter.curr_line();
 
@@ -207,7 +248,7 @@ fn emit_single(
       if inner.body.is_some() {
         emit_function_definition(
           &*inner,
-          true,
+          "function",
           emitter
         );
       }
@@ -244,14 +285,18 @@ fn emit_single(
       emitter.endline();
       emitter.indent();
 
-      for (decl_modifiers, declaration) in inner.declarations.iter() {
-        emitter.out(&decl_modifiers.emit(true), false);
-        emit_single_declaration(&declaration, emitter);
+      for (declaration, modifiers) in inner.declarations.iter() {
+        emitter.out(&modifiers.emit(true), false);
+        emit_single_declaration_computable(&declaration, emitter);
         emitter.endline();
       }
-      for method in inner.methods.iter() {
+      for (method, getter_setter) in inner.methods.iter() {
         if method.body.is_none() { continue; }
-        emit_function_definition(&method, false, emitter);
+        emit_function_definition(
+          &method,
+          getter_setter.as_str(),
+          emitter
+        );
         emitter.endline();
       }
 
@@ -415,7 +460,29 @@ fn emit_declarations(
   }, ", ", ",");
 }
 
-#[inline]
+fn emit_single_declaration_computable(
+  declaration: &DeclarationComputable,
+  emitter: &mut Emitter
+) {
+  if declaration.name.is_named() {
+    emitter.out(
+      unsafe { &declaration.name.get_named_unchecked() },
+      true
+    );
+  } else {
+    emitter.out("[", false);
+    emit_single(
+      unsafe { &declaration.name.get_computed_unchecked() },
+      emitter
+    );
+    emitter.out("]", false);
+  }
+  if let Some(value) = &declaration.value {
+    emitter.out_diff(" = ", "=", false);
+    emit_single(value, emitter);
+  }
+}
+
 fn emit_single_declaration(
   declaration: &Declaration,
   emitter: &mut Emitter
@@ -429,13 +496,14 @@ fn emit_single_declaration(
 
 fn emit_function_definition(
   function: &FunctionDefinition,
-  function_statement: bool,
+  before_name_statement: &str,
   emitter: &mut Emitter
 ) {
   // Head
   emitter.out(&function.modifiers.emit(true), false);
-  if function_statement {
-    emitter.out("function ", false);
+  if before_name_statement.len() > 0 {
+    emitter.out(before_name_statement, false);
+    emitter.out(" ", false);
   }
   if let Some(name) = &function.name {
     emitter.out(&name, false);
