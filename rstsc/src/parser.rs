@@ -6,7 +6,7 @@ use crate::{
   ast_common::{
     DestructurePattern, Modifier, ModifierList, VariableDefType, ACCESSIBILITY_MODIFIERS, MODIFIERS
   },
-  declaration::{ComputableDeclarationName, Declaration, DeclarationComputable, DeclarationTyped, SingleVariableDeclaration},
+  declaration::{ComputableDeclarationName, Declaration, DeclarationComputable, DeclarationTyped, DestructurableDeclaration},
   error_type::CompilerError,
   operations::{get_operator_binding_power, ExprType},
   small_vec::SmallVec,
@@ -28,6 +28,8 @@ pub static INVERSE_GROUPINGS: phf::Map<&'static str, &'static str> = phf_map! {
   "}" => "{",
   ">" => "<",
 };
+
+const VARIABLE_DECLARATIONS: &[&str] = &[ "var", "let", "const" ];
 
 pub static ANONYMOUS_CLASS_NAME: &str = "\0";
 
@@ -114,13 +116,11 @@ fn handle_blocks<'a>(
 fn handle_vars<'a, 'b>(
   tokens: &'b mut TokenList<'a>
 ) -> Result<Option<ASTNode>, CompilerError<'a>> where 'a: 'b {
-  const VARIABLE_DECLARATIONS: &[&str] = &[ "var", "let", "const" ];
   if !VARIABLE_DECLARATIONS.contains(&tokens.peek_str()) {
     return Ok(None);
   }
 
   let def_type = get_variable_def_type(tokens)?;
-  tokens.ignore_whitespace();
 
   if matches!(def_type, VariableDefType::Const) && tokens.peek_str() == "enum" {
     // Const enums
@@ -128,7 +128,7 @@ fn handle_vars<'a, 'b>(
   }
 
   // Get the variable definitions
-  let defs = get_multiple_variable_declarations(tokens)?;
+  let (defs, _) = get_multiple_destructurable_declarations(tokens, false)?;
 
   Ok(Some(ASTNode::VariableDeclaration {
     modifiers: Default::default(),
@@ -142,12 +142,13 @@ fn get_variable_def_type<'b>(
 ) -> Result<VariableDefType, CompilerError<'b>> {
   // Get the header
   let header_token = tokens.consume();
+  tokens.ignore_whitespace();
   match header_token.value {
     "var"   => Ok(VariableDefType::Var),
     "let"   => Ok(VariableDefType::Let),
     "const" => Ok(VariableDefType::Const),
     other => Err(CompilerError {
-      message: format!("Unexpected var declaration: {}", other),
+      message: format!("Unexpected variable declaration: {}", other),
       token: header_token
     })
   }
@@ -206,6 +207,7 @@ fn get_multiple_declarations<'a, 'b>(
   tokens: &'b mut TokenList<'a>,
   allow_spread: bool
 ) -> Result<(SmallVec<Declaration>, Spread), CompilerError<'a>> where 'a: 'b {
+  // TODO: Switch `Spread` for boolean detailing if spread exists or not!
   tokens.ignore_whitespace();
   let mut declarations = SmallVec::new();
   let mut spread = Spread::new();
@@ -218,45 +220,35 @@ fn get_multiple_declarations<'a, 'b>(
       spread.set(declarations.len_natural(), tokens.consume())?;
     }
     declarations.push(get_declaration(tokens)?);
-
     if !tokens.ignore_commas() { break }
   }
   Ok((declarations, spread))
 }
 
-fn get_multiple_variable_declarations<'a, 'b>(
+fn get_multiple_destructurable_declarations<'a, 'b>(
   tokens: &'b mut TokenList<'a>,
-) -> Result<SmallVec<SingleVariableDeclaration>, CompilerError<'a>> where 'a: 'b {
+  allow_spread: bool
+) -> Result<(SmallVec<DestructurableDeclaration>, bool), CompilerError<'a>> where 'a: 'b {
   tokens.ignore_whitespace();
-  let mut declarations: SmallVec<SingleVariableDeclaration> = SmallVec::new();
+  let mut declarations: SmallVec<DestructurableDeclaration> = SmallVec::new();
+  let mut has_spread = allow_spread;
   while ![ ";", ")" ].contains(&tokens.peek_str()) {
-    if tokens.peek_str() == "[" || tokens.peek_str() == "{" {
-      // Destructuring declaration
-      let pattern = parse_destructure_pattern(tokens)?;
-      tokens.ignore_whitespace();
-      if tokens.peek_str() == ":" {
+    if tokens.peek_str() == "..." {
+      if has_spread {
         return Err(CompilerError {
-          message: "Destructure pattern cannot be typed".to_owned(),
+          message: "Unexpected spread".to_owned(),
           token: tokens.consume()
         })
       }
-      if let Some(value) = get_declaration_after_name(tokens)?.1 {
-        declarations.push(SingleVariableDeclaration::Destructured(pattern, value));
-      } else {
-        return Err(CompilerError {
-          message: "Destructure pattern must have an initializer".to_owned(),
-          token: tokens.consume()
-        })
-      }
-    } else {
-      declarations.push(SingleVariableDeclaration::from(
-        get_declaration(tokens)?
-      ));
+      has_spread = true;
+      tokens.skip_unchecked();
     }
-
+    let name = parse_destructure_pattern(tokens)?;
+    let (typ, initializer) = get_declaration_after_name(tokens)?;
+    declarations.push(DestructurableDeclaration { name, typ, initializer });
     if !tokens.ignore_commas() { break }
   }
-  Ok(declarations)
+  Ok((declarations, if allow_spread { has_spread } else { false }))
 }
 
 fn parse_destructure_pattern<'a>(
@@ -304,6 +296,7 @@ fn parse_destructure_pattern<'a>(
         }
       }
       tokens.skip_unchecked(); // Skip "]"
+      tokens.ignore_whitespace();
       Ok(DestructurePattern::Array { elements, spread })
     },
     "{" => {
@@ -359,11 +352,13 @@ fn parse_destructure_pattern<'a>(
         }
       }
       tokens.skip_unchecked(); // Skip "}"
+      tokens.ignore_whitespace();
       Ok(DestructurePattern::Object { properties, spread })
     },
     _ => {
       // Identifier or rename
       let name = tokens.consume_type(TokenType::Identifier)?.value.to_owned();
+      tokens.ignore_whitespace();
       Ok(DestructurePattern::Identifier { name })
     }
   }
@@ -419,28 +414,77 @@ fn handle_control_flow<'a>(
     },
     "for" => {
       // TODO: handle `for async`
-
-      // Get header
       tokens.skip("(")?;
-      let init = get_single_statement(tokens)?;
-      let condition = get_single_statement(tokens)?;
-      let update = get_single_statement(tokens)?;
-      tokens.skip(")")?;
 
-      // Get body
-      let body = get_single_statement(tokens)?;
+      tokens.ignore_whitespace();
+      let init = if tokens.peek_str() == ";" {
+        ASTNode::Empty
+      } else if VARIABLE_DECLARATIONS.contains(&tokens.peek_str()) {
+        let def_typ = get_variable_def_type(tokens)?;
+        let defs = get_multiple_destructurable_declarations(tokens, false)?.0;
+        ASTNode::VariableDeclaration {
+          modifiers: Default::default(),
+          def_type: def_typ,
+          defs
+        }
+      } else {
+        get_expression(tokens, 0)?
+      };
 
-      ASTNode::StatementFor {
-        init: Box::new(init),
-        condition: Box::new(condition),
-        update: Box::new(update),
-        body: Box::new(body)
+      // parse_for_loop_normal_after_var_name
+      tokens.ignore_whitespace();
+      if tokens.try_skip_and_ignore_whitespace(";") {
+        let condition = get_single_statement(tokens)?;
+        let update = get_single_statement(tokens)?;
+
+        tokens.skip(")")?;
+        let body = get_single_statement(tokens)?;
+
+        ASTNode::StatementFor {
+          init: Box::new(init),
+          condition: Box::new(condition),
+          update: Box::new(update),
+          body: Box::new(body)
+        }
+      } else if tokens.try_skip_and_ignore_whitespace("of") {
+        let expression = get_expression(tokens, 0)?;
+
+        tokens.skip(")")?;
+        let body = get_single_statement(tokens)?;
+
+        ASTNode::StatementForOf {
+          init: Box::new(init),
+          expression: Box::new(expression),
+          body: Box::new(body)
+        }
+      } else if tokens.try_skip_and_ignore_whitespace("in") {
+        let expression = get_expression(tokens, 0)?;
+        
+        tokens.skip(")")?;
+        let body = get_single_statement(tokens)?;
+
+        ASTNode::StatementForIn {
+          init: Box::new(init),
+          expression: Box::new(expression),
+          body: Box::new(body)
+        }
+      } else {
+        return Err(CompilerError {
+          message: "Expected `;`, `of`, or `in` in for loop".to_owned(),
+          token: tokens.peek().clone()
+        })
       }
     },
     // "switch" => {},
     other => { panic!("Control flow not implemented: {}", other); }
   }))
 }
+
+// fn get_for_header<'a>(
+//   tokens: &mut TokenList<'a>
+// ) -> Result<Option<ASTNode>, CompilerError<'a>> {
+  
+// }
 
 /// Handles import statements
 fn handle_import<'a>(
@@ -458,13 +502,12 @@ fn handle_import<'a>(
   let default_alias = if tokens.peek().is_identifier() {
     let alias = Some(tokens.consume().value.to_owned());
     tokens.ignore_whitespace();
-    if tokens.peek_str() == "," { tokens.skip_unchecked(); }
+    tokens.try_skip_and_ignore_whitespace(",");
     has_distinction = true;
     alias
   } else {
     None
   };
-  tokens.ignore_whitespace();
 
   // Wildcard imports `import * as Identifier from '...'`
   let wildcard = if tokens.peek_str() == "*" {
@@ -492,8 +535,7 @@ fn handle_import<'a>(
         Some(tokens.consume_type(TokenType::Identifier)?.value.to_owned())
       } else { None };
       tokens.ignore_whitespace();
-      if tokens.peek_str() == "," { tokens.skip_unchecked(); }
-      tokens.ignore_whitespace();
+      tokens.try_skip_and_ignore_whitespace(",");
       individual.push(IndividualImport { name, alias });
     }
     tokens.skip("}")?;
@@ -779,11 +821,7 @@ fn get_class_expression<'a, 'b>(
       tokens.ignore_whitespace();
 
       // Skip ";" (if any)
-      if tokens.peek_str() == ";" {
-        tokens.skip_unchecked();
-      }
-
-      tokens.ignore_whitespace();
+      tokens.try_skip_and_ignore_whitespace(";");
       continue;
     }
 

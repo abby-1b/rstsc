@@ -127,14 +127,14 @@ impl Hash for ComputableDeclarationName {
 pub struct Declaration {
   pub name: String,
   pub typ: Type,
-  pub value: Option<Box<ASTNode>>
+  pub value: Option<ASTNode>
 }
 impl Declaration {
   pub fn new(name: String, typ: Type, value: Option<ASTNode>) -> Declaration {
     Declaration {
       name,
       typ,
-      value: value.map(Box::new)
+      value: value
     }
   }
   pub fn clear_value(&mut self) {
@@ -142,7 +142,7 @@ impl Declaration {
   }
   pub fn name(&self) -> &String { &self.name }
   pub fn typ(&self) -> &Type { &self.typ }
-  pub fn value(&self) -> Option<&ASTNode> { self.value.as_ref().map(|v| v.as_ref()) }
+  pub fn value(&self) -> &Option<ASTNode> { &self.value }
 }
 
 /// Used for class declarations and dictionary values, which are computable
@@ -170,7 +170,7 @@ impl DeclarationComputable {
     DeclarationComputable {
       name: ComputableDeclarationName::new_named(declaration.name.clone()),
       typ: declaration.typ.clone(),
-      value: declaration.value.as_ref().map(|v| (**v).clone())
+      value: declaration.value.as_ref().map(|v| v.clone())
     }
   }
 }
@@ -203,12 +203,17 @@ impl DeclarationTyped {
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
-pub enum SingleVariableDeclaration {
-  Regular(Declaration),
-  Destructured(DestructurePattern, ASTNode)
+pub struct DestructurableDeclaration {
+  pub name: DestructurePattern,
+  pub typ: Type,
+  pub initializer: Option<ASTNode>
 }
-impl SingleVariableDeclaration {
-  pub fn from(decl: Declaration) -> SingleVariableDeclaration {
-    SingleVariableDeclaration::Regular(decl)
+impl From<Declaration> for DestructurableDeclaration {
+  fn from(value: Declaration) -> Self {
+    DestructurableDeclaration {
+      name: DestructurePattern::Identifier { name: value.name },
+      typ: value.typ,
+      initializer: value.value
+    }
   }
 }

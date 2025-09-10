@@ -1,4 +1,4 @@
-use crate::{ast::{ASTNode, FunctionDefinition, ObjectProperty}, ast_common::DestructurePattern, declaration::{Declaration, DeclarationComputable, SingleVariableDeclaration}, small_vec::SmallVec, spread::Spread};
+use crate::{ast::{ASTNode, FunctionDefinition, ObjectProperty}, ast_common::DestructurePattern, declaration::{Declaration, DeclarationComputable, DestructurableDeclaration}, small_vec::SmallVec, spread::Spread};
 
 static NO_SPREAD: Spread = Spread::new();
 
@@ -215,6 +215,28 @@ fn emit_single(
       emit_single(condition, emitter);
       emitter.out_diff("; ", ";", false);
       emit_single(update, emitter);
+      emitter.out_diff(") ", ")", false);
+
+      // Body
+      emit_single(body, emitter);
+    }
+    ASTNode::StatementForOf { init, expression, body } => {
+      // Head
+      emitter.out_diff("for (", "for(", false);
+      emit_single(init, emitter);
+      emitter.out_diff(" of ", "of", false);
+      emit_single(expression, emitter);
+      emitter.out_diff(") ", ")", false);
+
+      // Body
+      emit_single(body, emitter);
+    }
+    ASTNode::StatementForIn { init, expression, body } => {
+      // Head
+      emitter.out_diff("for (", "for(", false);
+      emit_single(init, emitter);
+      emitter.out_diff(" in ", "in", false);
+      emit_single(expression, emitter);
       emitter.out_diff(") ", ")", false);
 
       // Body
@@ -465,7 +487,7 @@ fn emit_declarations(
 }
 
 fn emit_variable_declarations(
-  declarations: &SmallVec<SingleVariableDeclaration>,
+  declarations: &SmallVec<DestructurableDeclaration>,
   spread: Spread,
   emitter: &mut Emitter
 ) {
@@ -512,18 +534,13 @@ fn emit_single_declaration(
 }
 
 fn emit_single_variable_declaration(
-  declaration: &SingleVariableDeclaration,
+  declaration: &DestructurableDeclaration,
   emitter: &mut Emitter
 ) {
-  match declaration {
-    SingleVariableDeclaration::Regular(declaration) => {
-      emit_single_declaration(declaration, emitter);
-    }
-    SingleVariableDeclaration::Destructured(pattern, value) => {
-      emit_destructure_pattern(pattern, emitter);
-      emitter.out_diff(" = ", "=", false);
-      emit_single(value, emitter);
-    }
+  emit_destructure_pattern(&declaration.name, emitter);
+  if let Some(value) = &declaration.initializer {
+    emitter.out_diff(" = ", "=", false);
+    emit_single(value, emitter);
   }
 }
 
@@ -565,10 +582,6 @@ fn emit_destructure_pattern(
     DestructurePattern::Identifier { name } => {
       emitter.out(name, true);
     }
-    // ast::DestructurePattern::Rename { source: _, alias: _ } => {
-    //   // TODO
-    //   emitter.out("[Rename]", true);
-    // }
     DestructurePattern::Ignore => {
       emitter.out("", true);
     }

@@ -248,6 +248,17 @@ impl<'a> TokenList<'a> {
     }
   }
 
+  #[must_use]
+  pub fn try_skip_and_ignore_whitespace(&mut self, candidate: &str) -> bool {
+    if candidate == self.peek_str() {
+      self.skip_unchecked();
+      self.ignore_whitespace();
+      true
+    } else {
+      false
+    }
+  }
+
   pub fn skip_unchecked(&mut self) {
     if
       self.on_token == self.next_tokens.len() - 1 &&
