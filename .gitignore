@@ -5,3 +5,6 @@
 **/.DS_Store
 **/.stdin_link.ts
 **/.VSCodeCounter
+
+rstsc/src/bin/*.ts
+allocations.yaml
