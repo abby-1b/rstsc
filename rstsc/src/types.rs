@@ -321,10 +321,7 @@ fn parse_infix<'a, 'b>(
   tokens: &'b mut TokenList<'a>,
   precedence: u8
 ) -> Result<Type, CompilerError<'a>> where 'a: 'b {
-  let conditional = if tokens.peek_str() == "?" {
-    tokens.skip_unchecked();
-    true
-  } else { false };
+  let conditional = tokens.try_skip_and_ignore_whitespace("?");
   let infix_opr = tokens.consume();
   match infix_opr.value {
     "|" => {
@@ -797,12 +794,7 @@ pub fn parse_object_square_bracket<'a, 'b>(
   tokens.skip("]")?;
 
   tokens.ignore_whitespace();
-  let is_optional = if tokens.peek_str() == "?" {
-    // Optional key
-    tokens.skip_unchecked();
-    tokens.ignore_whitespace();
-    true
-  } else { false };
+  let is_optional = tokens.try_skip_and_ignore_whitespace("?");
   tokens.skip(":")?;
 
   let mut value_type = get_expression(tokens, 0)?;
@@ -827,12 +819,7 @@ fn get_kvc_complex_key<'a, 'b>(
   tokens.ignore_whitespace();
   tokens.skip("]")?;
   tokens.ignore_whitespace();
-  let is_optional = if tokens.peek_str() == "?" {
-    // Optional mapped type
-    tokens.skip_unchecked();
-    tokens.ignore_whitespace();
-    true
-  } else { false };
+  let is_optional = tokens.try_skip_and_ignore_whitespace("?");
   tokens.skip(":")?;
   let mut value_type = get_expression(tokens, 0)?;
   if is_optional {
