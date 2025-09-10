@@ -4,7 +4,7 @@ use crate::{
   declaration::{Declaration, DestructurableDeclaration},
   operations::{get_operator_binding_power, ExprType},
   small_vec::SmallVec,
-  spread::Spread,
+  rest::Rest,
   types::Type
 };
 
@@ -28,7 +28,7 @@ pub enum ObjectProperty {
     key: ASTNode,
     value: ASTNode
   },
-  Spread {
+  Rest {
     argument: ASTNode
   }
 }
@@ -45,7 +45,7 @@ impl ObjectProperty {
         key: ASTNode::from(key),
         value: ASTNode::from(value)
       },
-      ast::ObjectProperty::Spread { argument } => ObjectProperty::Spread {
+      ast::ObjectProperty::Rest { argument } => ObjectProperty::Rest {
         argument: ASTNode::from(argument)
       }
     }
@@ -58,7 +58,7 @@ pub struct FunctionDefinition {
   pub name: Option<String>,
   pub generics: SmallVec<Type>,
   pub params: SmallVec<Declaration>,
-  pub spread: Spread,
+  pub rest: Rest,
   pub return_type: Type,
   pub body: Option<Box<ASTNode>>
 }
@@ -66,7 +66,7 @@ pub struct FunctionDefinition {
 #[derive(Debug, Clone)]
 pub struct ArrowFunctionDefinition {
   pub params: SmallVec<Declaration>,
-  pub spread: Spread,
+  pub rest: Rest,
   pub return_type: Type,
   pub body: Box<ASTNode>
 }

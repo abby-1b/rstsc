@@ -1,6 +1,6 @@
-use crate::{ast::{ASTNode, FunctionDefinition, ObjectProperty}, ast_common::DestructurePattern, declaration::{Declaration, DeclarationComputable, DestructurableDeclaration}, small_vec::SmallVec, spread::Spread};
+use crate::{ast::{ASTNode, FunctionDefinition, ObjectProperty}, ast_common::DestructurePattern, declaration::{Declaration, DeclarationComputable, DestructurableDeclaration}, small_vec::SmallVec, rest::Rest};
 
-static NO_SPREAD: Spread = Spread::new();
+static NO_REST: Rest = Rest::new();
 
 struct Emitter {
   output: String,
@@ -140,7 +140,7 @@ fn emit_single(
     } => {
       emitter.out(&modifiers.emit(true), false);
       emitter.out(&def_type.emit(), false);
-      emit_variable_declarations(defs, NO_SPREAD.clone(), emitter);
+      emit_destructurable_declarations(defs, NO_REST.clone(), emitter);
       emitter.out("", true);
     }
     ASTNode::StatementImport { inner } => {
@@ -285,7 +285,7 @@ fn emit_single(
         emitter.out(&arrow_fn.params[0].name(), false);
       } else {
         emitter.out("(", false);
-        emit_declarations(&arrow_fn.params, arrow_fn.spread.clone(), emitter);
+        emit_declarations(&arrow_fn.params, arrow_fn.rest.clone(), emitter);
         emitter.out(")", false);
       }
 
@@ -350,7 +350,7 @@ fn emit_single(
       emitter.out_diff("{ ", "{", false);
       emitter.emit_vec(properties, |prop, emitter| {
         match prop {
-          ObjectProperty::Spread { argument } => {
+          ObjectProperty::Rest { argument } => {
             emitter.out("...", false);
             emit_single(&argument, emitter);
           }
@@ -474,28 +474,28 @@ fn emit_single(
 }
 
 fn emit_declarations(
-  decls: &SmallVec<Declaration>,
-  spread: Spread,
+  declarations: &SmallVec<Declaration>,
+  rest: Rest,
   emitter: &mut Emitter
 ) {
-  let mut i = 0;
-  emitter.emit_vec(decls, |decl, emitter| {
-    if i == spread.0 { emitter.out("...", false); }
+  let mut i = rest.index_in_decls(declarations.len());
+  emitter.emit_vec(declarations, |decl, emitter| {
+    i -= 1;
+    if i == 0 { emitter.out("...", false); }
     emit_single_declaration(decl, emitter);
-    i += 1;
   }, ", ", ",");
 }
 
-fn emit_variable_declarations(
+fn emit_destructurable_declarations(
   declarations: &SmallVec<DestructurableDeclaration>,
-  spread: Spread,
+  rest: Rest,
   emitter: &mut Emitter
 ) {
-  let mut i = 0;
+  let mut i = rest.index_in_decls(declarations.len());
   emitter.emit_vec(declarations, |declaration, emitter| {
-    if i == spread.0 { emitter.out("...", false); }
+    i -= 1;
+    if i == 0 { emitter.out("...", false); }
     emit_single_variable_declaration(declaration, emitter);
-    i += 1;
   }, ", ", ",");
 }
 
@@ -554,12 +554,12 @@ fn emit_destructure_pattern(
       emitter.emit_vec(elements, |element, emitter| {
         emit_destructure_pattern(element, emitter);
       }, ", ", ",");
-      if let Some(spread) = spread {
+      if let Some(rest) = spread {
         if elements.len() > 0 {
           emitter.out_diff(", ", ",", false);
         }
         emitter.out("...", false);
-        emit_destructure_pattern(spread, emitter);
+        emit_destructure_pattern(rest, emitter);
       }
       emitter.out_diff(" ]", "]", true);
     }
@@ -605,7 +605,7 @@ fn emit_function_definition(
 
   // Params
   emitter.out("(", false);
-  emit_declarations(&function.params, function.spread.clone(), emitter);
+  emit_declarations(&function.params, function.rest.clone(), emitter);
   emitter.out_diff(") ", ")", false);
 
   // Body

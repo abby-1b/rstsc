@@ -1,6 +1,6 @@
 
 pub mod small_vec;
-pub mod spread;
+pub mod rest;
 pub mod error_type;
 pub mod tokenizer;
 pub mod operations;

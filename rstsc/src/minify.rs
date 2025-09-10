@@ -90,7 +90,7 @@ fn step_combine(node: &mut ASTNode) {
             }
             step_combine(value);
           }
-          ObjectProperty::Spread { argument } => step_combine(argument)
+          ObjectProperty::Rest { argument } => step_combine(argument)
         }
       });
     }

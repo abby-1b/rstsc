@@ -22,7 +22,7 @@ fn tsc_tests() {
     ("T-Condition", &[ r" extends .*? :" ]),
     ("T-Key", &[ r"\[( |)key( |):[ a-zA-Z]*?\]:" ]),
     ("Arrow Fn", &[ r"=>" ]),
-    ("Spread", &[ r"\.\.\." ]),
+    ("Rest/Spread", &[ r"\.\.\." ]),
     ("Getter", &[ r"get " ]),
     ("Setter", &[ r"set " ]),
     ("A-Params", &[ r"\(\s*public|\(\s*private" ]),

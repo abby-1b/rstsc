@@ -1,6 +1,6 @@
 
 use crate::{
-  ast_common::*, declaration::{Declaration, DeclarationComputable, DestructurableDeclaration}, error_type::CompilerError, small_vec::SmallVec, spread::Spread, tokenizer::Token, types::{KeyValueMap, Type}
+  ast_common::*, declaration::{Declaration, DeclarationComputable, DestructurableDeclaration}, error_type::CompilerError, small_vec::SmallVec, rest::Rest, tokenizer::Token, types::{KeyValueMap, Type}
 };
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -10,7 +10,7 @@ pub enum ObjectProperty {
     key: ASTNode,
     value: ASTNode
   },
-  Spread {
+  Rest {
     argument: ASTNode
   }
 }
@@ -23,7 +23,7 @@ pub struct FunctionDefinition {
 
   pub generics: SmallVec<Type>,
   pub params: SmallVec<Declaration>,
-  pub spread: Spread,
+  pub rest: Rest,
   pub return_type: Option<Type>,
   pub body: Option<ASTNode>
 }
@@ -31,7 +31,7 @@ pub struct FunctionDefinition {
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct ArrowFunctionDefinition {
   pub params: SmallVec<Declaration>,
-  pub spread: Spread,
+  pub rest: Rest,
   pub return_type: Type,
   pub body: ASTNode
 }

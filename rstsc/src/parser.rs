@@ -2,17 +2,9 @@ use phf::{phf_map, phf_set};
 use crate::{
   ast::{
     ASTNode, ArrowFunctionDefinition, ClassDefinition, EnumDeclaration, FunctionDefinition, GetterSetter, ImportDefinition, IndividualImport, InterfaceDeclaration, ObjectProperty
-  },
-  ast_common::{
+  }, ast_common::{
     DestructurePattern, Modifier, ModifierList, VariableDefType, ACCESSIBILITY_MODIFIERS, MODIFIERS
-  },
-  declaration::{ComputableDeclarationName, Declaration, DeclarationComputable, DeclarationTyped, DestructurableDeclaration},
-  error_type::CompilerError,
-  operations::{get_operator_binding_power, ExprType},
-  small_vec::SmallVec,
-  spread::Spread,
-  tokenizer::{Token, TokenList, TokenType},
-  types::{
+  }, declaration::{ComputableDeclarationName, Declaration, DeclarationComputable, DeclarationTyped, DestructurableDeclaration}, error_type::CompilerError, operations::{get_operator_binding_power, ExprType}, small_vec::SmallVec, rest::Rest, tokenizer::{Token, TokenList, TokenType}, types::{
     get_comma_separated_types_until, get_generics, get_optional_generics, get_type, parse_object_square_bracket, try_get_type, ObjectSquareBracketReturn, Type
   }
 };
@@ -155,7 +147,7 @@ fn get_variable_def_type<'b>(
 }
 
 /// Gets a single named (and optionally typed) declaration,
-/// with or without a value. Does NOT handle spreads!
+/// with or without a value. Does NOT handle rest parameters!
 fn get_declaration<'a, 'b>(
   tokens: &'b mut TokenList<'a>
 ) -> Result<Declaration, CompilerError<'a>> where 'a: 'b {
@@ -205,50 +197,34 @@ fn get_declaration_after_name<'a, 'b>(
 /// `function some([a: number, b: string = '123']) { ... }`
 fn get_multiple_declarations<'a, 'b>(
   tokens: &'b mut TokenList<'a>,
-  allow_spread: bool
-) -> Result<(SmallVec<Declaration>, Spread), CompilerError<'a>> where 'a: 'b {
-  // TODO: Switch `Spread` for boolean detailing if spread exists or not!
+  allow_rest: bool
+) -> Result<(SmallVec<Declaration>, Rest), CompilerError<'a>> where 'a: 'b {
   tokens.ignore_whitespace();
   let mut declarations = SmallVec::new();
-  let mut spread = Spread::new();
+  let mut rest = Rest::new();
   while ![ ";", ")" ].contains(&tokens.peek_str()) {
-    if tokens.peek_str() == "..." {
-      if !allow_spread { return Err(CompilerError {
-        message: "Unexpected spread".to_owned(),
-        token: tokens.consume()
-      }) }
-      spread.set(declarations.len_natural(), tokens.consume())?;
-    }
+    rest.try_set(tokens, allow_rest)?;
     declarations.push(get_declaration(tokens)?);
     if !tokens.ignore_commas() { break }
   }
-  Ok((declarations, spread))
+  Ok((declarations, rest))
 }
 
 fn get_multiple_destructurable_declarations<'a, 'b>(
   tokens: &'b mut TokenList<'a>,
-  allow_spread: bool
-) -> Result<(SmallVec<DestructurableDeclaration>, bool), CompilerError<'a>> where 'a: 'b {
+  allow_rest: bool
+) -> Result<(SmallVec<DestructurableDeclaration>, Rest), CompilerError<'a>> where 'a: 'b {
   tokens.ignore_whitespace();
   let mut declarations: SmallVec<DestructurableDeclaration> = SmallVec::new();
-  let mut has_spread = allow_spread;
+  let mut rest = Rest::new();
   while ![ ";", ")" ].contains(&tokens.peek_str()) {
-    if tokens.peek_str() == "..." {
-      if has_spread {
-        return Err(CompilerError {
-          message: "Unexpected spread".to_owned(),
-          token: tokens.consume()
-        })
-      }
-      has_spread = true;
-      tokens.skip_unchecked();
-    }
+    rest.try_set(tokens, allow_rest)?;
     let name = parse_destructure_pattern(tokens)?;
     let (typ, initializer) = get_declaration_after_name(tokens)?;
     declarations.push(DestructurableDeclaration { name, typ, initializer });
     if !tokens.ignore_commas() { break }
   }
-  Ok((declarations, if allow_spread { has_spread } else { false }))
+  Ok((declarations, rest))
 }
 
 fn parse_destructure_pattern<'a>(
@@ -502,7 +478,7 @@ fn handle_import<'a>(
   let default_alias = if tokens.peek().is_identifier() {
     let alias = Some(tokens.consume().value.to_owned());
     tokens.ignore_whitespace();
-    tokens.try_skip_and_ignore_whitespace(",");
+    let _ = tokens.try_skip_and_ignore_whitespace(",");
     has_distinction = true;
     alias
   } else {
@@ -535,7 +511,7 @@ fn handle_import<'a>(
         Some(tokens.consume_type(TokenType::Identifier)?.value.to_owned())
       } else { None };
       tokens.ignore_whitespace();
-      tokens.try_skip_and_ignore_whitespace(",");
+      let _ = tokens.try_skip_and_ignore_whitespace(",");
       individual.push(IndividualImport { name, alias });
     }
     tokens.skip("}")?;
@@ -648,7 +624,7 @@ fn get_function_after_name<'a, 'b>(
     name,
     generics,
     params: params.0,
-    spread: params.1,
+    rest: params.1,
     return_type,
     body
   })
@@ -672,14 +648,14 @@ fn get_constructor_after_name<'a, 'b>(
   // Get parameters
   let mut params = SmallVec::new();
   let mut set_properties: SmallVec<ASTNode> = SmallVec::new();
-  let mut spread = Spread::new();
+  let mut rest = Rest::new();
   tokens.skip("(")?;
   while tokens.peek_str() != ")" {
     tokens.ignore_whitespace();
     if ACCESSIBILITY_MODIFIERS.contains(&tokens.peek_str()) {
       let modifiers = fetch_modifier_list(tokens);
       let mut declaration = get_declaration(tokens)?;
-      spread.try_set(tokens, params.len_natural())?;
+      rest.try_set(tokens, true)?;
       params.push(declaration.clone());
       declaration.clear_value();
       declarations.push((DeclarationComputable::from(&declaration), modifiers));
@@ -732,7 +708,7 @@ fn get_constructor_after_name<'a, 'b>(
     name: Some("constructor".to_owned()),
     generics: SmallVec::new(),
     params,
-    spread,
+    rest,
     return_type,
     body
   })
@@ -821,7 +797,7 @@ fn get_class_expression<'a, 'b>(
       tokens.ignore_whitespace();
 
       // Skip ";" (if any)
-      tokens.try_skip_and_ignore_whitespace(";");
+      let _ = tokens.try_skip_and_ignore_whitespace(";");
       continue;
     }
 
@@ -1296,7 +1272,7 @@ fn parse_prefix<'a>(
         // Spread
         tokens.skip_unchecked(); // Skip "..."
 
-        properties.push(ObjectProperty::Spread {
+        properties.push(ObjectProperty::Rest {
           argument: get_expression(tokens, 1)?
         });
       } else {
@@ -1422,7 +1398,7 @@ fn parse_infix<'a, 'b>(
       }
     };
 
-    return Ok(parse_arrow_function_after_arrow(tokens, params, Spread::new(), Type::Unknown)?);
+    return Ok(parse_arrow_function_after_arrow(tokens, params, Rest::new(), Type::Unknown)?);
   } else if opr == "?" {
     // Ternary (eg. `condition ? true : false`)
 
@@ -1514,7 +1490,7 @@ fn parse_arrow_function<'a>(
 fn parse_arrow_function_after_arrow<'a>(
   tokens: &mut TokenList<'a>,
   params: SmallVec<Declaration>,
-  spread: Spread,
+  rest: Rest,
   return_type: Type
 ) -> Result<ASTNode, CompilerError<'a>> {
   tokens.ignore_whitespace();
@@ -1528,7 +1504,7 @@ fn parse_arrow_function_after_arrow<'a>(
 
   Ok(ASTNode::ArrowFunctionDefinition { inner: Box::new(ArrowFunctionDefinition {
     params,
-    spread,
+    rest,
     return_type,
     body
   }) })
