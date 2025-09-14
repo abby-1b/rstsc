@@ -302,7 +302,7 @@ impl<'a> TokenList<'a> {
   pub fn restore_checkpoint(&mut self, mut checkpoint: TokenListCheckpoint) {
     self.checkpoints -= 1;
     self.on_token = checkpoint.last_token_idx;
-    // self.str_template_nesting = checkpoint.str_literal_nesting;
+    self.curly_bracket_nesting = checkpoint.curly_bracket_nesting;
     self.str_template_nesting.clone_from(&checkpoint.str_literal_nesting);
     #[cfg(debug_assertions)]
     { checkpoint.can_drop = true; }
