@@ -43,11 +43,9 @@ Completed Tasks:
  - Non-null assertion removal
  - Basic Automatic Semicolon Insertion (ASI)
  - Enum transformation
-
-Remaining Tasks:
- - String literal support (types inside literals)
  - Switch statements
  - Full non-null assertion handling
+ - String literal support (types inside literals)
 
 ### Phase 2: Advanced Syntax and Declarations
 

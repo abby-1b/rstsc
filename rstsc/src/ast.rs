@@ -22,7 +22,7 @@ pub struct FunctionDefinition {
   pub name: Option<String>,
 
   pub generics: SmallVec<Type>,
-  pub params: SmallVec<Declaration>,
+  pub params: SmallVec<DestructurableDeclaration>,
   pub rest: Rest,
   pub return_type: Option<Type>,
   pub body: Option<ASTNode>
@@ -86,6 +86,7 @@ pub struct ImportDefinition {
 
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct InterfaceDeclaration {
+  pub modifiers: ModifierList,
   pub name: String,
   pub generics: SmallVec<Type>,
   pub extends: SmallVec<Type>,
@@ -94,9 +95,10 @@ pub struct InterfaceDeclaration {
 
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct EnumDeclaration {
+  pub modifiers: ModifierList,
   pub name: String,
   pub members: SmallVec<(String, ASTNode)>,
-  pub is_const: bool
+  pub is_const: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -112,6 +114,7 @@ pub enum ASTNode {
   },
 
   StatementImport { inner: Box<ImportDefinition> },
+  ExpressionImport { value: Box<ASTNode> },
 
   StatementIf {
     condition: Box<ASTNode>,
@@ -139,6 +142,12 @@ pub enum ASTNode {
     body: Box<ASTNode>
   },
 
+  StatementSwitch {
+    condition: Box<ASTNode>,
+    cases: SmallVec<(ASTNode, SmallVec<ASTNode>)>,
+    default: Option<SmallVec<ASTNode>>
+  },
+
   StatementReturn { value: Option<Box<ASTNode>> },
   StatementBreak { value: Option<Box<ASTNode>> },
   StatementContinue { value: Option<Box<ASTNode>> },
@@ -160,6 +169,7 @@ pub enum ASTNode {
   ExprIdentifier { name: String },
   ExprNumLiteral { number: String },
   ExprStrLiteral { string: String },
+  ExprTemplateLiteral { head: String, parts: SmallVec<(ASTNode, String)> },
   ExprBoolLiteral { value: bool },
 
   ExprFunctionCall {
@@ -208,11 +218,13 @@ impl ASTNode {
       ASTNode::Block { .. } => "Block",
       ASTNode::VariableDeclaration { .. } => "VariableDeclaration",
       ASTNode::StatementImport { .. } => "StatementImport",
+      ASTNode::ExpressionImport { .. } => "ExpressionImport",
       ASTNode::StatementIf { .. } => "StatementIf",
       ASTNode::StatementWhile { .. } => "StatementWhile",
       ASTNode::StatementFor { .. } => "StatementFor",
       ASTNode::StatementForOf { .. } => "StatementForOf",
       ASTNode::StatementForIn { .. } => "StatementForIn",
+      ASTNode::StatementSwitch { .. } => "StatementSwitch",
       ASTNode::StatementReturn { .. } => "StatementReturn",
       ASTNode::StatementBreak { .. } => "StatementBreak",
       ASTNode::StatementContinue { .. } => "StatementContinue",
@@ -225,6 +237,7 @@ impl ASTNode {
       ASTNode::Dict { .. } => "Dict",
       ASTNode::ExprNumLiteral { .. } => "ExprNumLiteral",
       ASTNode::ExprStrLiteral { .. } => "ExprStrLiteral",
+      ASTNode::ExprTemplateLiteral { .. } => "ExprTemplateLiteral",
       ASTNode::ExprIdentifier { .. } => "ExprIdentifier",
       ASTNode::ExprBoolLiteral { .. } => "ExprBoolLiteral",
       ASTNode::ExprFunctionCall { .. } => "ExprFunctionCall",
@@ -250,7 +263,7 @@ impl ASTNode {
     )
   }
 
-  pub fn apply_modifiers(&mut self, new_modifiers: ModifierList) -> Result<(), CompilerError<'static>> {
+  pub fn apply_modifiers(&mut self, new_modifiers: ModifierList) -> Result<(), CompilerError> {
     match self {
       ASTNode::VariableDeclaration { modifiers, .. } => {
         *modifiers = new_modifiers;
@@ -261,14 +274,16 @@ impl ASTNode {
       ASTNode::ClassDefinition { inner } => {
         inner.modifiers = new_modifiers;
       }
+      ASTNode::EnumDeclaration { inner } => {
+        inner.modifiers = new_modifiers;
+      }
+      ASTNode::InterfaceDeclaration { inner } => {
+        inner.modifiers = new_modifiers;
+      }
       _ => {
-        return Err(CompilerError {
-          message: format!(
-            "{} can't have modifiers!",
-            self.name()
-          ),
-          token: self.as_token()
-        });
+        return Err(CompilerError::new_static(
+          format!("{} can't have modifiers!", self.name())
+        ));
       }
     }
     Ok(())

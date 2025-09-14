@@ -18,9 +18,10 @@ impl Rest {
   #[inline]
   pub fn set<'a, 'b>(
     &mut self,
-    token: Token<'a>
-  ) -> Result<(), CompilerError<'a>> where 'a: 'b {
-    if self.0 { return Self::err(token); }
+    token: Token<'a>,
+    tokens: &'b mut TokenList<'a>
+  ) -> Result<(), CompilerError> where 'a: 'b {
+    if self.0 { return Self::err(token, tokens); }
     self.0 = true;
     Ok(())
   }
@@ -30,19 +31,21 @@ impl Rest {
     &mut self,
     tokens: &'b mut TokenList<'a>,
     allow: bool
-  ) -> Result<(), CompilerError<'a>> where 'a: 'b {
+  ) -> Result<(), CompilerError> where 'a: 'b {
     if tokens.peek_str() == "..." {
-      if !allow { return Self::err(tokens.consume()); }
-      self.set(tokens.consume())?;
+      if !allow { return Self::err(tokens.consume(), tokens); }
+      self.set(tokens.consume(), tokens)?;
     }
     Ok(())
   }
 
   #[inline]
-  fn err(t: Token) -> Result<(), CompilerError> {
-    Err(CompilerError {
-      message: "Unexpected spread!".to_owned(),
-      token: t
-    })
+  fn err<'a, 'b>(
+    t: Token, tokens: &'b mut TokenList<'a>
+  ) -> Result<(), CompilerError> where 'a: 'b {
+    Err(CompilerError::new(
+      "Unexpected spread!".to_owned(),
+      t, tokens
+    ))
   }
 }

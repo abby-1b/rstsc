@@ -23,64 +23,42 @@ pub const ACCESSIBILITY_MODIFIERS: &[&str] = &[
 ];
 
 pub const MODIFIERS: &[&str] = &[
+  "public", "private", "protected",
   "export",
   "async",
   "static",
-  "public", "private", "protected",
   "readonly",
-  "abstract"
-];
-pub const MODIFIER_IS_JS: &[bool] = &[
-  true,
-  true,
-  true,
-  false, false, false,
-  false,
-  false
+  "abstract",
+  "override",
 ];
 
 #[derive(Clone)]
 /// A single modifier
 pub enum Modifier {
-  Export = 1,
-  Async = 2,
-  Static = 4,
-  Public = 8,
-  Private = 16,
-  Protected = 32,
-  Readonly = 64,
-  Abstract = 128,
-}
-impl From<Modifier> for u8 {
-  fn from(val: Modifier) -> Self {
-    match val {
-      Modifier::Export => 1,
-      Modifier::Async => 2,
-      Modifier::Static => 4,
-      Modifier::Public => 8,
-      Modifier::Private => 16,
-      Modifier::Protected => 32,
-      Modifier::Readonly => 64,
-      Modifier::Abstract => 128,
-    }
-  }
+  Public = 1,
+  Private = 2,
+  Protected = 3,
+
+  Export = 4,
+  Async = 8,
+  Static = 16,
+  Readonly = 32,
+  Abstract = 64,
+  Override = 128,
+
 }
 
-#[derive(Default, Clone, PartialEq, Hash)]
+#[derive(Clone, PartialEq, Hash)]
 /// A list of modifier flags
 pub struct ModifierList {
-  /// A list of bit flags (lowest to highest) detailing:
-  ///  - export
-  ///  - async
-  ///  - static
-  ///  - public
-  ///  - private
-  ///  - protected
-  ///  - readonly
   pub flags: u8,
 }
 
 impl ModifierList {
+  pub fn new() -> ModifierList {
+    ModifierList { flags: 0 }
+  }
+
   /// Sets the modifier in the list
   #[inline]
   pub fn set(&mut self, modifier: Modifier) {
@@ -90,18 +68,36 @@ impl ModifierList {
   /// Checks if the modifier exists within the list
   #[inline]
   pub fn has(&self, modifier: Modifier) -> bool {
-    self.flags & modifier as u8 != 0
+    match modifier {
+      Modifier::Public => { self.flags & 0b11 == 1 }
+      Modifier::Private => { self.flags & 0b11 == 2 }
+      Modifier::Protected => { self.flags & 0b11 == 3 }
+      _ => self.flags & modifier as u8 != 0
+    }
+  }
+
+  #[inline]
+  pub fn has_accessibility(&self) -> bool {
+    self.flags & 0b0000_0011 != 0
   }
 
   pub fn emit(&self, js_only: bool) -> String {
     let mut out = String::new();
-    for idx in 0..6 {
-      let flag = 1 << idx;
-      if self.flags & flag == 0 || (js_only && !MODIFIER_IS_JS[idx]) {
-        continue;
+    if !js_only {
+      match self.flags & 0b11 {
+        1 => out += "public ",
+        2 => out += "private ",
+        3 => out += "protected ",
+        _ => ()
       }
-      out += MODIFIERS[idx];
-      out += " ";
+    }
+    if self.flags & 0b0000_0100 != 0 { out += "export "; }
+    if self.flags & 0b0000_1000 != 0 { out += "async "; }
+    if self.flags & 0b0001_0000 != 0 { out += "static "; }
+    if !js_only {
+      if self.flags & 0b0010_0000 != 0 { out += "readonly "; }
+      if self.flags & 0b0100_0000 != 0 { out += "abstract "; }
+      if self.flags & 0b1000_0000 != 0 { out += "override "; }
     }
     out
   }

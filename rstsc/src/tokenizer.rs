@@ -1,6 +1,6 @@
 use std::{collections::VecDeque, str::Chars};
 
-use crate::{error_type::CompilerError};
+use crate::{error_type::CompilerError, small_vec::SmallVec};
 
 pub static TOKEN_QUEUE_SIZE: usize = 32;
 
@@ -66,24 +66,6 @@ pub enum TokenType {
   Unknown
 }
 
-impl TokenType {
-  pub fn as_str(&self) -> &'static str {
-    match self {
-      Self::Identifier => "Identifier",
-      Self::Number => "Number",
-      Self::Symbol => "Symbol",
-      Self::String => "String",
-      Self::StringTemplateStart => "StringTemplateStart",
-      Self::StringTemplateMiddle => "StringTemplateMiddle",
-      Self::StringTemplateEnd => "StringTemplateEnd",
-      Self::Spacing => "Spacing",
-      Self::LineTerminator => "LineTerminator",
-      Self::EndOfFile => "EndOfFile",
-      Self::Unknown => "Unknown"
-    }
-  }
-}
-
 #[derive(Debug, Clone)]
 pub struct Token<'a> {
   pub value: &'a str,
@@ -117,12 +99,17 @@ pub struct TokenList<'a> {
   on_token: usize,
 
   /// The number of active checkpoints
-  checkpoints: usize,
+  checkpoints: u16,
 
   /// The index currently being read for finding a token
   find_index: usize,
 
-  // TODO: string literal nesting
+  /// The amount of curly bracket symbols we've entered
+  /// (smart, doesn't count occurences in strings)
+  pub curly_bracket_nesting: i16,
+
+  /// The current amount of string literals the reader is nested inside of
+  pub str_template_nesting: SmallVec<i16>,
 
   char_iter: CustomCharIterator<'a>,
 }
@@ -130,6 +117,9 @@ pub struct TokenList<'a> {
 pub struct TokenListCheckpoint {
   /// The index of the last token in the TokenList when this struct was made
   last_token_idx: usize,
+
+  curly_bracket_nesting: i16,
+  str_literal_nesting: SmallVec<i16>,
 
   #[cfg(debug_assertions)]
   can_drop: bool
@@ -152,6 +142,8 @@ impl<'a> TokenList<'a> {
       on_token: 0,
       checkpoints: 0,
       find_index: 0,
+      curly_bracket_nesting: 0,
+      str_template_nesting: SmallVec::new(),
       char_iter: {
         let mut c = CustomCharIterator {
           inner_iter: source.chars(),
@@ -202,16 +194,16 @@ impl<'a> TokenList<'a> {
   }
 
   #[must_use]
-  pub fn consume_type<'b>(&mut self, typ: TokenType) -> Result<Token<'b>, CompilerError<'b>> where 'a: 'b {
+  pub fn consume_type<'b>(&mut self, typ: TokenType) -> Result<Token<'b>, CompilerError> where 'a: 'b {
     let ret = self.consume();
     if ret.typ != typ {
-      Err(CompilerError {
-        message: format!(
-          "Expected {}, found {}",
-          typ.as_str(), ret.typ.as_str()
+      Err(CompilerError::new(
+        format!(
+          "Expected {:?}, found {:?}",
+          typ, ret.typ
         ),
-        token: ret
-      })
+        ret, self
+      ))
     } else {
       Ok(ret)
     }
@@ -236,14 +228,14 @@ impl<'a> TokenList<'a> {
   }
 
   #[must_use]
-  pub fn skip(&mut self, candidate: &str) -> Result<(), CompilerError<'a>> {
+  pub fn skip(&mut self, candidate: &str) -> Result<(), CompilerError> {
     if candidate == self.peek_str() {
       self.skip_unchecked();
       Ok(())
     } else {
       Err(CompilerError::expected(
         candidate,
-        self.peek().clone()
+        self.peek().clone(), self
       ))
     }
   }
@@ -299,6 +291,8 @@ impl<'a> TokenList<'a> {
     self.checkpoints += 1;
     TokenListCheckpoint {
       last_token_idx: self.on_token,
+      curly_bracket_nesting: self.curly_bracket_nesting,
+      str_literal_nesting: self.str_template_nesting.clone(),
       #[cfg(debug_assertions)]
       can_drop: false
     }
@@ -308,6 +302,8 @@ impl<'a> TokenList<'a> {
   pub fn restore_checkpoint(&mut self, mut checkpoint: TokenListCheckpoint) {
     self.checkpoints -= 1;
     self.on_token = checkpoint.last_token_idx;
+    // self.str_template_nesting = checkpoint.str_literal_nesting;
+    self.str_template_nesting.clone_from(&checkpoint.str_literal_nesting);
     #[cfg(debug_assertions)]
     { checkpoint.can_drop = true; }
   }
@@ -372,7 +368,7 @@ impl<'a> TokenList<'a> {
           self.char_iter.consume_all(|c| c.is_numeric() || c == '_' || c == '.' || c == 'n'),
           TokenType::Number
         );
-      } else if curr_char == '\'' || curr_char == '"' || curr_char == '`' {
+      } else if curr_char == '"' || curr_char == '\'' {
         // Strings
         let start_char = self.char_iter.consume().unwrap();
         let mut token_len = 1;
@@ -393,6 +389,45 @@ impl<'a> TokenList<'a> {
           TokenType::String
         );
         // TODO: template literal support
+      } else if
+        curr_char == '`' ||
+        (curr_char == '}' && self.str_template_nesting.last().is_some_and(|x| *x == self.curly_bracket_nesting))
+      {
+        // Template literal
+        let start_char = self.char_iter.consume().unwrap();
+        let mut token_len = 1;
+        let mut is_escaped = false;
+        let mut is_ready_for_expression = false;
+        let mut typ = TokenType::StringTemplateEnd;
+        let len = loop {
+          if let Some(curr_char) = self.char_iter.peek() {
+            token_len += curr_char.len_utf8();
+            // if curr_char == '\n' { break token_len - 1; }
+            self.char_iter.consume();
+            let is_end_char = curr_char == '`' && !is_escaped;
+            let is_expr_char = curr_char == '{' && is_ready_for_expression;
+            is_escaped = curr_char == '\\' && !is_escaped;
+            is_ready_for_expression = curr_char == '$' && !is_escaped;
+            if is_end_char {
+              break token_len;
+            }
+            if is_expr_char {
+              typ = if start_char == '`' {
+                self.str_template_nesting.push(self.curly_bracket_nesting);
+                TokenType::StringTemplateStart
+              } else {
+                TokenType::StringTemplateMiddle
+              };
+              break token_len;
+            }
+          } else {
+            break token_len - 1;
+          }
+        };
+        if typ == TokenType::StringTemplateEnd {
+          self.str_template_nesting.pop();
+        }
+        break 'token_done (len, typ);
       } else if curr_char == '/' {
         // Comments
         match self.char_iter.peek_far().unwrap_or(' ') {
@@ -425,6 +460,12 @@ impl<'a> TokenList<'a> {
           },
           _ => {}
         }
+      }
+
+      if curr_char == '{' {
+        self.curly_bracket_nesting += 1;
+      } else if curr_char == '}' {
+        self.curly_bracket_nesting -= 1;
       }
 
       // Other symbols
@@ -494,6 +535,7 @@ impl<'a> CustomCharIterator<'a> {
   }
 }
 
+/*
 fn print_last_three(tokens: &TokenList) {
   let start = tokens.next_tokens.len().saturating_sub(3);
   for i in start..tokens.next_tokens.len() {
@@ -514,3 +556,4 @@ fn print_all_tokens(tokens: &TokenList) {
   }
   println!();
 }
+*/

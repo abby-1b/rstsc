@@ -184,6 +184,11 @@ fn emit_single(
       }
       emitter.out(&inner.source, true);
     }
+    ASTNode::ExpressionImport { value } => {
+      emitter.out("import(", false);
+      emit_single(value, emitter);
+      emitter.out(")", true);
+    }
     ASTNode::StatementIf { condition, body, alternate } => {
       let start_line = emitter.curr_line();
 
@@ -241,6 +246,40 @@ fn emit_single(
 
       // Body
       emit_single(body, emitter);
+    }
+    ASTNode::StatementSwitch { condition, cases, default } => {
+      emitter.out("switch (", false);
+      emit_single(condition, emitter);
+      emitter.out(") {", false);
+      emitter.endline();
+      emitter.indent();
+
+      for (case_cond, case_body) in cases.iter() {
+        emitter.out("case ", false);
+        emit_single(case_cond, emitter);
+        emitter.out(": ", false);
+        emitter.endline();
+        emitter.indent();
+        for stmt in case_body.iter() {
+          emit_single(stmt, emitter);
+          emitter.endline();
+        }
+        emitter.unindent();
+      }
+
+      if let Some(default_body) = default {
+        emitter.out("default: ", false);
+        emitter.endline();
+        emitter.indent();
+        for stmt in default_body.iter() {
+          emit_single(stmt, emitter);
+          emitter.endline();
+        }
+        emitter.unindent();
+      }
+
+      emitter.unindent();
+      emitter.out("}", false);
     }
     ASTNode::StatementReturn { value } => {
       emitter.out("return", true);
@@ -370,6 +409,17 @@ fn emit_single(
     }
     ASTNode::ExprStrLiteral { string } => {
       emitter.out(&string, true);
+    }
+    ASTNode::ExprTemplateLiteral { head, parts } => {
+      emitter.out("`", false);
+      emitter.out(head, false);
+      for (expr, literal_part) in parts {
+        emitter.out("${", false);
+        emit_single(expr, emitter);
+        emitter.out("}", false);
+        emitter.out(literal_part, false);
+      }
+      emitter.out("`", true);
     }
     ASTNode::ExprIdentifier { name } => {
       emitter.out(&name, true);
@@ -605,7 +655,7 @@ fn emit_function_definition(
 
   // Params
   emitter.out("(", false);
-  emit_declarations(&function.params, function.rest.clone(), emitter);
+  emit_destructurable_declarations(&function.params, function.rest.clone(), emitter);
   emitter.out_diff(") ", ")", false);
 
   // Body

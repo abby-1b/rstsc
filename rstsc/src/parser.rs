@@ -4,7 +4,7 @@ use crate::{
     ASTNode, ArrowFunctionDefinition, ClassDefinition, EnumDeclaration, FunctionDefinition, GetterSetter, ImportDefinition, IndividualImport, InterfaceDeclaration, ObjectProperty
   }, ast_common::{
     DestructurePattern, Modifier, ModifierList, VariableDefType, ACCESSIBILITY_MODIFIERS, MODIFIERS
-  }, declaration::{ComputableDeclarationName, Declaration, DeclarationComputable, DeclarationTyped, DestructurableDeclaration}, error_type::CompilerError, operations::{get_operator_binding_power, ExprType}, small_vec::SmallVec, rest::Rest, tokenizer::{Token, TokenList, TokenType}, types::{
+  }, declaration::{ComputableDeclarationName, Declaration, DeclarationComputable, DeclarationTyped, DestructurableDeclaration}, error_type::CompilerError, operations::{get_operator_binding_power, ExprType}, rest::Rest, small_vec::SmallVec, tokenizer::{Token, TokenList, TokenType}, types::{
     get_comma_separated_types_until, get_generics, get_optional_generics, get_type, parse_object_square_bracket, try_get_type, ObjectSquareBracketReturn, Type
   }
 };
@@ -38,7 +38,7 @@ pub static DISALLOWED_VARIABLE_NAMES: phf::Set<&'static str> = phf_set! {
 };
 
 /// Parses a single block. Consumes the ending token, but not the starting token.
-pub fn get_block<'a>(tokens: &mut TokenList<'a>) -> Result<ASTNode, CompilerError<'a>> {
+pub fn get_block<'a>(tokens: &mut TokenList<'a>) -> Result<ASTNode, CompilerError> {
   let mut nodes = SmallVec::new();
 
   // Go through the tokens list
@@ -66,7 +66,7 @@ pub fn get_block<'a>(tokens: &mut TokenList<'a>) -> Result<ASTNode, CompilerErro
 /// reached (eg. `([{`), calls the corresponding function for said group.
 fn get_single_statement<'a, 'b>(
   tokens: &'b mut TokenList<'a>
-) -> Result<ASTNode, CompilerError<'a>> where 'a: 'b {
+) -> Result<ASTNode, CompilerError> where 'a: 'b {
   // Ignore whitespace
   tokens.ignore_whitespace();
   
@@ -96,7 +96,7 @@ fn get_single_statement<'a, 'b>(
 /// Handles blocks (defined as a non-expression `{` token)
 fn handle_blocks<'a>(
   tokens: &mut TokenList<'a>
-) -> Result<Option<ASTNode>, CompilerError<'a>> {
+) -> Result<Option<ASTNode>, CompilerError> {
   if tokens.peek_str() != "{" {
     return Ok(None);
   }
@@ -107,7 +107,7 @@ fn handle_blocks<'a>(
 /// Handles variable initialization
 fn handle_vars<'a, 'b>(
   tokens: &'b mut TokenList<'a>
-) -> Result<Option<ASTNode>, CompilerError<'a>> where 'a: 'b {
+) -> Result<Option<ASTNode>, CompilerError> where 'a: 'b {
   if !VARIABLE_DECLARATIONS.contains(&tokens.peek_str()) {
     return Ok(None);
   }
@@ -123,7 +123,7 @@ fn handle_vars<'a, 'b>(
   let (defs, _) = get_multiple_destructurable_declarations(tokens, false)?;
 
   Ok(Some(ASTNode::VariableDeclaration {
-    modifiers: Default::default(),
+    modifiers: ModifierList::new(),
     def_type,
     defs
   }))
@@ -131,7 +131,7 @@ fn handle_vars<'a, 'b>(
 
 fn get_variable_def_type<'b>(
   tokens: &mut TokenList<'b>
-) -> Result<VariableDefType, CompilerError<'b>> {
+) -> Result<VariableDefType, CompilerError> {
   // Get the header
   let header_token = tokens.consume();
   tokens.ignore_whitespace();
@@ -139,10 +139,10 @@ fn get_variable_def_type<'b>(
     "var"   => Ok(VariableDefType::Var),
     "let"   => Ok(VariableDefType::Let),
     "const" => Ok(VariableDefType::Const),
-    other => Err(CompilerError {
-      message: format!("Unexpected variable declaration: {}", other),
-      token: header_token
-    })
+    other => Err(CompilerError::new(
+      format!("Unexpected variable declaration: {}", other),
+      header_token, tokens
+    ))
   }
 }
 
@@ -150,7 +150,7 @@ fn get_variable_def_type<'b>(
 /// with or without a value. Does NOT handle rest parameters!
 fn get_declaration<'a, 'b>(
   tokens: &'b mut TokenList<'a>
-) -> Result<Declaration, CompilerError<'a>> where 'a: 'b {
+) -> Result<Declaration, CompilerError> where 'a: 'b {
   tokens.ignore_whitespace();
   let name = tokens.consume_type(TokenType::Identifier)?.value.to_owned();
   let (typ, value) = get_declaration_after_name(tokens)?;
@@ -159,19 +159,25 @@ fn get_declaration<'a, 'b>(
 
 fn get_declaration_after_name<'a, 'b>(
   tokens: &'b mut TokenList<'a>,
-) -> Result<(Type, Option<ASTNode>), CompilerError<'a>> where 'a: 'b {
-  let typ = if tokens.peek_str() == "?" {
-    let conditional_token = tokens.consume();
-    tokens.ignore_whitespace();
+) -> Result<(Type, Option<ASTNode>), CompilerError> where 'a: 'b {
+  let typ = if tokens.try_skip_and_ignore_whitespace("?") {
     if tokens.peek_str() != ":" {
-      return Err(CompilerError {
-        message: "Expected `:` after `?` in conditional declaration".to_owned(),
-        token: conditional_token
-      })
+      return Err(CompilerError::new(
+        "Expected `:` after `?` in conditional declaration".to_owned(),
+        tokens.consume(), tokens
+      ))
     }
     let mut typ = get_type(tokens)?;
     typ.intersection(Type::Void);
     Some(typ)
+  } else if tokens.try_skip_and_ignore_whitespace("!") {
+    if tokens.peek_str() != ":" {
+      return Err(CompilerError::new(
+        "Expected `:` after `!` in non-null asserted declaration".to_owned(),
+        tokens.consume(), tokens
+      ))
+    }
+    Some(get_type(tokens)?)
   } else {
     try_get_type(tokens)?
   }.unwrap_or(Type::Unknown);
@@ -187,6 +193,14 @@ fn get_declaration_after_name<'a, 'b>(
   Ok((typ, value))
 }
 
+fn get_destructurable_declaration<'a, 'b>(
+  tokens: &'b mut TokenList<'a>
+) -> Result<DestructurableDeclaration, CompilerError> where 'a: 'b {
+  let name = parse_destructure_pattern(tokens)?;
+  let (typ, initializer) = get_declaration_after_name(tokens)?;
+  Ok(DestructurableDeclaration { name, typ, initializer })
+}
+
 /// Gets multiple named declarations, with or without values.
 /// Stops when it encounters a semicolon or closing parenthesis
 /// 
@@ -198,7 +212,7 @@ fn get_declaration_after_name<'a, 'b>(
 fn get_multiple_declarations<'a, 'b>(
   tokens: &'b mut TokenList<'a>,
   allow_rest: bool
-) -> Result<(SmallVec<Declaration>, Rest), CompilerError<'a>> where 'a: 'b {
+) -> Result<(SmallVec<Declaration>, Rest), CompilerError> where 'a: 'b {
   tokens.ignore_whitespace();
   let mut declarations = SmallVec::new();
   let mut rest = Rest::new();
@@ -213,15 +227,13 @@ fn get_multiple_declarations<'a, 'b>(
 fn get_multiple_destructurable_declarations<'a, 'b>(
   tokens: &'b mut TokenList<'a>,
   allow_rest: bool
-) -> Result<(SmallVec<DestructurableDeclaration>, Rest), CompilerError<'a>> where 'a: 'b {
+) -> Result<(SmallVec<DestructurableDeclaration>, Rest), CompilerError> where 'a: 'b {
   tokens.ignore_whitespace();
   let mut declarations: SmallVec<DestructurableDeclaration> = SmallVec::new();
   let mut rest = Rest::new();
   while ![ ";", ")" ].contains(&tokens.peek_str()) {
     rest.try_set(tokens, allow_rest)?;
-    let name = parse_destructure_pattern(tokens)?;
-    let (typ, initializer) = get_declaration_after_name(tokens)?;
-    declarations.push(DestructurableDeclaration { name, typ, initializer });
+    declarations.push(get_destructurable_declaration(tokens)?);
     if !tokens.ignore_commas() { break }
   }
   Ok((declarations, rest))
@@ -229,7 +241,7 @@ fn get_multiple_destructurable_declarations<'a, 'b>(
 
 fn parse_destructure_pattern<'a>(
   tokens: &mut TokenList<'a>
-) -> Result<DestructurePattern, CompilerError<'a>> {
+) -> Result<DestructurePattern, CompilerError> {
   tokens.ignore_whitespace();
   match tokens.peek_str() {
     "[" => {
@@ -241,28 +253,28 @@ fn parse_destructure_pattern<'a>(
         tokens.ignore_whitespace();
         if tokens.peek_str() == "..." {
           if spread.is_some() {
-            return Err(CompilerError {
-              message: "Only one spread allowed in array destructure".to_owned(),
-              token: tokens.consume()
-            })
+            return Err(CompilerError::new(
+              "Only one spread allowed in array destructure".to_owned(),
+              tokens.consume(), tokens
+            ))
           }
           tokens.skip_unchecked();
           spread = Some(Box::new(parse_destructure_pattern(tokens)?));
         } else if tokens.peek_str() == "," {
           if spread.is_some() {
-            return Err(CompilerError {
-              message: "A spread may not have a trailing comma".to_owned(),
-              token: tokens.consume()
-            })
+            return Err(CompilerError::new(
+              "A spread may not have a trailing comma".to_owned(),
+              tokens.consume(), tokens
+            ))
           }
           tokens.skip_unchecked();
           elements.push(DestructurePattern::Ignore);
         } else {
           if spread.is_some() {
-            return Err(CompilerError {
-              message: "A spread must be last in a destructuring pattern".to_owned(),
-              token: tokens.consume()
-            })
+            return Err(CompilerError::new(
+              "A spread must be last in a destructuring pattern".to_owned(),
+              tokens.consume(), tokens
+            ))
           }
           elements.push(parse_destructure_pattern(tokens)?);
         }
@@ -284,27 +296,27 @@ fn parse_destructure_pattern<'a>(
         tokens.ignore_whitespace();
         if tokens.peek_str() == "..." {
           if spread.is_some() {
-            return Err(CompilerError {
-              message: "Only one spread allowed in object destructure".to_owned(),
-              token: tokens.consume()
-            })
+            return Err(CompilerError::new(
+              "Only one spread allowed in object destructure".to_owned(),
+              tokens.consume(), tokens
+            ))
           }
           tokens.skip_unchecked();
           spread = Some(Box::new(parse_destructure_pattern(tokens)?));
         } else if tokens.peek_str() == "," {
           if spread.is_some() {
-            return Err(CompilerError {
-              message: "A spread may not have a trailing comma".to_owned(),
-              token: tokens.consume()
-            })
+            return Err(CompilerError::new(
+              "A spread may not have a trailing comma".to_owned(),
+              tokens.consume(), tokens
+            ))
           }
           tokens.skip_unchecked();
         } else {
           if spread.is_some() {
-            return Err(CompilerError {
-              message: "A spread must be last in a destructuring pattern".to_owned(),
-              token: tokens.consume()
-            })
+            return Err(CompilerError::new(
+              "A spread must be last in a destructuring pattern".to_owned(),
+              tokens.consume(), tokens
+            ))
           }
           let property = tokens.consume();
           tokens.ignore_whitespace();
@@ -313,10 +325,10 @@ fn parse_destructure_pattern<'a>(
             parse_destructure_pattern(tokens)?
           } else {
             if !property.is_identifier() {
-              return Err(CompilerError {
-                message: "Only identifiers can be left un-renamed when destructuring".to_owned(),
-                token: property
-              })
+              return Err(CompilerError::new(
+                "Only identifiers can be left un-renamed when destructuring".to_owned(),
+                property, tokens
+              ))
             }
             DestructurePattern::Identifier { name: property.value.to_owned() }
           };
@@ -343,7 +355,7 @@ fn parse_destructure_pattern<'a>(
 /// Handles control flow, like `if`, `while`, and `for`
 fn handle_control_flow<'a>(
   tokens: &mut TokenList<'a>
-) -> Result<Option<ASTNode>, CompilerError<'a>> {
+) -> Result<Option<ASTNode>, CompilerError> {
   const CONTROL_FLOW: &[&str] = &[ "if", "while", "for", "switch" ];
   if !CONTROL_FLOW.contains(&tokens.peek_str()) {
     return Ok(None);
@@ -399,7 +411,7 @@ fn handle_control_flow<'a>(
         let def_typ = get_variable_def_type(tokens)?;
         let defs = get_multiple_destructurable_declarations(tokens, false)?.0;
         ASTNode::VariableDeclaration {
-          modifiers: Default::default(),
+          modifiers: ModifierList::new(),
           def_type: def_typ,
           defs
         }
@@ -445,32 +457,97 @@ fn handle_control_flow<'a>(
           body: Box::new(body)
         }
       } else {
-        return Err(CompilerError {
-          message: "Expected `;`, `of`, or `in` in for loop".to_owned(),
-          token: tokens.peek().clone()
-        })
+        return Err(CompilerError::new(
+          "Expected `;`, `of`, or `in` in for loop".to_owned(),
+          tokens.peek().clone(), tokens
+        ))
       }
     },
-    // "switch" => {},
+    "switch" => {
+      // Get condition
+      tokens.skip("(")?;
+      let condition = get_expression(tokens, 0)?;
+      tokens.ignore_whitespace();
+      tokens.skip(")")?;
+
+      tokens.ignore_whitespace();
+      tokens.skip("{")?;
+
+      let mut cases = SmallVec::new();
+      let mut default = None;
+
+      while tokens.peek_str() != "}" {
+        tokens.ignore_whitespace();
+        if tokens.peek_str() == "case" {
+          tokens.skip_unchecked();
+          let case_condition = get_expression(tokens, 0)?;
+          tokens.ignore_whitespace();
+          tokens.skip(":")?;
+          let mut case_body = SmallVec::new();
+          while !tokens.is_done() && ![ "case", "default", "}" ].contains(&tokens.peek_str()) {
+            case_body.push(get_single_statement(tokens)?);
+            tokens.ignore_whitespace();
+          }
+          cases.push((case_condition, case_body));
+        } else if tokens.peek_str() == "default" {
+          if default.is_some() {
+            return Err(CompilerError::new(
+              "Switch statements can only have one default case".to_owned(),
+              tokens.consume(), tokens
+            ))
+          }
+          tokens.skip_unchecked();
+          tokens.ignore_whitespace();
+          tokens.skip(":")?;
+          let mut default_body = SmallVec::new();
+          while !tokens.is_done() && ![ "case", "}" ].contains(&tokens.peek_str()) {
+            default_body.push(get_single_statement(tokens)?);
+            tokens.ignore_whitespace();
+          }
+          default = Some(default_body);
+        } else {
+          return Err(CompilerError::new(
+            "Expected `case` or `default` in switch statement".to_owned(),
+            tokens.consume(), tokens
+          ))
+        }
+      }
+
+      tokens.skip_unchecked(); // Skip "}"
+
+      ASTNode::StatementSwitch {
+        condition: Box::new(condition),
+        cases,
+        default
+      }
+    }
     other => { panic!("Control flow not implemented: {}", other); }
   }))
 }
 
 // fn get_for_header<'a>(
 //   tokens: &mut TokenList<'a>
-// ) -> Result<Option<ASTNode>, CompilerError<'a>> {
+// ) -> Result<Option<ASTNode>, CompilerError> {
   
 // }
 
 /// Handles import statements
 fn handle_import<'a>(
   tokens: &mut TokenList<'a>
-) -> Result<Option<ASTNode>, CompilerError<'a>> {
+) -> Result<Option<ASTNode>, CompilerError> {
   if tokens.peek_str() != "import" {
     return Ok(None);
   }
+  let checkpoint = tokens.get_checkpoint();
   tokens.skip_unchecked();
   tokens.ignore_whitespace();
+
+  if tokens.try_skip_and_ignore_whitespace("(") {
+    tokens.restore_checkpoint(checkpoint);
+    return Ok(Some(get_expression(tokens, 0)?));
+  } else {
+    tokens.ignore_checkpoint(checkpoint);
+  }
 
   let mut has_distinction = false;
 
@@ -536,7 +613,7 @@ fn handle_import<'a>(
 /// Handles `return`, `break`, `continue`, and `throw`
 fn handle_other_statements<'a>(
   tokens: &mut TokenList<'a>
-) -> Result<Option<ASTNode>, CompilerError<'a>> {
+) -> Result<Option<ASTNode>, CompilerError> {
   const STATEMENT_NAMES: &[&str] = &[
     "return",
     "break",
@@ -567,7 +644,7 @@ fn handle_other_statements<'a>(
 
 fn handle_function_declaration<'a, 'b>(
   tokens: &'b mut TokenList<'a>,
-) -> Result<Option<ASTNode>, CompilerError<'a>> where 'a: 'b {
+) -> Result<Option<ASTNode>, CompilerError> where 'a: 'b {
   if tokens.peek_str() != "function" {
     return Ok(None);
   }
@@ -597,7 +674,7 @@ fn handle_function_declaration<'a, 'b>(
 fn get_function_after_name<'a, 'b>(
   tokens: &'b mut TokenList<'a>,
   name: Option<String>
-) -> Result<FunctionDefinition, CompilerError<'a>> where 'a: 'b {
+) -> Result<FunctionDefinition, CompilerError> where 'a: 'b {
   tokens.ignore_whitespace();
 
   let generics = get_optional_generics(tokens)?;
@@ -605,7 +682,7 @@ fn get_function_after_name<'a, 'b>(
   // Get parameters and return type
   tokens.ignore_whitespace();
   tokens.skip("(")?;
-  let params = get_multiple_declarations(tokens, true)?;
+  let params = get_multiple_destructurable_declarations(tokens, true)?;
   tokens.skip(")")?;
   let return_type = try_get_type(tokens)?;
 
@@ -620,7 +697,7 @@ fn get_function_after_name<'a, 'b>(
   };
 
   Ok(FunctionDefinition {
-    modifiers: Default::default(),
+    modifiers: ModifierList::new(),
     name,
     generics,
     params: params.0,
@@ -634,29 +711,29 @@ fn get_function_after_name<'a, 'b>(
 fn get_constructor_after_name<'a, 'b>(
   tokens: &'b mut TokenList<'a>,
   declarations: &mut SmallVec<(DeclarationComputable, ModifierList)>
-) -> Result<FunctionDefinition, CompilerError<'a>> where 'a: 'b {
+) -> Result<FunctionDefinition, CompilerError> where 'a: 'b {
   tokens.ignore_whitespace();
 
   // Handle generics
   if tokens.peek_str() == "<" {
-    return Err(CompilerError {
-      message: "Type parameters cannot appear on a constructor declaration.".to_owned(),
-      token: tokens.consume()
-    })
+    return Err(CompilerError::new(
+      "Type parameters cannot appear on a constructor declaration.".to_owned(),
+      tokens.consume(), tokens
+    ))
   }
   
   // Get parameters
-  let mut params = SmallVec::new();
+  let mut params: SmallVec<DestructurableDeclaration> = SmallVec::new();
   let mut set_properties: SmallVec<ASTNode> = SmallVec::new();
   let mut rest = Rest::new();
   tokens.skip("(")?;
   while tokens.peek_str() != ")" {
     tokens.ignore_whitespace();
+    rest.try_set(tokens, true)?;
     if ACCESSIBILITY_MODIFIERS.contains(&tokens.peek_str()) {
       let modifiers = fetch_modifier_list(tokens);
       let mut declaration = get_declaration(tokens)?;
-      rest.try_set(tokens, true)?;
-      params.push(declaration.clone());
+      params.push(declaration.clone().into());
       declaration.clear_value();
       declarations.push((DeclarationComputable::from(&declaration), modifiers));
       set_properties.push(ASTNode::InfixOpr {
@@ -669,10 +746,14 @@ fn get_constructor_after_name<'a, 'b>(
         right: Box::new(ASTNode::ExprIdentifier { name: declaration.name().clone() })
       })
     } else {
-      params.push(get_declaration(tokens)?);
+      params.push(get_destructurable_declaration(tokens)?);
+    }
+    tokens.ignore_whitespace();
+    if !tokens.try_skip_and_ignore_whitespace(",") {
+      break;
     }
   }
-  tokens.skip_unchecked(); // Skip ")"
+  tokens.skip(")")?;
 
   // Get return type
   tokens.ignore_whitespace();
@@ -692,19 +773,16 @@ fn get_constructor_after_name<'a, 'b>(
         Some(body)
       }
       other => {
-        return Err(CompilerError {
-          message: format!(
-            "Expected block in function body, found {:?}",
-            other
-          ),
-          token: Token::from("")
-        })
+        return Err(CompilerError::new(
+          format!("Expected block in function body, found {:?}", other),
+          Token::from(""), tokens
+        ))
       }
     }
   };
 
   Ok(FunctionDefinition {
-    modifiers: Default::default(),
+    modifiers: ModifierList::new(),
     name: Some("constructor".to_owned()),
     generics: SmallVec::new(),
     params,
@@ -716,7 +794,7 @@ fn get_constructor_after_name<'a, 'b>(
 
 fn handle_class_declaration<'a, 'b>(
   tokens: &'b mut TokenList<'a>
-) -> Result<Option<ASTNode>, CompilerError<'a>> where 'a: 'b {
+) -> Result<Option<ASTNode>, CompilerError> where 'a: 'b {
   if tokens.peek_str() != "class" {
     return Ok(None);
   }
@@ -725,7 +803,7 @@ fn handle_class_declaration<'a, 'b>(
 
 fn get_class_expression<'a, 'b>(
   tokens: &'b mut TokenList<'a>,
-) -> Result<ASTNode, CompilerError<'a>> where 'a: 'b {
+) -> Result<ASTNode, CompilerError> where 'a: 'b {
   tokens.skip_unchecked(); // Skip "class"
   tokens.ignore_whitespace();
 
@@ -736,10 +814,10 @@ fn get_class_expression<'a, 'b>(
     implements
   } = get_typed_header(tokens, false)?;
   let extends = match extends.len() {
-    len if len > 1 => return Err(CompilerError {
-      message: "Classes can only extend once!".to_owned(),
-      token: Token::from("")
-    }),
+    len if len > 1 => return Err(CompilerError::new(
+      "Classes can only extend once!".to_owned(),
+      Token::from(""), tokens
+    )),
     1 => Some(extends.last().unwrap().clone()),
     _ => None
   };
@@ -761,13 +839,10 @@ fn get_class_expression<'a, 'b>(
     // Get modifiers (if any)
     let modifiers = fetch_modifier_list(tokens);
 
-    let checkpoint = tokens.get_checkpoint();
-
     // Get the name (might be a property or a method, we don't know yet)
 
     if tokens.peek_str() == "[" {
       // Key-value map!;
-      tokens.ignore_checkpoint(checkpoint);
       // TODO: make this accept more than single-token computed properties
       // TODO: fix computed properties
       let init_token = tokens.peek().clone();
@@ -787,10 +862,10 @@ fn get_class_expression<'a, 'b>(
           ));
         }
         ObjectSquareBracketReturn::MappedType(..) => {
-          return Err(CompilerError {
-            message: "Mapped types are not allowed in class bodies".to_owned(),
-            token: init_token
-          })
+          return Err(CompilerError::new(
+            "Mapped types are not allowed in class bodies".to_owned(),
+            init_token, tokens
+          ))
         }
       }
       
@@ -812,38 +887,31 @@ fn get_class_expression<'a, 'b>(
     // TODO: replace below with `let name = tokens.consume_type(TokenType::Identifier)?;`
     let name = tokens.consume();
     if !name.is_identifier() {
-      tokens.ignore_checkpoint(checkpoint);
-      return Err(CompilerError {
-        message: "Expected identifier in class body!".to_string(),
-        token: name
-      })
+      return Err(CompilerError::new(
+        "Expected identifier in class body!".to_string(),
+        name, tokens
+      ))
     }
     tokens.ignore_whitespace();
 
-    if name.value != "constructor" && [ ":", "=", ";" ].contains(&tokens.peek_str()) {
+    if name.value != "constructor" && [ ":", "?", "!", "=", ";" ].contains(&tokens.peek_str()) {
       // Normal property
-      tokens.restore_checkpoint(checkpoint);
 
       if is_getter || is_setter {
-        return Err(CompilerError {
-          message: "Getters and setters must be followed by a method body!".to_owned(),
-          token: tokens.peek().clone()
-        });
+        return Err(CompilerError::new(
+          "Getters and setters must be followed by a method body!".to_owned(),
+          tokens.peek().clone(), tokens
+        ));
       }
 
       // Get the declaration
-      let gotten_declarations = get_multiple_declarations(tokens, false)?.0;
-
-      // Add the declaration
-      for declaration in gotten_declarations {
-        declarations.push((
-          DeclarationComputable::from(&declaration),
-          modifiers.clone()
-        ));
-      }
+      let (typ, value) = get_declaration_after_name(tokens)?;
+      declarations.push((
+        DeclarationComputable::named(name.value.to_owned(), typ, value),
+        modifiers
+      ));
     } else {
       // Otherwise, it's a method
-      tokens.ignore_checkpoint(checkpoint);
       let mut function = if name.value == "constructor" {
         get_constructor_after_name(
           tokens,
@@ -857,9 +925,7 @@ fn get_class_expression<'a, 'b>(
       };
 
       function.modifiers.flags |= modifiers.flags;
-      if !function.modifiers.has(Modifier::Public) &&
-        !function.modifiers.has(Modifier::Private) &&
-        !function.modifiers.has(Modifier::Protected) {
+      if !function.modifiers.has_accessibility() {
         function.modifiers.set(Modifier::Public);
       }
       methods.push((
@@ -886,7 +952,7 @@ fn get_class_expression<'a, 'b>(
   tokens.skip("}")?; // Skip body "}"
 
   Ok(ASTNode::ClassDefinition { inner: Box::new(ClassDefinition {
-    modifiers: Default::default(),
+    modifiers: ModifierList::new(),
     name,
     generics,
     extends,
@@ -908,7 +974,7 @@ struct TypedHeader {
 fn get_typed_header<'a>(
   tokens: &mut TokenList<'a>,
   require_name: bool
-) -> Result<TypedHeader, CompilerError<'a>> {
+) -> Result<TypedHeader, CompilerError> {
   tokens.ignore_whitespace();
   let name = tokens.peek();
   let is_illegal_name = DISALLOWED_VARIABLE_NAMES.contains(&name.value);
@@ -916,10 +982,10 @@ fn get_typed_header<'a>(
     Some(tokens.consume().value.to_owned())
   } else if require_name {
     let t = tokens.consume();
-    return Err(CompilerError {
-      message: format!("Expected header name, found {:?}", t.value),
-      token: t
-    });
+    return Err(CompilerError::new(
+      format!("Expected header name, found {:?}", t.value),
+      t, tokens
+    ));
   } else {
     None
   };
@@ -949,7 +1015,7 @@ fn get_typed_header<'a>(
 
 fn handle_modifiers<'a>(
   tokens: &mut TokenList<'a>
-) -> Result<Option<ASTNode>, CompilerError<'a>> {
+) -> Result<Option<ASTNode>, CompilerError> {
   if !MODIFIERS.contains(&tokens.peek_str()) {
     return Ok(None);
   }
@@ -965,19 +1031,20 @@ fn handle_modifiers<'a>(
 }
 
 fn fetch_modifier_list(tokens: &mut TokenList) -> ModifierList {
-  let mut modifiers: ModifierList = Default::default();
+  let mut modifiers: ModifierList = ModifierList::new();
   while MODIFIERS.contains(&tokens.peek_str()) {
-    match tokens.consume().value {
-      "export" => { modifiers.set(Modifier::Export); },
-      "async" => { modifiers.set(Modifier::Async); },
-      "static" => { modifiers.set(Modifier::Static); },
-      "public" => { modifiers.set(Modifier::Public); },
-      "private" => { modifiers.set(Modifier::Private); },
-      "protected" => { modifiers.set(Modifier::Protected); },
-      "readonly" => { modifiers.set(Modifier::Readonly); },
-      "abstract" => { modifiers.set(Modifier::Abstract); },
-      other => { panic!("Modifier not implemented: {:?}", other); }
-    };
+    modifiers.set(match tokens.consume().value {
+      "export" => Modifier::Export,
+      "async" => Modifier::Async,
+      "static" => Modifier::Static,
+      "public" => Modifier::Public,
+      "private" => Modifier::Private,
+      "protected" => Modifier::Protected,
+      "readonly" => Modifier::Readonly,
+      "abstract" => Modifier::Abstract,
+      "override" => Modifier::Override,
+      other => panic!("Modifier not implemented: {:?}", other)
+    });
     tokens.ignore_whitespace();
   }
   modifiers
@@ -985,7 +1052,7 @@ fn fetch_modifier_list(tokens: &mut TokenList) -> ModifierList {
 
 fn handle_type_declaration<'a>(
   tokens: &mut TokenList<'a>
-) -> Result<Option<ASTNode>, CompilerError<'a>> {
+) -> Result<Option<ASTNode>, CompilerError> {
   if tokens.peek_str() != "type" {
     return Ok(None);
   }
@@ -997,16 +1064,16 @@ fn handle_type_declaration<'a>(
   } = get_typed_header(tokens, true)?;
   let name = unsafe { name.unwrap_unchecked() };
   if !extends.is_empty() {
-    return Err(CompilerError {
-      message: "Type declarations can't extend!".to_owned(),
-      token: Token::from("")
-    })
+    return Err(CompilerError::new(
+      "Type declarations can't extend!".to_owned(),
+      Token::from(""), tokens
+    ))
   }
   if !implements.is_empty() {
-    return Err(CompilerError {
-      message: "Type declarations can't implement!".to_owned(),
-      token: Token::from("")
-    })
+    return Err(CompilerError::new(
+      "Type declarations can't implement!".to_owned(),
+      Token::from(""), tokens
+    ))
   }
 
   // Consume `=`
@@ -1017,6 +1084,7 @@ fn handle_type_declaration<'a>(
   let equals_typ = get_type(tokens)?;
 
   Ok(Some(ASTNode::InterfaceDeclaration { inner: Box::new(InterfaceDeclaration {
+    modifiers: ModifierList::new(),
     name,
     generics,
     extends,
@@ -1027,7 +1095,7 @@ fn handle_type_declaration<'a>(
 fn handle_enum<'a>(
   tokens: &mut TokenList<'a>,
   is_const: bool
-) -> Result<Option<ASTNode>, CompilerError<'a>> {
+) -> Result<Option<ASTNode>, CompilerError> {
   if tokens.peek_str() != "enum" {
     return Ok(None)
   }
@@ -1036,10 +1104,10 @@ fn handle_enum<'a>(
 
   let name = match tokens.consume() {
     token if token.value.len() == 0 => {
-      return Err(CompilerError {
-        message: "Expected enum name".to_owned(),
-        token: token
-      })
+      return Err(CompilerError::new(
+        "Expected enum name".to_owned(),
+        token, tokens
+      ))
     },
     token => token.value.to_owned()
   };
@@ -1060,10 +1128,10 @@ fn handle_enum<'a>(
       TokenType::String => token.value.to_owned(),
       TokenType::Identifier => "\"".to_owned() + token.value + "\"",
       _ => {
-        return Err(CompilerError {
-          message: "Expected string or identifier".to_owned(),
-          token: token
-        })
+        return Err(CompilerError::new(
+          "Expected string or identifier".to_owned(),
+          token, tokens
+        ))
       }
     };
     tokens.ignore_whitespace();
@@ -1084,6 +1152,7 @@ fn handle_enum<'a>(
   tokens.skip("}")?;
 
   Ok(Some(ASTNode::EnumDeclaration { inner: Box::new(EnumDeclaration {
+    modifiers: ModifierList::new(),
     name,
     members,
     is_const,
@@ -1092,7 +1161,7 @@ fn handle_enum<'a>(
 
 fn handle_interface<'a>(
   tokens: &mut TokenList<'a>
-) -> Result<Option<ASTNode>, CompilerError<'a>> {
+) -> Result<Option<ASTNode>, CompilerError> {
   if tokens.peek_str() != "interface" {
     return Ok(None);
   }
@@ -1104,10 +1173,10 @@ fn handle_interface<'a>(
   } = get_typed_header(tokens, true)?;
   let name = unsafe { name.unwrap_unchecked() };
   if !implements.is_empty() {
-    return Err(CompilerError {
-      message: "Interfaces can't implement, only extend!".to_owned(),
-      token: Token::from("")
-    })
+    return Err(CompilerError::new(
+      "Interfaces can't implement, only extend!".to_owned(),
+      Token::from(""), tokens
+    ))
   }
 
   tokens.skip("{")?;
@@ -1141,10 +1210,10 @@ fn handle_interface<'a>(
           ))
         },
         ObjectSquareBracketReturn::MappedType(..) => {
-          return Err(CompilerError {
-            message: "Mapped types are not allowed in interface bodies".to_owned(),
-            token: Token::from("")
-          })
+          return Err(CompilerError::new(
+            "Mapped types are not allowed in interface bodies".to_owned(),
+            Token::from(""), tokens
+          ))
         }
       }
     } else {
@@ -1190,6 +1259,7 @@ fn handle_interface<'a>(
   if function_types.inner_count() != 0 { equals_type.intersection(function_types); }
   if named_dict.inner_count() != 0 { equals_type.intersection(named_dict); }
   Ok(Some(ASTNode::InterfaceDeclaration { inner: Box::new(InterfaceDeclaration {
+    modifiers: ModifierList::new(),
     name,
     generics,
     extends,
@@ -1209,7 +1279,7 @@ fn handle_interface<'a>(
 /// Handles expressions. Basically a soft wrapper around `get_expression`
 fn handle_expression<'a>(
   tokens: &mut TokenList<'a>
-) -> Result<ASTNode, CompilerError<'a>> {
+) -> Result<ASTNode, CompilerError> {
   get_expression(tokens, 0)
 }
 
@@ -1225,9 +1295,43 @@ fn parse_string(tokens: &mut TokenList) -> ASTNode {
   }
 }
 
+fn parse_string_template<'a>(
+  tokens: &mut TokenList<'a>
+) -> Result<ASTNode, CompilerError> {
+  let head_token = tokens.consume();
+  let head = head_token.value[1..head_token.value.len() - 2].to_owned();
+
+  let mut parts = SmallVec::new();
+
+  while tokens.peek().typ != TokenType::EndOfFile {
+    let expr = get_expression(tokens, 0)?;
+    let literal_part = tokens.consume();
+    if literal_part.typ != TokenType::StringTemplateMiddle && literal_part.typ != TokenType::StringTemplateEnd {
+      return Err(CompilerError::new(
+        "Expected string template part".to_owned(),
+        literal_part, tokens
+      ));
+    }
+    parts.push((expr, match literal_part.typ {
+      TokenType::StringTemplateMiddle => literal_part.value[1..literal_part.value.len() - 2].to_owned(),
+      TokenType::StringTemplateEnd => literal_part.value[1..literal_part.value.len() - 1].to_owned(),
+      _ => unreachable!()
+    }));
+    if literal_part.typ == TokenType::StringTemplateEnd { break; }
+    if tokens.peek().typ == TokenType::EndOfFile {
+      return Err(CompilerError::new(
+        "Unterminated template literal".to_owned(),
+        tokens.peek().clone(), tokens
+      ));
+    }
+  }
+
+  Ok(ASTNode::ExprTemplateLiteral { head, parts })
+}
+
 fn parse_name<'a>(
   tokens: &mut TokenList<'a>
-) -> Result<ASTNode, CompilerError<'a>> {
+) -> Result<ASTNode, CompilerError> {
   if tokens.peek_str() == "function" {
     // Handle inline functions
     return Ok(handle_function_declaration(tokens)?.unwrap());
@@ -1243,7 +1347,7 @@ fn parse_name<'a>(
 fn parse_prefix<'a>(
   tokens: &mut TokenList<'a>,
   precedence: u8
-) -> Result<ASTNode, CompilerError<'a>> {
+) -> Result<ASTNode, CompilerError> {
   let prefix_start = tokens.consume().value.to_string();
 
   let is_grouping = [ "(", "[" ].contains(&prefix_start.as_str());
@@ -1295,10 +1399,10 @@ fn parse_prefix<'a>(
             (true, inner_key)
           },
           other => {
-            return Err(CompilerError {
-              message: format!("Expected key, found {:?}", other),
-              token: key_token.clone()
-            });
+            return Err(CompilerError::new(
+              format!("Expected property assignment, found {:?}", other),
+              key_token.clone(), tokens
+            ));
           }
         };
   
@@ -1335,7 +1439,7 @@ fn parse_infix<'a, 'b>(
   left: ASTNode,
   tokens: &'b mut TokenList<'a>,
   precedence: u8
-) -> Result<ASTNode, CompilerError<'a>> where 'a: 'b {
+) -> Result<ASTNode, CompilerError> where 'a: 'b {
   let opr_token = tokens.consume();
   let opr = opr_token.value.to_string();
 
@@ -1348,11 +1452,19 @@ fn parse_infix<'a, 'b>(
     tokens.skip(group_end)?; // Skip trailing group
 
     match opr.as_str() {
-      "(" => return Ok(ASTNode::ExprFunctionCall {
-        callee: Box::new(left),
-        generics: SmallVec::new(),
-        arguments: separate_commas(inner)
-      }),
+      "(" => {
+        if let ASTNode::ExprIdentifier { name } = &left {
+          if name == "import" {
+            // Dynamic import
+            return Ok(ASTNode::ExpressionImport { value: Box::new(inner) });
+          }
+        }
+        return Ok(ASTNode::ExprFunctionCall {
+          callee: Box::new(left),
+          generics: SmallVec::new(),
+          arguments: separate_commas(inner)
+        })
+      },
       "[" => return Ok(ASTNode::ExprIndexing {
         callee: Box::new(left),
         property: Box::new(inner)
@@ -1379,22 +1491,22 @@ fn parse_infix<'a, 'b>(
               ASTNode::ExprIdentifier { name } => Declaration::new(name, Type::Unknown, Some(*right)),
               _ => panic!() // This won't happen
             }
-            other => return Err(CompilerError {
-              message: format!("Arrow function expected parameter, found {:?}", other),
-              token: other.as_token()
-            })
+            other => return Err(CompilerError::new(
+              format!("Arrow function expected parameter, found {:?}", other),
+              other.as_token(), tokens
+            ))
           });
         }
         params
       }
       other => {
-        return Err(CompilerError {
-          message: format!(
+        return Err(CompilerError::new(
+          format!(
             "Arrow function expected parenthesis or identifier, found {:?}",
             other
           ),
-          token: other.as_token()
-        })
+          other.as_token(), tokens
+        ))
       }
     };
 
@@ -1406,10 +1518,10 @@ fn parse_infix<'a, 'b>(
     let mut if_true = get_expression(tokens, *crate::operations::COLON_PRECEDENCE)?;
     while tokens.peek_str() != ":" {
       if tokens.is_done() {
-        return Err(CompilerError {
-          message: "Ternary not closed!".to_string(),
-          token: tokens.consume()
-        });
+        return Err(CompilerError::new(
+          "Ternary not closed!".to_string(),
+          tokens.consume(), tokens
+        ));
       }
       if_true = parse_infix(
         if_true,
@@ -1476,7 +1588,7 @@ fn separate_commas(node: ASTNode) -> SmallVec<ASTNode> {
 /// if this function returns None.
 fn parse_arrow_function<'a>(
   tokens: &mut TokenList<'a>,
-) -> Result<ASTNode, CompilerError<'a>> {
+) -> Result<ASTNode, CompilerError> {
   tokens.skip("(")?;
   let (params, spread) = get_multiple_declarations(tokens, true)?;
   tokens.skip(")")?;
@@ -1492,7 +1604,7 @@ fn parse_arrow_function_after_arrow<'a>(
   params: SmallVec<Declaration>,
   rest: Rest,
   return_type: Type
-) -> Result<ASTNode, CompilerError<'a>> {
+) -> Result<ASTNode, CompilerError> {
   tokens.ignore_whitespace();
   let is_expression = tokens.peek_str() != "{";
   let body = if is_expression {
@@ -1514,7 +1626,7 @@ fn parse_arrow_function_after_arrow<'a>(
 pub fn get_expression<'a, 'b>(
   tokens: &'b mut TokenList<'a>,
   precedence: u8
-) -> Result<ASTNode, CompilerError<'a>> where 'a: 'b {
+) -> Result<ASTNode, CompilerError> where 'a: 'b {
   tokens.ignore_whitespace();
   
   // Get left (or sometimes only) side (which can be the prexfix!)
@@ -1529,6 +1641,7 @@ pub fn get_expression<'a, 'b>(
     match next.typ {
       TokenType::Number => parse_number(tokens),
       TokenType::String => parse_string(tokens),
+      TokenType::StringTemplateStart => parse_string_template(tokens)?,
       TokenType::Symbol | TokenType::Identifier => {
         // `class` can be used inside an expression, but calling it a
         // prefix feels strange... I'm going to handle it here
@@ -1579,21 +1692,21 @@ pub fn get_expression<'a, 'b>(
             parse_name(tokens)?
           } else {
             // Not a name & no matching operators.
-            return Err(CompilerError {
-              message: "Prefix operator not found".to_owned(),
-              token: tokens.consume()
-            });
+            return Err(CompilerError::new(
+              "Prefix operator not found".to_owned(),
+              tokens.consume(), tokens
+            ));
           }
         }
       },
       _ => {
-        return Err(CompilerError {
-          message: format!(
+        return Err(CompilerError::new(
+          format!(
             "Unexpected token when parsing expression: {:?}",
             next
           ),
-          token: tokens.consume()
-        });
+          tokens.consume(), tokens
+        ));
       },
     }
   };

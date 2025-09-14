@@ -127,7 +127,7 @@ impl<T: Debug> SmallVec<T> {
         std::ptr::copy_nonoverlapping(
           self.memory,
           new_memory.add(other.len()),
-          self.capacity()
+          self.len()
         );
         self.drop_inner_buffer();
         self.memory = new_memory;
@@ -180,7 +180,11 @@ impl<T: Debug> SmallVec<T> {
   /// Gets a pointer to a new slice of memory of a given capacity
   unsafe fn get_new_memory(capacity: SizeType) -> *mut T {
     let layout = Layout::array::<T>(capacity as usize).unwrap();
-    std::alloc::alloc(layout) as *mut T
+    let ptr = std::alloc::alloc(layout) as *mut T;
+    if ptr.is_null() {
+      std::alloc::handle_alloc_error(layout);
+    }
+    ptr
   }
 
   /// Drops the inner buffer, which is both used for changing capacity and
@@ -395,8 +399,8 @@ impl<T: Debug> Iterator for IntoIter<T> {
 }
 impl<T: Debug> Drop for IntoIter<T> {
   fn drop(&mut self) {
-    // Iterate over each element, dropping it when it goes out of scope
-    for _ in self.by_ref() {}
+    // Drop any remaining elements
+    while let Some(_) = self.next() {}
 
     // Setting the length to zero prevents the elements inside the vec from
     // being dropped when the vec is dropped (meaning they'd be double freed).

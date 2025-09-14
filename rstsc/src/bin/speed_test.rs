@@ -18,7 +18,7 @@ fn main() {
 
     let ast = get_block(&mut tokens);
     if ast.is_err() {
-      ast.err().unwrap().throw(tokens);
+      ast.err().unwrap().throw(&tokens);
       return;
     }
 

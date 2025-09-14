@@ -85,7 +85,8 @@ fn tsc_tests() {
     for (tag, lookups) in tags.iter() {
       let mut found = false;
       for l in lookups {
-        let a = l.captures_iter(source);
+        let padded_source = " ".to_owned() + source;
+        let a = l.captures_iter(&padded_source);
         if a.count() > 0 {
           found = true;
           break;

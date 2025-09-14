@@ -296,7 +296,7 @@ impl Type {
 /// If it *does* start with a `:`, that gets consumed and the type is returned.
 pub fn get_type<'a, 'b>(
   tokens: &'b mut TokenList<'a>
-) -> Result<Type, CompilerError<'a>> where 'a: 'b {
+) -> Result<Type, CompilerError> where 'a: 'b {
   if tokens.peek_str() == ":" {
     tokens.skip_unchecked();
   }
@@ -307,7 +307,7 @@ pub fn get_type<'a, 'b>(
 /// Otherwise, returns None
 pub fn try_get_type<'a, 'b>(
   tokens: &'b mut TokenList<'a>
-) -> Result<Option<Type>, CompilerError<'a>> where 'a: 'b {
+) -> Result<Option<Type>, CompilerError> where 'a: 'b {
   if tokens.peek_str() != ":" {
     Ok(None)
   } else {
@@ -320,7 +320,7 @@ fn parse_infix<'a, 'b>(
   mut left: Type,
   tokens: &'b mut TokenList<'a>,
   precedence: u8
-) -> Result<Type, CompilerError<'a>> where 'a: 'b {
+) -> Result<Type, CompilerError> where 'a: 'b {
   let conditional = tokens.try_skip_and_ignore_whitespace("?");
   let infix_opr = tokens.consume();
   match infix_opr.value {
@@ -379,13 +379,13 @@ fn parse_infix<'a, 'b>(
           property: Box::new(arguments.pop().unwrap())
         })
       } else {
-        Err(CompilerError {
-          message: format!(
+        Err(CompilerError::new(
+          format!(
             "Type indices need exactly one argument, found {}",
             arguments.len()
           ),
-          token: infix_opr
-        })
+          infix_opr, tokens
+        ))
       }
     }
     "<" => {
@@ -449,13 +449,13 @@ fn parse_infix<'a, 'b>(
       })
     }
     other => {
-      Err(CompilerError {
-        message: format!(
+      Err(CompilerError::new(
+        format!(
           "Unexpected infix in type {:?}",
           other
         ),
-        token: infix_opr
-      })
+        infix_opr, tokens
+      ))
     }
   }
 }
@@ -475,7 +475,10 @@ fn parse_name(
   }
 }
 
-fn types_into_params<'a>(types: SmallVec<Type>) -> Result<SmallVec<TypeFunctionArgument>, CompilerError<'a>> {
+fn types_into_params<'a, 'b>(
+  types: SmallVec<Type>,
+  tokens: &'b mut TokenList<'a>
+) -> Result<SmallVec<TypeFunctionArgument>, CompilerError> where 'a: 'b {
   let mut params = SmallVec::with_capacity(types.len());
   for p in types.iter() {
     params.push(match p {
@@ -506,13 +509,13 @@ fn types_into_params<'a>(types: SmallVec<Type>) -> Result<SmallVec<TypeFunctionA
         }
       }
       other => {
-        return Err(CompilerError {
-          message: format!(
+        return Err(CompilerError::new(
+          format!(
             "Expected type argument, found type {:?}",
             other
           ),
-          token: Token::from("")
-        })
+          Token::from(""), tokens
+        ))
       }
     });
   }
@@ -522,7 +525,7 @@ fn types_into_params<'a>(types: SmallVec<Type>) -> Result<SmallVec<TypeFunctionA
 fn parse_prefix<'a, 'b>(
   tokens: &'b mut TokenList<'a>,
   precedence: u8
-) -> Result<Type, CompilerError<'a>> where 'a: 'b {
+) -> Result<Type, CompilerError> where 'a: 'b {
   let prefix_opr = tokens.consume();
   match prefix_opr.value {
     "{" => {
@@ -540,10 +543,10 @@ fn parse_prefix<'a, 'b>(
           if spread_idx != SizeType::MAX {
             // Multiple spreads are not allowed
             // eg. `let a: [boolean, ...number[], ...string[]]`
-            return Err(CompilerError {
-              message: "Can't have multiple spread elements in one tuple.".to_string(),
-              token: tokens.consume()
-            });
+            return Err(CompilerError::new(
+              "Can't have multiple spread elements in one tuple.".to_string(),
+              tokens.consume(), tokens
+            ));
           }
           spread_idx = inner_types.len_natural();
           tokens.skip_unchecked(); // Skip "..."
@@ -577,21 +580,21 @@ fn parse_prefix<'a, 'b>(
         // Normal parenthesized type
         if paren_contents.is_empty() {
           // Empty parenthesis?
-          Err(CompilerError::expected("=>", tokens.consume()))
+          Err(CompilerError::expected("=>", tokens.consume(), tokens))
         } else if paren_contents.len() == 1 {
           // Remove the type from inside!
           Ok(paren_contents.pop().unwrap())
         } else {
           Ok(Type::Function {
             generics: SmallVec::new(),
-            params: types_into_params(paren_contents)?,
+            params: types_into_params(paren_contents, tokens)?,
             return_type: Box::new(Type::Unknown),
             is_constructor: false
           })
         }
       } else {
         // Function
-        let params = types_into_params(paren_contents)?;
+        let params = types_into_params(paren_contents, tokens)?;
         tokens.skip_unchecked();
         let return_type = get_expression(tokens, precedence)?;
         Ok(Type::Function {
@@ -611,10 +614,10 @@ fn parse_prefix<'a, 'b>(
           *is_constructor = true;
         }
         other => {
-          return Err(CompilerError {
-            message: format!("`new` prefix expected \"Function\", found {:?}", other),
-            token: next_token
-          })
+          return Err(CompilerError::new(
+            format!("`new` prefix expected \"Function\", found {:?}", other),
+            next_token, tokens
+          ))
         }
       }
       Ok(next_type)
@@ -631,10 +634,10 @@ fn parse_prefix<'a, 'b>(
           Ok(Type::SpreadParameter { name: name.clone() })
         }
         _ => {
-          Err(CompilerError {
-            message: format!("Expected parameter after spread, found {:?}", param),
-            token: Token::from("")
-          })
+          Err(CompilerError::new(
+            format!("Expected parameter after spread, found {:?}", param),
+            Token::from(""), tokens
+          ))
         }
       }
     }
@@ -651,10 +654,10 @@ fn parse_prefix<'a, 'b>(
           inner_generics.append(&mut generics);
         }
         other => {
-          return Err(CompilerError {
-            message: format!("Expected Function type, found {:?}", other),
-            token: Token::from("")
-          })
+          return Err(CompilerError::new(
+            format!("Expected Function type, found {:?}", other),
+            Token::from(""), tokens
+          ))
         }
       }
       Ok(next_fn)
@@ -679,13 +682,13 @@ fn parse_prefix<'a, 'b>(
       ))
     }
     other => {
-      Err(CompilerError {
-        message: format!(
+      Err(CompilerError::new(
+        format!(
           "Type prefix operator not found: {:?}",
           other
         ),
-        token: prefix_opr
-      })
+        prefix_opr, tokens
+      ))
     }
   }
 }
@@ -693,7 +696,7 @@ fn parse_prefix<'a, 'b>(
 fn parse_curly_braces<'a, 'b>(
   tokens: &'b mut TokenList<'a>,
   precedence: u8
-) -> Result<Type, CompilerError<'a>> where 'a: 'b {
+) -> Result<Type, CompilerError> where 'a: 'b {
   let mut obj_parts = SmallVec::new();
   let mut kv_maps = SmallVec::new();
   let mut mapped_type: Option<Type> = None;
@@ -718,10 +721,10 @@ fn parse_curly_braces<'a, 'b>(
         }
         ObjectSquareBracketReturn::MappedType(typ) => {
           if mapped_type.is_some() {
-            return Err(CompilerError {
-              message: "Can't have multiple mapped types in one object.".to_string(),
-              token: tokens.consume()
-            });
+            return Err(CompilerError::new(
+              "Can't have multiple mapped types in one object.".to_string(),
+              tokens.consume(), tokens
+            ));
           }
           mapped_type = Some(typ.clone());
           continue;
@@ -759,7 +762,7 @@ fn parse_curly_braces<'a, 'b>(
 
 pub fn parse_object_square_bracket<'a, 'b>(
   tokens: &'b mut TokenList<'a>
-) -> Result<ObjectSquareBracketReturn, CompilerError<'a>> where 'a: 'b {
+) -> Result<ObjectSquareBracketReturn, CompilerError> where 'a: 'b {
   tokens.skip("[")?;
   tokens.ignore_whitespace();
 
@@ -811,7 +814,7 @@ pub fn parse_object_square_bracket<'a, 'b>(
 fn get_kvc_complex_key<'a, 'b>(
   key_token: Token<'a>,
   tokens: &'b mut TokenList<'a>
-) -> Result<ObjectSquareBracketReturn, CompilerError<'a>> where 'a: 'b {
+) -> Result<ObjectSquareBracketReturn, CompilerError> where 'a: 'b {
   let key_name = key_token.value.to_string();
   tokens.skip("in")?;
   tokens.ignore_whitespace();
@@ -838,7 +841,7 @@ fn get_kvc_complex_key<'a, 'b>(
 fn get_expression<'a, 'b>(
   tokens: &'b mut TokenList<'a>,
   precedence: u8
-) -> Result<Type, CompilerError<'a>> where 'a: 'b {
+) -> Result<Type, CompilerError> where 'a: 'b {
   tokens.ignore_whitespace();
 
   let mut left = {
@@ -873,23 +876,23 @@ fn get_expression<'a, 'b>(
           // Could be a name...
           parse_name(tokens)
         } else {
-          return Err(CompilerError {
-            message: format!(
+          return Err(CompilerError::new(
+            format!(
               "Prefix operator not found when fetching type: {:?}",
               next
             ),
-            token: tokens.consume()
-          })
+            tokens.consume(), tokens
+          ))
         }
       }
       other => {
-        return Err(CompilerError {
-          message: format!(
+        return Err(CompilerError::new(
+          format!(
             "Unexpected token when parsing type: {:?}",
             other
           ),
-          token: tokens.consume()
-        });
+          tokens.consume(), tokens
+        ));
       }
     }
   };
@@ -928,7 +931,7 @@ fn get_expression<'a, 'b>(
 pub fn get_comma_separated_types_until<'a, 'b>(
   tokens: &'b mut TokenList<'a>,
   until_str: &[&str]
-) -> Result<SmallVec<Type>, CompilerError<'a>> where 'a: 'b {
+) -> Result<SmallVec<Type>, CompilerError> where 'a: 'b {
   let mut types = SmallVec::new();
   tokens.ignore_commas();
   loop {
@@ -951,7 +954,7 @@ pub fn get_comma_separated_types_until<'a, 'b>(
 /// Gets generics if available, otherwise returns an empty vec
 pub fn get_optional_generics<'a, 'b>(
   tokens: &'b mut TokenList<'a>
-) -> Result<SmallVec<Type>, CompilerError<'a>> where 'a: 'b {
+) -> Result<SmallVec<Type>, CompilerError> where 'a: 'b {
   // Get generics
   if tokens.peek_str() != "<" { return Ok(SmallVec::new()); }
   tokens.skip_unchecked(); // Skip "<"
@@ -962,12 +965,14 @@ pub fn get_optional_generics<'a, 'b>(
 /// Used after the first "<", as it will not consume it!
 pub fn get_generics<'a, 'b>(
   tokens: &'b mut TokenList<'a>
-) -> Result<SmallVec<Type>, CompilerError<'a>> where 'a: 'b {
+) -> Result<SmallVec<Type>, CompilerError> where 'a: 'b {
   let generics = get_comma_separated_types_until(
     tokens, &[ ">", ")", ";" ]
   )?;
   if !tokens.peek_str().starts_with(">") {
-    return Err(CompilerError::expected(">", tokens.consume()));
+    return Err(CompilerError::expected(
+      ">", tokens.consume(), tokens
+    ));
   }
   if tokens.peek_str().len() > 1 {
     let _ = tokens.consume_single_character();

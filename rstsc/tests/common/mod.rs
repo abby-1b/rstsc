@@ -29,6 +29,7 @@ pub fn tsc_compile(code: &str) -> Result<String, String> {
 	std::fs::write(&filename_ts, code).unwrap();
 
 	let child = Command::new("tsc")
+        .arg("--removeComments")
         .arg("--target")
         .arg("ESNext")
         .arg(&filename_ts)
@@ -40,8 +41,10 @@ pub fn tsc_compile(code: &str) -> Result<String, String> {
 	// Wait for completion
 	let mut child = child.expect("`tsc` not found!");
 	child.wait().expect("`tsc` wasn't running!");
-	
+
 	let out = if let Ok(out) = std::fs::read_to_string(&filename_js) {
+		std::fs::remove_file(&filename_ts).unwrap();
+		std::fs::remove_file(&filename_js).unwrap();
 		Ok(out)
 	} else {
 		let mut err = "Error: ".to_string();
@@ -49,10 +52,6 @@ pub fn tsc_compile(code: &str) -> Result<String, String> {
 		if let Some(mut stdout) = child.stdout { let _ = stdout.read_to_string(&mut err); }
 		Err(err)
 	};
-
-	// Delete the files
-	std::fs::remove_file(&filename_ts).unwrap();
-	std::fs::remove_file(&filename_js).unwrap();
 
 	out
 }

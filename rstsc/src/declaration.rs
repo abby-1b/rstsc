@@ -8,7 +8,7 @@ use core::fmt::Debug;
 /// 
 /// Stores a pointer to either a boxed ASTNode or a boxed String
 /// by using the lowest bit as a tag. Functionally equivalent to an enum:
-/// ```
+/// ```txt
 /// enum ComputableDeclarationName {
 ///   Computed(ASTNode),
 ///   Named(String)
