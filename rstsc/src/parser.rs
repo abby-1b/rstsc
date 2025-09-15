@@ -1,10 +1,10 @@
 use phf::{phf_map, phf_set};
 use crate::{
   ast::{
-    ASTNode, ArrowFunctionDefinition, ClassDefinition, EnumDeclaration, FunctionDefinition, GetterSetter, ImportDefinition, IndividualImport, InterfaceDeclaration, ObjectProperty
+    ASTNode, ArrowFunctionDefinition, ClassDefinition, ClassMember, EnumDeclaration, FunctionDefinition, GetterSetter, ImportDefinition, IndividualImport, InterfaceDeclaration, ObjectProperty
   }, ast_common::{
     DestructurePattern, Modifier, ModifierList, VariableDefType, ACCESSIBILITY_MODIFIERS, MODIFIERS
-  }, declaration::{ComputableDeclarationName, Declaration, DeclarationComputable, DeclarationTyped, DestructurableDeclaration}, error_type::CompilerError, operations::{get_operator_binding_power, ExprType}, rest::Rest, small_vec::SmallVec, tokenizer::{Token, TokenList, TokenType}, types::{
+  }, declaration::{ComputableDeclarationName, Declaration, DeclarationComputable, DeclarationTyped, DestructurableDeclaration}, error_type::CompilerError, operations::{get_operator_binding_power, ExprType, ARROW_FN_PRECEDENCE}, rest::Rest, small_vec::SmallVec, tokenizer::{Token, TokenList, TokenType}, types::{
     get_comma_separated_types_until, get_generics, get_optional_generics, get_type, parse_object_square_bracket, try_get_type, ObjectSquareBracketReturn, Type
   }
 };
@@ -22,6 +22,7 @@ pub static INVERSE_GROUPINGS: phf::Map<&'static str, &'static str> = phf_map! {
 };
 
 const VARIABLE_DECLARATIONS: &[&str] = &[ "var", "let", "const" ];
+const IGNORE_MODIFIER_IF_SYMBOL: &[&str] = &[ "(", "<", ":", "=" ];
 
 pub static ANONYMOUS_CLASS_NAME: &str = "\0";
 
@@ -483,6 +484,7 @@ fn handle_control_flow<'a>(
           let case_condition = get_expression(tokens, 0)?;
           tokens.ignore_whitespace();
           tokens.skip(":")?;
+          tokens.ignore_whitespace();
           let mut case_body = SmallVec::new();
           while !tokens.is_done() && ![ "case", "default", "}" ].contains(&tokens.peek_str()) {
             case_body.push(get_single_statement(tokens)?);
@@ -710,7 +712,7 @@ fn get_function_after_name<'a, 'b>(
 /// Similar to `get_function_after_name`, gets a class constructor.
 fn get_constructor_after_name<'a, 'b>(
   tokens: &'b mut TokenList<'a>,
-  declarations: &mut SmallVec<(DeclarationComputable, ModifierList)>
+  members: &mut SmallVec<ClassMember>
 ) -> Result<FunctionDefinition, CompilerError> where 'a: 'b {
   tokens.ignore_whitespace();
 
@@ -735,7 +737,9 @@ fn get_constructor_after_name<'a, 'b>(
       let mut declaration = get_declaration(tokens)?;
       params.push(declaration.clone().into());
       declaration.clear_value();
-      declarations.push((DeclarationComputable::from(&declaration), modifiers));
+      members.push(ClassMember::Property(
+        DeclarationComputable::from(&declaration), modifiers
+      ));
       set_properties.push(ASTNode::InfixOpr {
         left: Box::new(ASTNode::InfixOpr {
           left: Box::new(ASTNode::ExprIdentifier { name: "this".to_owned() }),
@@ -824,8 +828,7 @@ fn get_class_expression<'a, 'b>(
 
   // Classes change the way things are parsed!
   let mut kv_maps = SmallVec::new();
-  let mut declarations: SmallVec<(DeclarationComputable, ModifierList)> = SmallVec::new();
-  let mut methods = SmallVec::new();
+  let mut members: SmallVec<ClassMember> = SmallVec::new();
 
   tokens.ignore_whitespace();
   tokens.skip("{")?; // Skip body "{"
@@ -852,7 +855,7 @@ fn get_class_expression<'a, 'b>(
         }
         ObjectSquareBracketReturn::ComputedProp(name) => {
           let (typ, value) = get_declaration_after_name(tokens)?;
-          declarations.push((
+          members.push(ClassMember::Property(
             DeclarationComputable {
               name: ComputableDeclarationName::new_computed(name),
               typ: typ,
@@ -877,21 +880,32 @@ fn get_class_expression<'a, 'b>(
     }
 
     // Check for getter/setter
-    let is_getter = tokens.peek_str() == "get";
-    let is_setter = tokens.peek_str() == "set";
+    let checkpoint = tokens.get_checkpoint();
+    let mut is_getter = tokens.peek_str() == "get";
+    let mut is_setter = tokens.peek_str() == "set";
     if is_getter || is_setter {
       tokens.skip_unchecked();
       tokens.ignore_whitespace();
+      if IGNORE_MODIFIER_IF_SYMBOL.contains(&tokens.peek_str()) {
+        tokens.restore_checkpoint(checkpoint);
+        is_getter = false;
+        is_setter = false;
+      }
+    } else {
+      tokens.ignore_checkpoint(checkpoint);
     }
 
-    // TODO: replace below with `let name = tokens.consume_type(TokenType::Identifier)?;`
-    let name = tokens.consume();
-    if !name.is_identifier() {
-      return Err(CompilerError::new(
-        "Expected identifier in class body!".to_string(),
-        name, tokens
-      ))
+    if tokens.peek_str() == "{" && modifiers.has(Modifier::Static) {
+      // Static initialization block
+      tokens.skip_unchecked(); // Skip "{"
+      let body = get_block(tokens)?;
+      members.push(ClassMember::StaticBlock(body));
+      tokens.ignore_whitespace();
+      let _ = tokens.try_skip_and_ignore_whitespace(";");
+      continue;
     }
+
+    let name = tokens.consume_type(TokenType::Identifier)?;
     tokens.ignore_whitespace();
 
     if name.value != "constructor" && [ ":", "?", "!", "=", ";" ].contains(&tokens.peek_str()) {
@@ -906,16 +920,22 @@ fn get_class_expression<'a, 'b>(
 
       // Get the declaration
       let (typ, value) = get_declaration_after_name(tokens)?;
-      declarations.push((
+      members.push(ClassMember::Property(
         DeclarationComputable::named(name.value.to_owned(), typ, value),
         modifiers
       ));
     } else {
       // Otherwise, it's a method
       let mut function = if name.value == "constructor" {
+        if is_getter || is_setter {
+          return Err(CompilerError::new(
+            "Constructors cannot be getters or setters!".to_owned(),
+            name.clone(), tokens
+          ));
+        }
         get_constructor_after_name(
           tokens,
-          &mut declarations
+          &mut members
         )?
       } else {
         get_function_after_name(
@@ -928,7 +948,7 @@ fn get_class_expression<'a, 'b>(
       if !function.modifiers.has_accessibility() {
         function.modifiers.set(Modifier::Public);
       }
-      methods.push((
+      members.push(ClassMember::Method(
         function,
         if is_getter {
           GetterSetter::Getter
@@ -958,8 +978,7 @@ fn get_class_expression<'a, 'b>(
     extends,
     implements,
     kv_maps,
-    declarations,
-    methods
+    members
   }) })
 }
 
@@ -1033,7 +1052,16 @@ fn handle_modifiers<'a>(
 fn fetch_modifier_list(tokens: &mut TokenList) -> ModifierList {
   let mut modifiers: ModifierList = ModifierList::new();
   while MODIFIERS.contains(&tokens.peek_str()) {
-    modifiers.set(match tokens.consume().value {
+    let checkpoint = tokens.get_checkpoint();
+    let token = tokens.consume();
+    tokens.ignore_whitespace();
+    if IGNORE_MODIFIER_IF_SYMBOL.contains(&tokens.peek_str()) {
+      tokens.restore_checkpoint(checkpoint);
+      break;
+    } else {
+      tokens.ignore_checkpoint(checkpoint);
+    }
+    modifiers.set(match token.value {
       "export" => Modifier::Export,
       "async" => Modifier::Async,
       "static" => Modifier::Static,
@@ -1045,7 +1073,6 @@ fn fetch_modifier_list(tokens: &mut TokenList) -> ModifierList {
       "override" => Modifier::Override,
       other => panic!("Modifier not implemented: {:?}", other)
     });
-    tokens.ignore_whitespace();
   }
   modifiers
 }
@@ -1583,9 +1610,9 @@ fn separate_commas(node: ASTNode) -> SmallVec<ASTNode> {
   }
 }
 
-/// Tries parsing an arrow function, returning None if none is present.
+/// Tries parsing an arrow function, returning CompilerError if none is present.
 /// Caller is responsible for restoring the tokenizer back to its origial state
-/// if this function returns None.
+/// if this function doesn't return successfully.
 fn parse_arrow_function<'a>(
   tokens: &mut TokenList<'a>,
 ) -> Result<ASTNode, CompilerError> {
@@ -1676,10 +1703,11 @@ pub fn get_expression<'a, 'b>(
                 }
               }
               tokens.ignore_whitespace();
-              let is_arrow_function = ["=>", ":"].contains(&tokens.peek_str());
+              let is_arrow_function = ["=>", ":"].contains(&tokens.peek_str()) && precedence <= *ARROW_FN_PRECEDENCE;
               tokens.restore_checkpoint(checkpoint);
 
               if is_arrow_function {
+                println!("Precedence: {}", precedence);
                 parse_arrow_function(tokens)?
               } else {
                 parse_prefix(tokens, binding_power.1)?

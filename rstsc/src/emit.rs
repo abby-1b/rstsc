@@ -1,4 +1,4 @@
-use crate::{ast::{ASTNode, FunctionDefinition, ObjectProperty}, ast_common::DestructurePattern, declaration::{Declaration, DeclarationComputable, DestructurableDeclaration}, small_vec::SmallVec, rest::Rest};
+use crate::{ast::{ASTNode, ClassMember, FunctionDefinition, ObjectProperty}, ast_common::DestructurePattern, declaration::{Declaration, DeclarationComputable, DestructurableDeclaration}, rest::Rest, small_vec::SmallVec};
 
 static NO_REST: Rest = Rest::new();
 
@@ -350,19 +350,28 @@ fn emit_single(
       emitter.endline();
       emitter.indent();
 
-      for (declaration, modifiers) in inner.declarations.iter() {
-        emitter.out(&modifiers.emit(true), false);
-        emit_single_declaration_computable(&declaration, emitter);
-        emitter.endline();
-      }
-      for (method, getter_setter) in inner.methods.iter() {
-        if method.body.is_none() { continue; }
-        emit_function_definition(
-          &method,
-          getter_setter.as_str(),
-          emitter
-        );
-        emitter.endline();
+      for member in inner.members.iter() {
+        match member {
+          ClassMember::Property(declaration, modifiers) => {
+            emitter.out(&modifiers.emit(true), false);
+            emit_single_declaration_computable(declaration, emitter);
+            emitter.endline();
+          }
+          ClassMember::Method(method, getter_setter) => {
+            if method.body.is_none() { continue; }
+            emit_function_definition(
+              &method,
+              getter_setter.as_str(),
+              emitter
+            );
+            emitter.endline();
+          }
+          ClassMember::StaticBlock(body) => {
+            emitter.out("static ", false);
+            emit_single(body, emitter);
+            emitter.endline();
+          }
+        }
       }
 
       emitter.endline();

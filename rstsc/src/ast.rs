@@ -54,6 +54,13 @@ impl GetterSetter {
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
+pub enum ClassMember {
+  Property(DeclarationComputable, ModifierList),
+  Method(FunctionDefinition, GetterSetter),
+  StaticBlock(ASTNode),
+}
+
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct ClassDefinition {
   pub modifiers: ModifierList,
   pub name: Option<String>,
@@ -62,11 +69,7 @@ pub struct ClassDefinition {
   pub implements: SmallVec<Type>,
   pub kv_maps: SmallVec<KeyValueMap>,
 
-  /// Named declarations
-  pub declarations: SmallVec<(DeclarationComputable, ModifierList)>,
-
-  /// Functions
-  pub methods: SmallVec<(FunctionDefinition, GetterSetter)>
+  pub members: SmallVec<ClassMember>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
