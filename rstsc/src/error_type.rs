@@ -96,7 +96,7 @@ impl CompilerError {
   }
 
   pub fn new(message: String, token: Token, tokens: &TokenList) -> CompilerError {
-    let text = if token.typ != TokenType::EndOfFile {
+    let text = if token.typ != TokenType::EndOfFile && token.value.len() > 0 {
       let mut s = String::new();
       Self::print_token_lines(&token, tokens.source, &mut s);
       s.push('\n');
