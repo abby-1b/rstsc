@@ -92,8 +92,8 @@ impl ModifierList {
       }
     }
     if self.flags & 0b0000_0100 != 0 { out += "export "; }
-    if self.flags & 0b0000_1000 != 0 { out += "async "; }
     if self.flags & 0b0001_0000 != 0 { out += "static "; }
+    if self.flags & 0b0000_1000 != 0 { out += "async "; }
     if !js_only {
       if self.flags & 0b0010_0000 != 0 { out += "readonly "; }
       if self.flags & 0b0100_0000 != 0 { out += "abstract "; }
