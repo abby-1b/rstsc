@@ -58,7 +58,7 @@ pub fn tsc_compile(code: &str) -> Result<String, String> {
 
 /// Tests TypeScript code, compiling it with TSC and checking the two strings.
 /// Ignores leading and trailing whitespace and semicolons.
-pub fn test_code<'a>(source: &str, compiled: &str, whitespace: &WhiteSpace) -> Result<(), String> {
+pub fn test_code(source: &str, compiled: &str, whitespace: &WhiteSpace) -> Result<(), String> {
 	let mut code_string = source.to_string();
 	code_string += "\n ";
 	let code = code_string.as_str();

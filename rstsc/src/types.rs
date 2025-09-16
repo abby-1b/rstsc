@@ -300,9 +300,9 @@ impl Type {
 
 /// Gets a type, regardless of whether it starts with `:` or not.
 /// If it *does* start with a `:`, that gets consumed and the type is returned.
-pub fn get_type<'a, 'b>(
-  tokens: &'b mut TokenList<'a>
-) -> Result<Type, CompilerError> where 'a: 'b {
+pub fn get_type(
+  tokens: &mut TokenList
+) -> Result<Type, CompilerError> {
   if tokens.peek_str() == ":" {
     tokens.skip_unchecked();
   }
@@ -311,9 +311,9 @@ pub fn get_type<'a, 'b>(
 
 /// Gets a type only if the next token is `:`.
 /// Otherwise, returns None
-pub fn try_get_type<'a, 'b>(
-  tokens: &'b mut TokenList<'a>
-) -> Result<Option<Type>, CompilerError> where 'a: 'b {
+pub fn try_get_type(
+  tokens: &mut TokenList
+) -> Result<Option<Type>, CompilerError> {
   if tokens.peek_str() != ":" {
     Ok(None)
   } else {
@@ -322,11 +322,11 @@ pub fn try_get_type<'a, 'b>(
   }
 }
 
-fn parse_infix<'a, 'b>(
+fn parse_infix(
   mut left: Type,
-  tokens: &'b mut TokenList<'a>,
+  tokens: &mut TokenList,
   precedence: u8
-) -> Result<Type, CompilerError> where 'a: 'b {
+) -> Result<Type, CompilerError> {
   let conditional = tokens.try_skip_and_ignore_whitespace("?");
   let infix_opr = tokens.consume();
   match infix_opr.value {
@@ -470,10 +470,10 @@ fn parse_name(
   }
 }
 
-fn types_into_params<'a, 'b>(
+fn types_into_params(
   types: SmallVec<Type>,
-  tokens: &'b mut TokenList<'a>
-) -> Result<SmallVec<TypeFunctionArgument>, CompilerError> where 'a: 'b {
+  tokens: &mut TokenList
+) -> Result<SmallVec<TypeFunctionArgument>, CompilerError> {
   let mut params = SmallVec::with_capacity(types.len());
   for p in types.iter() {
     params.push(match p {
@@ -517,10 +517,10 @@ fn types_into_params<'a, 'b>(
   Ok(params)
 }
 
-fn parse_prefix<'a, 'b>(
-  tokens: &'b mut TokenList<'a>,
+fn parse_prefix(
+  tokens: &mut TokenList,
   precedence: u8
-) -> Result<Type, CompilerError> where 'a: 'b {
+) -> Result<Type, CompilerError> {
   let prefix_opr = tokens.consume();
   match prefix_opr.value {
     "{" => {
@@ -689,10 +689,10 @@ fn parse_prefix<'a, 'b>(
   }
 }
 
-fn parse_curly_braces<'a, 'b>(
-  tokens: &'b mut TokenList<'a>,
+fn parse_curly_braces(
+  tokens: &mut TokenList,
   precedence: u8
-) -> Result<Type, CompilerError> where 'a: 'b {
+) -> Result<Type, CompilerError> {
   let mut obj_parts = SmallVec::new();
   let mut kv_maps = SmallVec::new();
   let mut mapped_type: Option<Type> = None;
@@ -756,9 +756,9 @@ fn parse_curly_braces<'a, 'b>(
   })
 }
 
-pub fn parse_object_square_bracket<'a, 'b>(
-  tokens: &'b mut TokenList<'a>
-) -> Result<ObjectSquareBracketReturn, CompilerError> where 'a: 'b {
+pub fn parse_object_square_bracket(
+  tokens: &mut TokenList
+) -> Result<ObjectSquareBracketReturn, CompilerError> {
   tokens.skip("[")?;
   tokens.ignore_whitespace();
 
@@ -807,10 +807,10 @@ pub fn parse_object_square_bracket<'a, 'b>(
   ))
 }
 
-fn get_kvc_complex_key<'a, 'b>(
-  key_token: Token<'a>,
-  tokens: &'b mut TokenList<'a>
-) -> Result<ObjectSquareBracketReturn, CompilerError> where 'a: 'b {
+fn get_kvc_complex_key(
+  key_token: Token,
+  tokens: &mut TokenList
+) -> Result<ObjectSquareBracketReturn, CompilerError> {
   let key_name = key_token.value.to_string();
   tokens.skip("in")?;
   tokens.ignore_whitespace();
@@ -834,10 +834,10 @@ fn get_kvc_complex_key<'a, 'b>(
   ));
 }
 
-fn get_expression<'a, 'b>(
-  tokens: &'b mut TokenList<'a>,
+fn get_expression(
+  tokens: &mut TokenList,
   precedence: u8
-) -> Result<Type, CompilerError> where 'a: 'b {
+) -> Result<Type, CompilerError> {
   tokens.ignore_whitespace();
 
   let mut left = {
@@ -924,10 +924,10 @@ fn get_expression<'a, 'b>(
 }
 
 /// Gets types separated by commas
-pub fn get_comma_separated_types_until<'a, 'b>(
-  tokens: &'b mut TokenList<'a>,
+pub fn get_comma_separated_types_until(
+  tokens: &mut TokenList,
   until_str: &[&str]
-) -> Result<SmallVec<Type>, CompilerError> where 'a: 'b {
+) -> Result<SmallVec<Type>, CompilerError> {
   let mut types = SmallVec::new();
   tokens.ignore_commas();
   loop {
@@ -948,9 +948,9 @@ pub fn get_comma_separated_types_until<'a, 'b>(
 }
 
 /// Gets generics if available, otherwise returns an empty vec
-pub fn get_optional_generics<'a, 'b>(
-  tokens: &'b mut TokenList<'a>
-) -> Result<SmallVec<Type>, CompilerError> where 'a: 'b {
+pub fn get_optional_generics(
+  tokens: &mut TokenList
+) -> Result<SmallVec<Type>, CompilerError> {
   // Get generics
   if tokens.peek_str() != "<" { return Ok(SmallVec::new()); }
   tokens.skip_unchecked(); // Skip "<"
@@ -959,9 +959,9 @@ pub fn get_optional_generics<'a, 'b>(
 
 /// Gets generics until it finds a ">", consuming it.
 /// Used after the first "<", as it will not consume it!
-pub fn get_generics<'a, 'b>(
-  tokens: &'b mut TokenList<'a>
-) -> Result<SmallVec<Type>, CompilerError> where 'a: 'b {
+pub fn get_generics(
+  tokens: &mut TokenList
+) -> Result<SmallVec<Type>, CompilerError> {
   let generics = get_comma_separated_types_until(
     tokens, &[ ">", ")", ";" ]
   )?;
