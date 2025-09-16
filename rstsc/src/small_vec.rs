@@ -1,4 +1,4 @@
-use std::{alloc::Layout, hash::Hash, ops::{Index, IndexMut}};
+use std::{alloc::Layout, hash::Hash, mem, ops::{Index, IndexMut, Range, RangeFrom, RangeFull, RangeTo}, ptr::NonNull};
 use core::fmt::Debug;
 
 // Setting this to `u8` still makes the vec 16 bytes long due to alignment
@@ -8,7 +8,7 @@ pub type SizeType = u32;
 
 /// A vector implementation with limited capacity (defined at compile time)
 pub struct SmallVec<T: Debug> {
-  memory: *mut T,
+  memory: NonNull<T>,
   capacity: SizeType,
   length: SizeType,
 }
@@ -16,9 +16,9 @@ pub struct SmallVec<T: Debug> {
 impl<T: Debug> SmallVec<T> {
   const MAX_LEN: usize = SizeType::MAX as usize;
 
-  pub const fn new() -> SmallVec<T> {
+  pub fn new() -> SmallVec<T> {
     SmallVec {
-      memory: std::ptr::null_mut::<T>(),
+      memory: NonNull::dangling(),
       capacity: 0,
       length: 0
     }
@@ -84,13 +84,13 @@ impl<T: Debug> SmallVec<T> {
       let new_cap = if self.capacity == 0 { 1 } else { self.capacity.saturating_mul(2) };
       unsafe { self.allocate(new_cap) }
     }
-    unsafe { std::ptr::write(self.memory.add(self.len()), value); }
+    unsafe { self.memory.add(self.len()).write(value); }
     self.length += 1;
   }
   pub fn pop(&mut self) -> Option<T> {
     if self.length == 0 { return None }
     self.length -= 1;
-    Some(unsafe { std::ptr::read(self.memory.add(self.len())) })
+    Some(unsafe { self.memory.add(self.len()).read() })
   }
 
   pub fn append(&mut self, other: &mut Self) {
@@ -104,8 +104,7 @@ impl<T: Debug> SmallVec<T> {
 
     // Copy elements from `other` to the end of `self`
     unsafe {
-      std::ptr::copy_nonoverlapping(
-        other.memory,
+      other.memory.copy_to_nonoverlapping(
         // Elements are placed at index `self.len`
         self.memory.add(self.len()),
         other.len()
@@ -124,8 +123,7 @@ impl<T: Debug> SmallVec<T> {
       // New buffer needed
       unsafe {
         let new_memory = Self::get_new_memory(needed_len);
-        std::ptr::copy_nonoverlapping(
-          self.memory,
+        self.memory.copy_to_nonoverlapping(
           new_memory.add(other.len()),
           self.len()
         );
@@ -136,8 +134,7 @@ impl<T: Debug> SmallVec<T> {
     } else {
       // Move elements within the existing buffer (potentially overlapping)
       unsafe {
-        std::ptr::copy(
-          self.memory,
+        self.memory.copy_to(
           self.memory.add(other.len()),
           self.len()
         );
@@ -146,8 +143,7 @@ impl<T: Debug> SmallVec<T> {
 
     // Put new elements at the start of memory
     unsafe {
-      std::ptr::copy_nonoverlapping(
-        other.memory,
+      other.memory.copy_to_nonoverlapping(
         self.memory,
         other.len()
       );
@@ -161,12 +157,10 @@ impl<T: Debug> SmallVec<T> {
   unsafe fn allocate(&mut self, new_capacity: SizeType) {
     let new_memory = Self::get_new_memory(new_capacity);
 
-    if self.memory as usize != 0 {
+    if self.capacity > 0 {
       // Move old memory into new memory
-      std::ptr::copy_nonoverlapping(
-        self.memory,
-        new_memory,
-        self.len()
+      self.memory.copy_to_nonoverlapping(
+        new_memory, self.len()
       );
 
       // Deallocate old memory
@@ -178,21 +172,18 @@ impl<T: Debug> SmallVec<T> {
   }
 
   /// Gets a pointer to a new slice of memory of a given capacity
-  unsafe fn get_new_memory(capacity: SizeType) -> *mut T {
+  unsafe fn get_new_memory(capacity: SizeType) -> NonNull<T> {
     let layout = Layout::array::<T>(capacity as usize).unwrap();
     let ptr = std::alloc::alloc(layout) as *mut T;
-    if ptr.is_null() {
-      std::alloc::handle_alloc_error(layout);
-    }
-    ptr
+    NonNull::new(ptr).unwrap()
   }
 
   /// Drops the inner buffer, which is both used for changing capacity and
   /// dropping the whole struct. Only drops the buffer, not the elements!
+  #[inline]
   unsafe fn drop_inner_buffer(&mut self) {
     let old_layout = Layout::array::<T>(self.capacity as usize).unwrap();
-    std::alloc::dealloc(self.memory as *mut u8, old_layout);
-    self.memory = std::ptr::null_mut::<T>();
+    std::alloc::dealloc(self.memory.as_ptr() as *mut u8, old_layout);
   }
 }
 
@@ -222,7 +213,7 @@ impl<T: Debug> Drop for SmallVec<T> {
     if self.capacity == 0 { return; }
 
     // Deallocate inner elements
-    let slice = std::ptr::slice_from_raw_parts_mut(self.memory, self.len());
+    let slice = std::ptr::slice_from_raw_parts_mut(self.memory.as_ptr(), self.len());
     unsafe { std::ptr::drop_in_place(slice) };
 
     // Drop the buffer itself
@@ -252,7 +243,7 @@ impl<T: Debug> Index<usize> for SmallVec<T> {
     }
 
     let memory_index = unsafe {
-      self.memory.add(index)
+      self.memory.as_ptr().add(index)
     };
     unsafe { &*memory_index }
   }
@@ -268,9 +259,82 @@ impl<T: Debug> IndexMut<usize> for SmallVec<T> {
     }
 
     let memory_index = unsafe {
-      self.memory.add(index)
+      self.memory.as_ptr().add(index)
     };
     unsafe { &mut *memory_index }
+  }
+}
+
+impl<T: Debug> Index<Range<usize>> for SmallVec<T> {
+  type Output = [T];
+  fn index(&self, index: Range<usize>) -> &Self::Output {
+    #[cfg(debug_assertions)]
+    if index.start > index.end || index.end > self.len() {
+      panic!("Index out of bounds: range {:?} with len {}", index, self.len());
+    }
+    unsafe {
+      std::slice::from_raw_parts(
+        self.memory.add(index.start).as_ptr(),
+        index.end - index.start
+      )
+    }
+  }
+}
+
+impl<T: Debug> Index<RangeTo<usize>> for SmallVec<T> {
+  type Output = [T];
+  fn index(&self, index: RangeTo<usize>) -> &Self::Output {
+    #[cfg(debug_assertions)]
+    if index.end > self.len() {
+      panic!("Index out of bounds: range ..{} with len {}", index.end, self.len());
+    }
+    unsafe {
+      std::slice::from_raw_parts(self.memory.as_ptr(), index.end)
+    }
+  }
+}
+
+impl<T: Debug> Index<RangeFrom<usize>> for SmallVec<T> {
+  type Output = [T];
+  fn index(&self, index: RangeFrom<usize>) -> &Self::Output {
+    #[cfg(debug_assertions)]
+    if index.start > self.len() {
+      panic!("Index out of bounds: range {}.. with len {}", index.start, self.len());
+    }
+    unsafe {
+      std::slice::from_raw_parts(
+        self.memory.add(index.start).as_ptr(),
+        self.len() - index.start
+      )
+    }
+  }
+}
+
+impl<T: Debug> Index<RangeFull> for SmallVec<T> {
+  type Output = [T];
+  #[inline]
+  fn index(&self, _index: RangeFull) -> &Self::Output {
+    unsafe {
+      std::slice::from_raw_parts(self.memory.as_ptr(), self.len())
+    }
+  }
+}
+
+impl<T: Debug> AsRef<[T]> for SmallVec<T> {
+  #[inline]
+  fn as_ref(&self) -> &[T] {
+    unsafe {
+      std::slice::from_raw_parts(self.memory.as_ptr(), self.len())
+    }
+  }
+}
+
+impl<T: Debug> AsMut<[T]> for SmallVec<T> {
+  #[inline]
+  fn as_mut(&mut self) -> &mut [T] {
+    unsafe {
+      std::slice::from_raw_parts_mut(self.memory.as_ptr(), self.len())
+    }
   }
 }
 
@@ -330,7 +394,7 @@ impl<'a, T: Debug> Iterator for Iter<'a, T> {
 
   fn next(&mut self) -> Option<Self::Item> {
     if self.index < self.vec.len() {
-      let item = unsafe { &*self.vec.memory.add(self.index) };
+      let item = unsafe { &*self.vec.memory.add(self.index).as_ptr() };
       self.index += 1;
       Some(item)
     } else {
@@ -349,7 +413,7 @@ impl<'a, T: Debug> Iterator for IterMut<'a, T> {
 
   fn next(&mut self) -> Option<Self::Item> {
     if self.index < self.vec.len() {
-      let item = unsafe { &mut *self.vec.memory.add(self.index) };
+      let item = unsafe { &mut *self.vec.memory.add(self.index).as_ptr() };
       self.index += 1;
       Some(item)
     } else {
@@ -389,7 +453,7 @@ impl<T: Debug> Iterator for IntoIter<T> {
 
   fn next(&mut self) -> Option<Self::Item> {
     if self.index < self.vec.len() {
-      let item = unsafe { std::ptr::read(self.vec.memory.add(self.index)) };
+      let item = unsafe { std::ptr::read(self.vec.memory.add(self.index).as_ptr()) };
       self.index += 1;
       Some(item)
     } else {

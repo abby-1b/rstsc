@@ -46,7 +46,7 @@ impl Emitter {
 
   pub fn emit_vec<I: std::fmt::Debug, F>(
     &mut self,
-    vector: &SmallVec<I>,
+    vector: &[I],
     mut traversal_fn: F,
     normal_separator: &str,
     compact_separator: &str
@@ -140,7 +140,7 @@ fn emit_single(
     } => {
       emitter.out(&modifiers.emit(true), false);
       emitter.out(&def_type.emit(), false);
-      emit_destructurable_declarations(defs, NO_REST.clone(), emitter);
+      emit_destructurable_declarations(defs.as_ref(), NO_REST.clone(), emitter);
       emitter.out("", true);
     }
     ASTNode::StatementImport { inner } => {
@@ -169,7 +169,7 @@ fn emit_single(
 
       if inner.individual.len() > 0 {
         emitter.out_diff("{ ", "{", false);
-        emitter.emit_vec(&inner.individual, |i, emitter| {
+        emitter.emit_vec(inner.individual.as_ref(), |i, emitter| {
           emitter.out(&i.name, false);
           if let Some(alias) = &i.alias {
             emitter.out(" as ", false);
@@ -324,7 +324,7 @@ fn emit_single(
         emitter.out(&arrow_fn.params[0].name(), false);
       } else {
         emitter.out("(", false);
-        emit_declarations(&arrow_fn.params, arrow_fn.rest.clone(), emitter);
+        emit_declarations(arrow_fn.params.as_ref(), arrow_fn.rest.clone(), emitter);
         emitter.out(")", false);
       }
 
@@ -382,21 +382,21 @@ fn emit_single(
     // ASTNode::ArrowFunctionHeader { .. } => "ArrowFunctionHeader",
     ASTNode::Parenthesis { nodes } => {
       emitter.out("(", false);
-      emitter.emit_vec(nodes, |node, emitter| {
+      emitter.emit_vec(nodes.as_ref(), |node, emitter| {
         emit_single(&node, emitter);
       }, ", ", ",");
       emitter.out(")", true);
     }
     ASTNode::Array { nodes } => {
       emitter.out_diff("[ ", "[", false);
-      emitter.emit_vec(nodes, |node, emitter| {
+      emitter.emit_vec(nodes.as_ref(), |node, emitter| {
         emit_single(&node, emitter);
       }, ", ", ",");
       emitter.out_diff(" ]", "]", true);
     }
     ASTNode::Dict { properties } => {
       emitter.out_diff("{ ", "{", false);
-      emitter.emit_vec(properties, |prop, emitter| {
+      emitter.emit_vec(properties.as_ref(), |prop, emitter| {
         match prop {
           ObjectProperty::Rest { argument } => {
             emitter.out("...", false);
@@ -439,7 +439,7 @@ fn emit_single(
     ASTNode::ExprFunctionCall { callee, generics: _, arguments } => {
       emit_single(&*callee, emitter);
       emitter.out("(", false);
-      emitter.emit_vec(arguments, |argument, emitter| {
+      emitter.emit_vec(arguments.as_ref(), |argument, emitter| {
         emit_single(argument, emitter);
       }, ", ", ",");
       emitter.out(")", true);
@@ -533,7 +533,7 @@ fn emit_single(
 }
 
 fn emit_declarations(
-  declarations: &SmallVec<Declaration>,
+  declarations: &[Declaration],
   rest: Rest,
   emitter: &mut Emitter
 ) {
@@ -546,7 +546,7 @@ fn emit_declarations(
 }
 
 fn emit_destructurable_declarations(
-  declarations: &SmallVec<DestructurableDeclaration>,
+  declarations: &[DestructurableDeclaration],
   rest: Rest,
   emitter: &mut Emitter
 ) {
@@ -610,7 +610,7 @@ fn emit_destructure_pattern(
   match pattern {
     DestructurePattern::Array { elements, spread } => {
       emitter.out_diff("[ ", "[", false);
-      emitter.emit_vec(elements, |element, emitter| {
+      emitter.emit_vec(elements.as_ref(), |element, emitter| {
         emit_destructure_pattern(element, emitter);
       }, ", ", ",");
       if let Some(rest) = spread {
@@ -624,7 +624,7 @@ fn emit_destructure_pattern(
     }
     DestructurePattern::Object { properties, spread } => {
       emitter.out_diff("{ ", "{", false);
-      emitter.emit_vec(properties, |(name, pattern), emitter| {
+      emitter.emit_vec(properties.as_ref(), |(name, pattern), emitter| {
         emitter.out(name, false);
         emitter.out_diff(": ", ":", false);
         emit_destructure_pattern(pattern, emitter);
@@ -664,7 +664,22 @@ fn emit_function_definition(
 
   // Params
   emitter.out("(", false);
-  emit_destructurable_declarations(&function.params, function.rest.clone(), emitter);
+  let fake_this = if function.params.len() > 0 {
+    if let DestructurePattern::Identifier { name } = &function.params[0].name {
+      name == "this"
+    } else {
+      false
+    }
+  } else { false };
+  emit_destructurable_declarations(
+    if fake_this {
+      &function.params[1..]
+    } else {
+      function.params.as_ref()
+    },
+    function.rest.clone(),
+    emitter
+  );
   emitter.out_diff(") ", ")", false);
 
   // Body
