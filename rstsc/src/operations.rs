@@ -126,6 +126,7 @@ pub fn get_type_operator_binding_power(
     (ExprType::Prefx, "<") => Some((16, 17)),
     (ExprType::Prefx, "[") => Some((16, 17)),
 
+    (ExprType::Infx, ".") => Some((14, 15)),
     (ExprType::Infx, "[") => Some((14, 15)),
     (ExprType::Infx, "<") => Some((14, 15)),
 

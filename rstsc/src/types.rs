@@ -141,6 +141,12 @@ pub enum Type {
     property: Box<Type>
   },
 
+  /// A direct access into a type (eg. `type.prop`)
+  DirectAccess {
+    callee: Box<Type>,
+    property: Box<Type>
+  },
+
   /// Specifies that this type points to the inferred type of a real value
   TypeOf(Box<Type>),
 
@@ -355,7 +361,6 @@ fn parse_infix<'a, 'b>(
     }
     "[" => {
       // Type indexing
-
       let mut arguments: SmallVec<Type> = SmallVec::new();
       tokens.ignore_whitespace();
       if tokens.peek_str() != "]" {
@@ -388,28 +393,18 @@ fn parse_infix<'a, 'b>(
         ))
       }
     }
+    "." => {
+      // Direct type access
+      tokens.ignore_whitespace();
+      Ok(Type::DirectAccess {
+        callee: Box::new(left),
+        property: Box::new(Type::Custom(
+          tokens.consume_type(TokenType::Identifier)?.value.to_owned()
+        ))
+      })
+    }
     "<" => {
-      // panic!("GETTING GENERICS!!!!!!!!!!!");
-      // let group_start = infix_opr.value.to_string();
-      // if group_start == "<" && tokens.peek_str().len() != 1 {
-      //   // Some bunched-up closing brackets (eg. `>>`)
-      //   // This happens due to bit-shifting using this token.
-
-      //   let first_char = tokens.consume_single_character();
-      //   if first_char == ">" {
-      //     // Skipped!
-      //   } else {
-      //     // Wrong character!
-      //     return Err(CompilerError::expected("<", Token::from(first_char)));
-      //   }
-      // } else {
-      //   tokens.skip(group_end)?;
-      // }
-
-      // Ok(Type::WithArgs(Box::new(left), arguments))
-
       Ok(Type::WithArgs(Box::new(left), get_generics(tokens)?))
-      // Ok()
     }
     "extends" => {
       // This could be a normal `extends` (like generics), or a conditional
@@ -551,7 +546,7 @@ fn parse_prefix<'a, 'b>(
           spread_idx = inner_types.len_natural();
           tokens.skip_unchecked(); // Skip "..."
         }
-        inner_types.push(get_expression(tokens, precedence)?);
+        inner_types.push(get_expression(tokens, 0)?);
 
         // End on brackets
         if tokens.peek_str() == "]" { break }
@@ -648,6 +643,7 @@ fn parse_prefix<'a, 'b>(
     "<" => {
       // Start of function with generics
       let mut generics = get_generics(tokens)?;
+      let next_token = tokens.peek().clone();
       let mut next_fn = get_expression(tokens, precedence)?;
       match &mut next_fn {
         Type::Function { generics: inner_generics, .. } => {
@@ -656,7 +652,7 @@ fn parse_prefix<'a, 'b>(
         other => {
           return Err(CompilerError::new(
             format!("Expected Function type, found {:?}", other),
-            Token::from(""), tokens
+            next_token, tokens
           ))
         }
       }
@@ -853,7 +849,7 @@ fn get_expression<'a, 'b>(
       return Ok(Type::Unknown);
     }
 
-    let next = tokens.peek();
+    // let next = tokens.peek();
     match &next.typ {
       TokenType::Number => {
         let value: f64 = tokens.consume().value.parse().unwrap();
