@@ -1433,7 +1433,16 @@ fn parse_prefix(
   
         // Skip ":"
         tokens.ignore_whitespace();
-        tokens.skip(":")?;
+        if let ASTNode::ExprIdentifier { name } = &key {
+          if tokens.peek_str() != ":" {
+            properties.push(ObjectProperty::Shorthand { key: name.clone() });
+            tokens.ignore_commas();
+            continue;
+          }
+          tokens.skip(":")?;
+        } else {
+          tokens.skip(":")?;
+        }
   
         // Get value
         let value = get_expression(tokens, 1)?;
@@ -1465,6 +1474,22 @@ fn parse_infix<'a, 'b>(
   tokens: &'b mut TokenList,
   precedence: u8
 ) -> Result<ASTNode, CompilerError> where 'a: 'b {
+
+  if let ASTNode::ExprIdentifier { name } = &left {
+    if name == "async" {
+      if tokens.peek_str() == "(" {
+        let mut arrow_fn = parse_arrow_function(tokens)?;
+        match &mut arrow_fn {
+          ASTNode::ArrowFunctionDefinition { inner } => {
+            inner.is_async = true;
+          }
+          _ => unreachable!()
+        }
+        return Ok(arrow_fn);
+      }
+    }
+  }
+
   let opr_token = tokens.consume();
   let opr = opr_token.value.to_string();
 
@@ -1514,7 +1539,7 @@ fn parse_infix<'a, 'b>(
               left, opr, right
             } if opr == "=" && matches!(*left, ASTNode::ExprIdentifier { .. }) => match *left {
               ASTNode::ExprIdentifier { name } => Declaration::new(name, Type::Unknown, Some(*right)),
-              _ => panic!() // This won't happen
+              _ => unreachable!()
             }
             other => return Err(CompilerError::new(
               format!("Arrow function expected parameter, found {:?}", other),
@@ -1640,6 +1665,7 @@ fn parse_arrow_function_after_arrow(
   };
 
   Ok(ASTNode::ArrowFunctionDefinition { inner: Box::new(ArrowFunctionDefinition {
+    is_async: false,
     params,
     rest,
     return_type,

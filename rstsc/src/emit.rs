@@ -23,15 +23,6 @@ impl Emitter {
 
   /// Outputs different strings depending on if compact mode is on or off
   pub fn out_diff(&mut self, normal: &str, compact: &str, can_put_semicolon: bool) {
-    #[cfg(debug_assertions)]
-    {
-      for c in normal.chars().chain(compact.chars()) {
-        if c == '\n' {
-          panic!("Newline found in `emit.out(...)`, please use `emitter.endline();`");
-        }
-      }
-    }
-
     if self.is_compact {
       self.output += compact;
     } else {
@@ -323,6 +314,11 @@ fn emit_single(
       }
     }
     ASTNode::ArrowFunctionDefinition { inner: arrow_fn } => {
+      // Async
+      if arrow_fn.is_async {
+        emitter.out_diff("async ", "async", false);
+      }
+
       // Params
       if arrow_fn.params.len() == 1 && arrow_fn.params[0].value().is_none() {
         emitter.out(&arrow_fn.params[0].name(), false);
@@ -410,6 +406,9 @@ fn emit_single(
             if *computed { emitter.out("]", false); }
             emitter.out_diff(": ", ":", false);
             emit_single(value, emitter);
+          }
+          ObjectProperty::Shorthand { key } => {
+            emitter.out(key, false);
           }
         }
       }, ", ", ",");

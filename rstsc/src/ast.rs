@@ -12,7 +12,8 @@ pub enum ObjectProperty {
   },
   Rest {
     argument: ASTNode
-  }
+  },
+  Shorthand { key: String }
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -30,6 +31,7 @@ pub struct FunctionDefinition {
 
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct ArrowFunctionDefinition {
+  pub is_async: bool,
   pub params: SmallVec<Declaration>,
   pub rest: Rest,
   pub return_type: Type,

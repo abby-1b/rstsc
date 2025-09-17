@@ -47,7 +47,8 @@ impl ObjectProperty {
       },
       ast::ObjectProperty::Rest { argument } => ObjectProperty::Rest {
         argument: ASTNode::from(argument)
-      }
+      },
+      ast::ObjectProperty::Shorthand { key } => todo!()
     }
   }
 }

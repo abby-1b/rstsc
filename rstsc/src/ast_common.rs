@@ -103,6 +103,12 @@ impl ModifierList {
   }
 }
 
+impl From<Modifier> for ModifierList {
+  fn from(value: Modifier) -> Self {
+    ModifierList { flags: value as u8 }
+  }
+}
+
 impl Debug for ModifierList {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     f.debug_list()
