@@ -122,16 +122,20 @@ fn emit_single(
 ) {
   match ast {
     ASTNode::Block { nodes } => {
-      emitter.out("{", false);
-      emitter.endline();
-      emitter.indent();
-      for node in nodes {
-        emit_single(node, emitter);
+      if nodes.is_empty() {
+        emitter.out("{}", false);
+      } else {
+        emitter.out("{", false);
         emitter.endline();
+        emitter.indent();
+        for node in nodes {
+          emit_single(node, emitter);
+          emitter.endline();
+        }
+        emitter.endline();
+        emitter.unindent();
+        emitter.out("}", false);
       }
-      emitter.endline();
-      emitter.unindent();
-      emitter.out("}", false);
     }
     ASTNode::VariableDeclaration {
       modifiers,
@@ -378,8 +382,6 @@ fn emit_single(
       emitter.unindent();
       emitter.out("}", false)
     }
-    // ASTNode::PotentialParameter { .. } => "PotentialParameter",
-    // ASTNode::ArrowFunctionHeader { .. } => "ArrowFunctionHeader",
     ASTNode::Parenthesis { nodes } => {
       emitter.out("(", false);
       emitter.emit_vec(nodes.as_ref(), |node, emitter| {
