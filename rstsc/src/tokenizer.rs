@@ -398,7 +398,11 @@ impl<'a> TokenList<'a> {
         let mut token_len = 1;
         let mut is_escaped = false;
         let mut is_ready_for_expression = false;
-        let mut typ = TokenType::StringTemplateEnd;
+        let mut typ = if curr_char == '`' {
+          TokenType::String
+        } else {
+          TokenType::StringTemplateEnd
+        };
         let len = loop {
           if let Some(curr_char) = self.char_iter.peek() {
             token_len += curr_char.len_utf8();
