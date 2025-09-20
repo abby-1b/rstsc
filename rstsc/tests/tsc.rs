@@ -68,12 +68,15 @@ fn tsc_tests() {
   }
 
   let source_snippets: Vec<&str> = SOURCE.split("\n\n").collect();
-  let compiled_snippets: Vec<String> = source_snippets.par_iter().map(|s| {
-    tsc_compile(s).unwrap()
+  let compiled_snippets: Vec<(String, bool)> = source_snippets.par_iter().map(|s| {
+    match tsc_compile(s) {
+      Ok(result) => ( result, true ),
+      Err(err) => ( err, false )
+    }
   }).collect();
 
-  for (_idx, (source, compiled)) in source_snippets.iter().zip(compiled_snippets).enumerate() {
-    let state = test_code(source, &compiled, &common::WhiteSpace::IgnoreAll);
+  for (_idx, (source, (tsc_output, tsc_is_ok))) in source_snippets.iter().zip(compiled_snippets).enumerate() {
+    let state = test_code(source, &tsc_output, &common::WhiteSpace::IgnoreAll);
     let result_idx = if state.is_err() {
       fails.push(state.err().unwrap());
       count_failed += 1;
