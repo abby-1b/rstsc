@@ -124,11 +124,3 @@ impl Debug for ModifierList {
       .finish()
   }
 }
-
-#[derive(Debug, Clone, PartialEq, Hash)]
-pub enum DestructurePattern {
-  Array { elements: SmallVec<DestructurePattern>, spread: Option<Box<DestructurePattern>> },
-  Object { properties: SmallVec<(String, DestructurePattern)>, spread: Option<Box<DestructurePattern>> },
-  Identifier { name: String },
-  Ignore
-}

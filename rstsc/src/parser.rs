@@ -3,8 +3,8 @@ use crate::{
   ast::{
     ASTNode, ArrowFunctionDefinition, ClassDefinition, ClassMember, EnumDeclaration, FunctionDefinition, GetterSetter, ImportDefinition, IndividualImport, InterfaceDeclaration, ObjectProperty
   }, ast_common::{
-    DestructurePattern, Modifier, ModifierList, VariableDefType, ACCESSIBILITY_MODIFIERS, MODIFIERS
-  }, declaration::{ComputableDeclarationName, Declaration, DeclarationComputable, DeclarationTyped, DestructurableDeclaration}, error_type::CompilerError, operations::{get_operator_binding_power, ExprType, ARROW_FN_PRECEDENCE}, rest::Rest, small_vec::SmallVec, tokenizer::{Token, TokenList, TokenType}, types::{
+    Modifier, ModifierList, VariableDefType, ACCESSIBILITY_MODIFIERS, MODIFIERS
+  }, declaration::{ComputableDeclarationName, Declaration, DeclarationComputable, DeclarationTyped, DestructurableDeclaration, DestructurePattern}, error_type::CompilerError, operations::{get_operator_binding_power, ExprType, ARROW_FN_PRECEDENCE, COMMA_PRECEDENCE}, rest::Rest, small_vec::SmallVec, tokenizer::{Token, TokenList, TokenType}, types::{
     get_comma_separated_types_until, get_generics, get_optional_generics, get_type, parse_object_square_bracket, try_get_type, ObjectSquareBracketReturn, Type
   }
 };
@@ -197,9 +197,14 @@ fn get_declaration_after_name<'a, 'b>(
 fn get_destructurable_declaration<'a, 'b>(
   tokens: &'b mut TokenList
 ) -> Result<DestructurableDeclaration, CompilerError> where 'a: 'b {
-  let name = parse_destructure_pattern(tokens)?;
+  let name = parse_destructure_pattern(tokens, false)?;
   let (typ, initializer) = get_declaration_after_name(tokens)?;
-  Ok(DestructurableDeclaration { name, typ, initializer })
+  Ok(DestructurableDeclaration {
+    name: if let Some(initializer) = initializer {
+      DestructurePattern::WithInitializer { pattern: Box::new(name), initializer }
+    } else { name },
+    typ
+  })
 }
 
 /// Gets multiple named declarations, with or without values.
@@ -241,10 +246,11 @@ fn get_multiple_destructurable_declarations<'a, 'b>(
 }
 
 fn parse_destructure_pattern(
-  tokens: &mut TokenList
+  tokens: &mut TokenList,
+  capture_initializer: bool
 ) -> Result<DestructurePattern, CompilerError> {
   tokens.ignore_whitespace();
-  match tokens.peek_str() {
+  let pattern = match tokens.peek_str() {
     "[" => {
       // Array destructure
       tokens.skip_unchecked(); // Skip "["
@@ -260,7 +266,7 @@ fn parse_destructure_pattern(
             ))
           }
           tokens.skip_unchecked();
-          spread = Some(Box::new(parse_destructure_pattern(tokens)?));
+          spread = Some(Box::new(parse_destructure_pattern(tokens, false)?));
         } else if tokens.peek_str() == "," {
           if spread.is_some() {
             return Err(CompilerError::new(
@@ -268,8 +274,9 @@ fn parse_destructure_pattern(
               tokens.consume(), tokens
             ))
           }
-          tokens.skip_unchecked();
-          elements.push(DestructurePattern::Ignore);
+          while tokens.try_skip_and_ignore_whitespace(",") {
+            elements.push(DestructurePattern::Ignore);
+          }
         } else {
           if spread.is_some() {
             return Err(CompilerError::new(
@@ -277,7 +284,7 @@ fn parse_destructure_pattern(
               tokens.consume(), tokens
             ))
           }
-          elements.push(parse_destructure_pattern(tokens)?);
+          elements.push(parse_destructure_pattern(tokens, true)?);
         }
         tokens.ignore_whitespace();
         if tokens.peek_str() == "," {
@@ -286,54 +293,65 @@ fn parse_destructure_pattern(
       }
       tokens.skip_unchecked(); // Skip "]"
       tokens.ignore_whitespace();
-      Ok(DestructurePattern::Array { elements, spread })
+      DestructurePattern::Array { elements, spread }
     },
     "{" => {
       // Object destructure
       tokens.skip_unchecked(); // Skip "{"
       let mut properties = SmallVec::new();
-      let mut spread = None;
+      let mut rest = None;
       while tokens.peek_str() != "}" {
         tokens.ignore_whitespace();
         if tokens.peek_str() == "..." {
-          if spread.is_some() {
+          if rest.is_some() {
             return Err(CompilerError::new(
-              "Only one spread allowed in object destructure".to_owned(),
+              "Only one rest element allowed in object destructure".to_owned(),
               tokens.consume(), tokens
             ))
           }
           tokens.skip_unchecked();
-          spread = Some(Box::new(parse_destructure_pattern(tokens)?));
-        } else if tokens.peek_str() == "," {
-          if spread.is_some() {
+          rest = Some(Box::new(parse_destructure_pattern(tokens, false)?));
+          if tokens.peek_str() == "=" {
             return Err(CompilerError::new(
-              "A spread may not have a trailing comma".to_owned(),
+              "A rest element cannot have an initializer".to_owned(),
+              tokens.consume(), tokens
+            ))
+          }
+        } else if tokens.peek_str() == "," {
+          if rest.is_some() {
+            return Err(CompilerError::new(
+              "A rest element may not have a trailing comma".to_owned(),
               tokens.consume(), tokens
             ))
           }
           tokens.skip_unchecked();
         } else {
-          if spread.is_some() {
+          if rest.is_some() {
             return Err(CompilerError::new(
               "A spread must be last in a destructuring pattern".to_owned(),
               tokens.consume(), tokens
             ))
           }
-          let property = tokens.consume();
-          tokens.ignore_whitespace();
+          let property = parse_destructure_pattern(tokens, false)?;
+          let needs_alias = match property {
+            DestructurePattern::NumericProperty { .. } => true,
+            DestructurePattern::StringProperty { .. } => true,
+            _ => false
+          };
           let alias = if tokens.peek_str() == ":" {
             tokens.skip_unchecked();
-            parse_destructure_pattern(tokens)?
+            parse_destructure_pattern(tokens, false)?
+          } else if needs_alias {
+            return Err(CompilerError::new(
+              "Expected `:`".to_owned(),
+              tokens.consume(), tokens
+            ));
           } else {
-            if !property.is_identifier() {
-              return Err(CompilerError::new(
-                "Only identifiers can be left un-renamed when destructuring".to_owned(),
-                property, tokens
-              ))
-            }
-            DestructurePattern::Identifier { name: property.value.to_owned() }
+            property.clone()
           };
-          properties.push((property.value.to_owned(), alias));
+          let alias = try_parse_destructure_pattern_initializer(tokens, alias)?;
+          tokens.ignore_whitespace();
+          properties.push((property, alias));
         }
         tokens.ignore_whitespace();
         if tokens.peek_str() == "," {
@@ -342,14 +360,45 @@ fn parse_destructure_pattern(
       }
       tokens.skip_unchecked(); // Skip "}"
       tokens.ignore_whitespace();
-      Ok(DestructurePattern::Object { properties, spread })
+      DestructurePattern::Object { properties, spread: rest }
     },
     _ => {
-      // Identifier or rename
-      let name = tokens.consume_type(TokenType::Identifier)?.value.to_owned();
+      // Identifier, numeric property, or string property
+      let token = tokens.consume();
+      let out = match token.typ {
+        TokenType::Identifier => DestructurePattern::Identifier { name: token.value.to_owned() },
+        TokenType::Number => DestructurePattern::NumericProperty { value: token.value.to_owned() },
+        TokenType::String => DestructurePattern::StringProperty { value: token.value.to_owned() },
+        _ => return Err(CompilerError::new(
+          "Expected Identifier, Number or String in destructure pattern".to_owned(),
+          token, tokens
+        ))
+      };
       tokens.ignore_whitespace();
-      Ok(DestructurePattern::Identifier { name })
+      out
     }
+  };
+
+  if capture_initializer {
+    try_parse_destructure_pattern_initializer(tokens, pattern)
+  } else {
+    Ok(pattern)
+  }
+}
+
+#[inline]
+fn try_parse_destructure_pattern_initializer(
+  tokens: &mut TokenList,
+  curr_pattern: DestructurePattern
+) -> Result<DestructurePattern, CompilerError> {
+  if tokens.peek_str() == "=" {
+    tokens.skip_unchecked();
+    Ok(DestructurePattern::WithInitializer {
+      pattern: Box::new(curr_pattern),
+      initializer: get_expression(tokens, *COMMA_PRECEDENCE)?
+    })
+  } else {
+    Ok(curr_pattern)
   }
 }
 
@@ -888,6 +937,8 @@ fn get_class_expression<'a, 'b>(
         tokens.restore_checkpoint(checkpoint);
         is_getter = false;
         is_setter = false;
+      } else {
+        tokens.ignore_checkpoint(checkpoint);
       }
     } else {
       tokens.ignore_checkpoint(checkpoint);
@@ -1162,7 +1213,7 @@ fn handle_enum(
     tokens.ignore_whitespace();
     let value = if tokens.peek_str() == "=" {
       tokens.skip_unchecked();
-      get_expression(tokens, 1)?
+      get_expression(tokens, 1)? // TODO: why 1?
     } else {
       let number = counter.to_string();
       counter += 1;

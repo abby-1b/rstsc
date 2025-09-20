@@ -1,8 +1,19 @@
-use crate::ast_common::DestructurePattern;
+use crate::small_vec::SmallVec;
 use crate::{ast::ASTNode, types::Type};
 use std::ptr::NonNull;
 use std::hash::Hash;
 use core::fmt::Debug;
+
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub enum DestructurePattern {
+  Array { elements: SmallVec<DestructurePattern>, spread: Option<Box<DestructurePattern>> },
+  Object { properties: SmallVec<(DestructurePattern, DestructurePattern)>, spread: Option<Box<DestructurePattern>> },
+  Identifier { name: String },
+  NumericProperty { value: String },
+  StringProperty { value: String },
+  Ignore,
+  WithInitializer { pattern: Box<DestructurePattern>, initializer: ASTNode }
+}
 
 /// A declaration name that can be computed (ASTNode) or assigned (String)
 /// 
@@ -205,15 +216,13 @@ impl DeclarationTyped {
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct DestructurableDeclaration {
   pub name: DestructurePattern,
-  pub typ: Type,
-  pub initializer: Option<ASTNode>
+  pub typ: Type
 }
 impl From<Declaration> for DestructurableDeclaration {
   fn from(value: Declaration) -> Self {
     DestructurableDeclaration {
       name: DestructurePattern::Identifier { name: value.name },
-      typ: value.typ,
-      initializer: value.value
+      typ: value.typ
     }
   }
 }

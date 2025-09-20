@@ -1,4 +1,4 @@
-use crate::{ast::{ASTNode, ClassMember, FunctionDefinition, ObjectProperty}, ast_common::DestructurePattern, declaration::{Declaration, DeclarationComputable, DestructurableDeclaration}, rest::Rest, small_vec::SmallVec};
+use crate::{ast::{ASTNode, ClassMember, FunctionDefinition, ObjectProperty}, declaration::{Declaration, DeclarationComputable, DestructurableDeclaration, DestructurePattern}, rest::Rest, small_vec::SmallVec};
 
 static NO_REST: Rest = Rest::new();
 
@@ -593,15 +593,12 @@ fn emit_single_declaration(
   }
 }
 
+#[inline]
 fn emit_single_variable_declaration(
   declaration: &DestructurableDeclaration,
   emitter: &mut Emitter
 ) {
   emit_destructure_pattern(&declaration.name, emitter);
-  if let Some(value) = &declaration.initializer {
-    emitter.out_diff(" = ", "=", false);
-    emit_single(value, emitter);
-  }
 }
 
 fn emit_destructure_pattern(
@@ -625,10 +622,17 @@ fn emit_destructure_pattern(
     }
     DestructurePattern::Object { properties, spread } => {
       emitter.out_diff("{ ", "{", false);
-      emitter.emit_vec(properties.as_ref(), |(name, pattern), emitter| {
-        emitter.out(name, false);
-        emitter.out_diff(": ", ":", false);
-        emit_destructure_pattern(pattern, emitter);
+      emitter.emit_vec(properties.as_ref(), |(property, alias), emitter| {
+        match (property, alias) {
+          (DestructurePattern::Identifier { name: a }, DestructurePattern::Identifier { name: b }) if a == b => {
+            emitter.out(a, true);
+          },
+          _ => {
+            emit_destructure_pattern(property, emitter);
+            emitter.out_diff(": ", ":", false);
+            emit_destructure_pattern(alias, emitter);
+          }
+        }
       }, ", ", ",");
       if let Some(spread) = spread {
         if properties.len() > 0 {
@@ -642,8 +646,19 @@ fn emit_destructure_pattern(
     DestructurePattern::Identifier { name } => {
       emitter.out(name, true);
     }
+    DestructurePattern::NumericProperty { value } => {
+      emitter.out(value, false);
+    }
+    DestructurePattern::StringProperty { value } => {
+      emitter.out(value, false);
+    }
     DestructurePattern::Ignore => {
       emitter.out("", true);
+    }
+    DestructurePattern::WithInitializer { pattern, initializer } => {
+      emit_destructure_pattern(pattern, emitter);
+      emitter.out_diff(" = ", "=", false);
+      emit_single(initializer, emitter);
     }
   }
 }
