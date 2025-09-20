@@ -390,8 +390,11 @@ impl<'a> TokenList<'a> {
         );
         // TODO: template literal support
       } else if
-        curr_char == '`' ||
-        (curr_char == '}' && self.str_template_nesting.last().is_some_and(|x| *x == self.curly_bracket_nesting))
+        curr_char == '`' || (
+          curr_char == '}' &&
+          self.str_template_nesting.last()
+            .is_some_and(|x| *x == self.curly_bracket_nesting)
+        )
       {
         // Template literal
         let start_char = self.char_iter.consume().unwrap();
