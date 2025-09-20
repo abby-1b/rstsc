@@ -56,7 +56,7 @@ pub fn tsc_compile(code: &str) -> Result<String, String> {
 	out
 }
 
-/// Tests TypeScript code, compiling it with TSC and checking the two strings.
+/// Tests TypeScript code, checking the passed in TSC output with RSTSC's.
 /// Ignores leading and trailing whitespace and semicolons.
 pub fn test_code(source: &str, compiled: &str, whitespace: &WhiteSpace) -> Result<(), String> {
 	let mut code_string = source.to_string();
@@ -65,11 +65,13 @@ pub fn test_code(source: &str, compiled: &str, whitespace: &WhiteSpace) -> Resul
 
 	// Get the `rstsc` output
 	// println!("RSTSC compiling: {:?}", code);
-	let out = rstsc::compile(code);
-	let mut actual: String = if let Ok(out) = &out {
-		out.clone()
-	} else {
-		format!("{:?}", out.as_ref().err().unwrap())
+	let out = std::panic::catch_unwind(|| {
+		rstsc::compile(code)
+	});
+ 	let mut actual: String = match out {
+		Ok(Ok(code)) => code.clone(),
+		Ok(Err(err)) => format!("{:?}", err),
+		Err(err) => format!("{:?}", err)
 	};
 	let actual_untransformed: String = actual.clone();
 
