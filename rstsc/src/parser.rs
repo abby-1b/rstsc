@@ -1456,13 +1456,16 @@ fn parse_prefix(
           argument: get_expression(tokens, 1)?
         });
       } else {
-        // String, identifier, or computed key
+        // Identifier, String, Number, or computed key
         let (computed, key) = match (&key_token.typ, key_token.value) {
+          (TokenType::Identifier, _) => {
+            (false, ASTNode::ExprIdentifier { name: tokens.consume().value.to_string() })
+          },
           (TokenType::String, _) => {
             (false, ASTNode::ExprStrLiteral { string: tokens.consume().value.to_string() })
           },
-          (TokenType::Identifier, _) => {
-            (false, ASTNode::ExprIdentifier { name: tokens.consume().value.to_string() })
+          (TokenType::Number, _) => {
+            (false, ASTNode::ExprNumLiteral { number: tokens.consume().value.to_string() })
           }
           (TokenType::Symbol, "[") => {
             // Computed key
