@@ -1,3 +1,4 @@
+
 let x: number = 10;
 
 function add(a: number, b: number): number { return a + b; }
@@ -698,3 +699,337 @@ function frame(
     shouldProcessNodes: boolean = true,
     ...processSystemPriorityLessThan: number[] = []
 ) {}
+
+// Spread syntax in function calls
+const arr1 = [1, 2, 3];
+const arr2 = [4, 5, 6];
+console.log(Math.max(...arr1, ...arr2));
+
+// Spread syntax in array expressions
+const combined = [0, ...arr1, 3.5, ...arr2];
+console.log(combined);
+
+// Spread syntax in object expressions
+const obj1 = { a: 1, b: 2 };
+const obj2 = { c: 3, d: 4 };
+const merged = { ...obj1, ...obj2, e: 5 };
+console.log(merged);
+
+// For...of loop with array
+for (const item of arr1) {
+    console.log(item);
+}
+
+// For...of loop with string
+for (const char of "hello") {
+    console.log(char);
+}
+
+// For...in loop with object
+for (const key in obj1) {
+    console.log(key, obj1[key]);
+}
+
+// Array destructuring with rest
+const [first, second, ...rest] = arr2;
+console.log(first, second, rest);
+
+// Object destructuring with renaming
+const { a: newName, b } = obj1;
+console.log(newName, b);
+
+// Nested destructuring
+const nested = { x: { y: 10, z: 20 }, w: 30 };
+const { x: { y, z } } = nested;
+console.log(y, z);
+
+// Destructuring in function parameter
+function destructureParam({ a, b }: { a: number; b: number }) {
+    return a + b;
+}
+console.log(destructureParam(obj1));
+
+// For...in with array indices
+for (const index in arr1) {
+    console.log(index, arr1[index]);
+}
+
+// Mixed destructuring with spread
+const complexArray = [1, { prop: 2 }, 3];
+const [num1, { prop }, ...others] = complexArray;
+console.log(num1, prop, others);
+
+// Export tests
+export const exportedConst = 42;
+export function exportedFunction() { return "hello"; }
+export class ExportedClass { method() { return "world"; } }
+
+// Decorator tests
+function log(target: any, key: string) {}
+class DecoratedClass {
+    @log
+    decoratedMethod() {}
+}
+
+// Namespace tests
+namespace MyNamespace {
+    export const value = 123;
+}
+
+// Module tests (ES6 modules)
+import { exportedConst } from './other-module';
+export default function defaultExport() {}
+
+// Optional chaining tests
+const obj = { a: { b: 1 } };
+console.log(obj?.a?.b);
+console.log(obj?.nonExistent?.property);
+
+// Comment tests
+// Single line comment
+/* Multi-line
+   comment */
+const commented = /* inline comment */ 42;
+
+// Import tests (different forms)
+import * as all from 'module';
+import { specific } from 'other-module';
+import defaultImport from 'default-module';
+
+// Super tests
+class Base {
+    method() { return "base"; }
+}
+class Derived extends Base {
+    method() { return super.method() + " derived"; }
+}
+
+// Async tests
+async function asyncFunction() {
+    return await Promise.resolve("done");
+}
+
+// Getter tests
+class GetterClass {
+    private _value = 0;
+    get value() { return this._value; }
+}
+
+// Static tests
+class StaticClass {
+    static staticMethod() { return "static"; }
+}
+
+// Setter tests
+class SetterClass {
+    private _value = 0;
+    set value(v: number) { this._value = v; }
+}
+
+// Mixed export with decorator and getter
+export abstract    class   ComplexClass {
+  @log
+  private static _count=0;
+  static get count(){return this._count}
+  set count(v:number){this._count=v}
+}
+
+// Namespace with module imports and optional chaining
+namespace    Weird    .  Nested  .Space{
+  import   *as  stuff from  'some-module';
+  export const value = stuff?.maybeUndefined?.prop  ||  'default';
+}
+
+// Async with optional chaining and comments
+async function /*comment*/ weirdAsync(){
+  const result=await Promise.resolve({data:{nested:{value:42}}});
+  return result?.data?.nested?.value//inline comment
+}
+
+// Mixed decorator, static, and super
+function   sealed(constructor:Function) {Object.seal(constructor);Object.seal(constructor.prototype)}
+@sealed
+class   Derived   extends Base {
+  static  override   method(){return super.method()+' extended'}
+}
+
+// Complex destructuring with optional chaining and comments
+const { 
+  a: { 
+    b 
+  } = { b: /*default*/ 0 },
+  c: [ d, , ...e ] = [1,2,3,4]
+} = someObj?.maybeUndefined ?? {};
+
+// Import with weird spacing and exports
+import  {  veryLongIdentifierName  as  short } from  "module-path";
+export  { short  as  renamed  } ;
+
+// Mixed for-of and destructuring with comments
+for(  const [  key,  value  ] of /*comment*/Object.entries(obj)){
+  console.log(key,value)
+}
+
+// Spread with comments and weird spacing
+const merged = { 
+  .../*comment*/obj1, 
+  ...obj2, 
+  extra: /*value*/ 42 
+};
+
+// Dynamic import with optional chaining
+import(  'module'  ).then(module => module?.default?.())
+
+// Test cases for the Namespace tag
+namespace Outer {
+  export namespace Inner {
+    export const value = 1;
+  }
+}
+const innerValue = Outer.Inner.value;
+
+namespace SameName {
+  export const foo = "bar";
+}
+namespace SameName {
+  export const baz = 123;
+}
+const merged = SameName.foo;
+
+// Test cases for the Super tag
+class Base {
+  constructor(public name: string) {}
+  greet() { return `Hello, ${this.name}`; }
+  static staticGreet() { return "Static hello."; }
+}
+
+class Derived extends Base {
+  constructor(name: string) {
+    super(name);
+  }
+}
+
+class DerivedWithMethod extends Base {
+  greet() {
+    return super.greet() + " from derived class.";
+  }
+}
+
+class DerivedWithStatic extends Base {
+  static staticGreet() {
+    return super.staticGreet() + " from derived static.";
+  }
+}
+
+// Test cases for the Module tag (using ES Modules)
+export const exportedConstant = 100;
+
+export interface ExportedInterface {
+  name: string;
+}
+
+export default class ExportedClass {}
+
+import { exportedConstant } from './module_test_dependency';
+const myConst = exportedConstant;
+
+import { exportedConstant as myNewConst } from './module_test_dependency';
+
+import * as myModule from './module_test_dependency';
+
+// Test cases for the Setter tag
+class MyClassWithSetter {
+  private _age: number = 0;
+  get age() { return this._age; }
+  set age(value) { this._age = value; }
+}
+
+class MyClassWithPrivateSetter {
+  private _name: string = "";
+  get name() { return this._name; }
+  private set name(value: string) { this._name = value; }
+}
+
+abstract class AbstractClassWithSetter {
+  private _data: number = 0;
+  abstract set data(value: number);
+}
+
+// Test cases for the Getter tag
+class MyClassWithGetter {
+  private _firstName: string = "John";
+  private _lastName: string = "Doe";
+  get fullName() {
+    return `${this._firstName} ${this._lastName}`;
+  }
+}
+
+class ReadOnlyGetter {
+  private _id: string = 'abc';
+  get id() { return this._id; }
+}
+
+// Test cases for the Implements tag
+interface HasName {
+  name: string;
+}
+
+interface HasAge {
+  age: number;
+}
+
+class Person implements HasName, HasAge {
+  constructor(public name: string, public age: number) {}
+}
+
+interface HasOptional {
+  optional?: string;
+}
+
+class MaybeHasOptional implements HasOptional {
+  optional: string | undefined;
+}
+
+// Test cases for the A-Params (Async Params) tag
+async function destructuringParams({ id, name }: { id: number, name: string }) {
+  await new Promise(resolve => setTimeout(resolve, 100));
+}
+
+async function restParams(id: number, ...names: string[]) {
+  await new Promise(resolve => setTimeout(resolve, 100));
+}
+
+async function defaultAndOptional(a: number = 1, b?: string) {
+  await new Promise(resolve => setTimeout(resolve, 100));
+}
+
+// Test cases for the NN-Assert (Non-Null Assertion) tag
+let value: string | null = "hello";
+let nonNullValue = value!;
+
+let obj: { prop?: string } = { prop: "test" };
+let nonNullProp = obj.prop!;
+
+let arr: string[] | null = ["a", "b"];
+let item = arr![0];
+
+// Test cases for the Async tag
+async function awaitInForOf() {
+  const values = [1, 2, 3];
+  for (const value of values) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+}
+
+async function awaitInTryCatch() {
+  try {
+    await new Promise((_, reject) => reject("Error"));
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+(async () => {
+  await new Promise(resolve => setTimeout(resolve, 100));
+})();
+
