@@ -3,10 +3,10 @@ mod common;
 use std::collections::HashMap;
 use regex::Regex;
 
-use common::{test_code, tsc_compile};
+use common::{test_code, tsc_compile_snippets};
 
 const SOURCE: &str = include_str!("./tests.ts");
-const REQUIRED_TESTS: usize = 2;
+const REQUIRED_TESTS: usize = 4;
 
 #[test]
 fn tsc_tests() {
@@ -32,7 +32,6 @@ fn tsc_tests() {
     ("Import", &[ r"[^a-zA-Z]import " ]),
     ("Export", &[ r"[^a-zA-Z]export " ]),
     ("Namespace", &[ r"[^a-zA-Z]namespace " ]),
-    ("Module", &[ r"[^a-zA-Z]module " ]),
     ("Decorator", &[ r"@" ]),
     ("Tuple", &[ r"\[.*?,.*?\]", r"\[.*?,.*?,.*?\]", r"\[.*?,.*?,.*?,.*?\]" ]),
     ("Literal Types", &[ r#": (true|false|[0-9]+|'.*?'|".*?")"# ]),
@@ -44,8 +43,8 @@ fn tsc_tests() {
     ("Static", &[ r"[^a-zA-Z]static " ]),
     ("Readonly", &[ r"[^a-zA-Z]readonly " ]),
     ("Constructor", &[ r"[^a-zA-Z]constructor\(" ]),
-    ("Super", &[ r"super\(" ]),
-    ("This", &[ r"this\." ]),
+    ("Super", &[ r"[^a-zA-Z]super\(", r"[^a-zA-Z]super\." ]),
+    ("This", &[ r"[^a-zA-Z]this\." ]),
   ];
 
   // Compile tag regexes
@@ -68,12 +67,13 @@ fn tsc_tests() {
   }
 
   let source_snippets: Vec<&str> = SOURCE.split("\n\n").collect();
-  let compiled_snippets: Vec<(String, bool)> = source_snippets.par_iter().map(|s| {
-    match tsc_compile(s) {
-      Ok(result) => ( result, true ),
-      Err(err) => ( err, false )
-    }
-  }).collect();
+  let compiled_snippets: Vec<(String, bool)> = tsc_compile_snippets(&source_snippets);
+  // source_snippets.par_iter().map(|s| {
+  //   match tsc_compile(s) {
+  //     Ok(result) => ( result, true ),
+  //     Err(err) => ( err, false )
+  //   }
+  // }).collect();
 
   for (_idx, (source, (tsc_output, tsc_is_ok))) in source_snippets.iter().zip(compiled_snippets).enumerate() {
     let state = test_code(source, &tsc_output, &common::WhiteSpace::IgnoreAll);
@@ -114,9 +114,8 @@ fn tsc_tests() {
     }
     counts.sort_by_key(|k| {
       (
-        (k.1[0] as f64 / (k.1[0] + k.1[1]) as f64) * 100000.0 -
-        (k.1[0] + k.1[1]) as f64 * 100.0
-      ) as i64
+        (k.1[0] as f64 / (k.1[0] + k.1[1]) as f64) * 1000000.0
+      ) as i64 - (k.1[0] + k.1[1]) as i64
     });
 
     let mut missing_tests = 0;

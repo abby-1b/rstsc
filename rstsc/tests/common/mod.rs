@@ -1,6 +1,5 @@
-use std::{io::Read, process::{Command, Stdio}};
+use std::{process::{Command, Stdio}};
 
-use rand::Rng;
 use regex::Regex;
 
 pub enum WhiteSpace {
@@ -17,43 +16,57 @@ pub enum WhiteSpace {
 	Exact,
 }
 
-/// Compiles TypeScript using `tsc`
-pub fn tsc_compile(code: &str) -> Result<String, String> {
-	// Get a random filename
-	let mut filename = rand::thread_rng().gen::<f32>().to_string();
-	filename += "test";
-	let filename_ts = filename.clone() + ".ts";
-	let filename_js = filename + ".js";
+use reqwest::blocking::Client;
 
-	// Write the file
-	std::fs::write(&filename_ts, code).unwrap();
+const API_ENDPOINT: &str = "http://localhost:8033/compile";
+const API_ENDPOINT_START: &str = "http://localhost:8033/reset_counter";
+const API_ENDPOINT_END: &str = "http://localhost:8033/print_counter";
 
-	let child = Command::new("tsc")
-        .arg("--removeComments")
-        .arg("--target")
-        .arg("ESNext")
-        .arg(&filename_ts)
-        .arg("--outFile")
-        .arg(&filename_js)
-		.stdout(Stdio::null())
-        .spawn();
+pub fn tsc_compile_snippets(ts_snippets: &Vec<&str>) -> Vec<(String, bool)> {
+	let client = Client::new();
 
-	// Wait for completion
-	let mut child = child.expect("`tsc` not found!");
-	child.wait().expect("`tsc` wasn't running!");
+	// Start counting (server-side)
+	let _ = client
+		.post(API_ENDPOINT_START)
+		.send();
+		
+	let out = ts_snippets.iter().map(|ts_code| {
+		// Send a POST request to the server with the TypeScript code in the body.
+		let snippet = (*ts_code).to_owned();
+		let response_res = client
+			.post(API_ENDPOINT)
+			.header("Content-Type", "text/plain")
+			.body(snippet)
+			.send();
+		let response = match response_res {
+			Err(err) => return (format!("{:?}", err), false),
+			Ok(res) => res
+		};
+	
+		// Check if the request was successful
+		if response.status().is_success() {
+			// If successful, return the response body as a string.
+			match response.text() {
+				Err(err) => return (format!("{:?}", err), false),
+				Ok(text) => (text, true)
+			}
+		} else {
+			// If not successful, create an error with the status and response text.
+			let error_message = format!(
+				"API request failed with status {}: {}",
+				response.status(),
+				response.text().unwrap_or_else(|_| "No details".to_string())
+			);
+			(error_message, false)
+		}
+	}).collect();
 
-	let out = if let Ok(out) = std::fs::read_to_string(&filename_js) {
-		std::fs::remove_file(&filename_ts).unwrap();
-		std::fs::remove_file(&filename_js).unwrap();
-		Ok(out)
-	} else {
-		let mut err = "Error: ".to_string();
-		if let Some(mut stderr) = child.stderr { let _ = stderr.read_to_string(&mut err); }
-		if let Some(mut stdout) = child.stdout { let _ = stdout.read_to_string(&mut err); }
-		Err(err)
-	};
+	// Finish counting (server-side)
+	let _ = client
+		.post(API_ENDPOINT_END)
+		.send();
 
-	out
+	return out;
 }
 
 /// Tests TypeScript code, checking the passed in TSC output with RSTSC's.
