@@ -1,4 +1,3 @@
-use rayon::prelude::*;
 mod common;
 use std::collections::HashMap;
 use regex::Regex;
@@ -32,6 +31,7 @@ fn tsc_tests() {
     ("Import", &[ r"[^a-zA-Z]import " ]),
     ("Export", &[ r"[^a-zA-Z]export " ]),
     ("Namespace", &[ r"[^a-zA-Z]namespace " ]),
+    ("Try/Catch", &[ r"[^a-zA-Z]try " ]),
     ("Decorator", &[ r"@" ]),
     ("Tuple", &[ r"\[.*?,.*?\]", r"\[.*?,.*?,.*?\]", r"\[.*?,.*?,.*?,.*?\]" ]),
     ("Literal Types", &[ r#": (true|false|[0-9]+|'.*?'|".*?")"# ]),

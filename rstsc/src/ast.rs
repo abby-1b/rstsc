@@ -32,6 +32,7 @@ pub struct FunctionDefinition {
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct ArrowFunctionDefinition {
   pub is_async: bool,
+  pub generics: SmallVec<Type>,
   pub params: SmallVec<Declaration>,
   pub rest: Rest,
   pub return_type: Type,
@@ -72,6 +73,15 @@ pub struct ClassDefinition {
   pub kv_maps: SmallVec<KeyValueMap>,
 
   pub members: SmallVec<ClassMember>,
+}
+
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub struct TryCatchFinally {
+  pub block_try: ASTNode,
+  pub capture_catch: Option<String>,
+  pub capture_catch_type: Option<Type>,
+  pub block_catch: Option<ASTNode>,
+  pub block_finally: Option<ASTNode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -158,6 +168,8 @@ pub enum ASTNode {
   StatementContinue { value: Option<Box<ASTNode>> },
   StatementThrow { value: Option<Box<ASTNode>> },
 
+  StatementTryCatchFinally { inner: Box<TryCatchFinally> },
+
   FunctionDefinition { inner: Box<FunctionDefinition> },
   ArrowFunctionDefinition { inner: Box<ArrowFunctionDefinition> },
 
@@ -234,6 +246,7 @@ impl ASTNode {
       ASTNode::StatementBreak { .. } => "StatementBreak",
       ASTNode::StatementContinue { .. } => "StatementContinue",
       ASTNode::StatementThrow { .. } => "StatementThrow",
+      ASTNode::StatementTryCatchFinally { .. } => "StatementTryCatchFinally",
       ASTNode::FunctionDefinition { .. } => "FunctionDefinition",
       ASTNode::ArrowFunctionDefinition { .. } => "ArrowFunctionDefinition",
       ASTNode::ClassDefinition { .. } => "ClassDefinition",

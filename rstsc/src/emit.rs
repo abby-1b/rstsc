@@ -304,6 +304,23 @@ fn emit_single(
         emit_single(value, emitter);
       }
     }
+    ASTNode::StatementTryCatchFinally { inner } => {
+      emitter.out_diff("try ", "try", false);
+      emit_single(&inner.block_try, emitter);
+      if let Some(block) = &inner.block_catch {
+        emitter.out_diff(" catch ", "catch", false);
+        if let Some(capture) = &inner.capture_catch {
+          emitter.out("(", false);
+          emitter.out(capture, false);
+          emitter.out_diff(") ", ")", false);
+        }
+        emit_single(block, emitter);
+      }
+      if let Some(block) = &inner.block_finally {
+        emitter.out_diff(" finally ", "finally", false);
+        emit_single(block, emitter);
+      }
+    }
     ASTNode::FunctionDefinition { inner } => {
       if inner.body.is_some() {
         emit_function_definition(
@@ -320,7 +337,7 @@ fn emit_single(
       }
 
       // Params
-      if arrow_fn.params.len() == 1 && arrow_fn.params[0].value().is_none() {
+      if arrow_fn.params.len() == 1 && arrow_fn.params[0].value().is_none() && !arrow_fn.rest.exists() {
         emitter.out(&arrow_fn.params[0].name(), false);
       } else {
         emitter.out("(", false);

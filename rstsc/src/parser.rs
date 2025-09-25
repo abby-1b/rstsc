@@ -1,7 +1,7 @@
 use phf::{phf_map, phf_set};
 use crate::{
   ast::{
-    ASTNode, ArrowFunctionDefinition, ClassDefinition, ClassMember, EnumDeclaration, FunctionDefinition, GetterSetter, ImportDefinition, IndividualImport, InterfaceDeclaration, ObjectProperty
+    ASTNode, ArrowFunctionDefinition, ClassDefinition, ClassMember, EnumDeclaration, FunctionDefinition, GetterSetter, ImportDefinition, IndividualImport, InterfaceDeclaration, ObjectProperty, TryCatchFinally
   }, ast_common::{
     Modifier, ModifierList, VariableDefType, ACCESSIBILITY_MODIFIERS, MODIFIERS
   }, declaration::{ComputableDeclarationName, Declaration, DeclarationComputable, DeclarationTyped, DestructurableDeclaration, DestructurePattern}, error_type::CompilerError, operations::{get_operator_binding_power, ExprType, ARROW_FN_PRECEDENCE, COMMA_PRECEDENCE}, rest::Rest, small_vec::SmallVec, tokenizer::{Token, TokenList, TokenType}, types::{
@@ -73,8 +73,8 @@ fn get_single_statement<'a, 'b>(
   
   // Handlers
   // Note that handlers don't consume `;`!
-  let ret = if let Some(block) = handle_blocks(tokens)? { block }
-  else if let Some(vars)                 = handle_vars(tokens)? { vars }
+  let ret = if let Some(block) = handle_block(tokens)? { block }
+  else if let Some(vars)                 = handle_var(tokens)? { vars }
   else if let Some(control_flow)         = handle_control_flow(tokens)? { control_flow }
   else if let Some(function_declaration) = handle_function_declaration(tokens)? { function_declaration }
   else if let Some(class_declaration)    = handle_class_declaration(tokens)? { class_declaration }
@@ -84,6 +84,7 @@ fn get_single_statement<'a, 'b>(
   else if let Some(type_declaration)     = handle_type_declaration(tokens)? { type_declaration }
   else if let Some(result_enum)          = handle_enum(tokens, false)? { result_enum }
   else if let Some(interface)            = handle_interface(tokens)? { interface }
+  else if let Some(interface)            = handle_try_catch(tokens)? { interface }
   else { handle_expression(tokens)? }; // Expression fallback
 
   tokens.ignore_whitespace();
@@ -95,7 +96,7 @@ fn get_single_statement<'a, 'b>(
 }
 
 /// Handles blocks (defined as a non-expression `{` token)
-fn handle_blocks(
+fn handle_block(
   tokens: &mut TokenList
 ) -> Result<Option<ASTNode>, CompilerError> {
   if tokens.peek_str() != "{" {
@@ -106,7 +107,7 @@ fn handle_blocks(
 }
 
 /// Handles variable initialization
-fn handle_vars<'a, 'b>(
+fn handle_var<'a, 'b>(
   tokens: &'b mut TokenList
 ) -> Result<Option<ASTNode>, CompilerError> where 'a: 'b {
   if !VARIABLE_DECLARATIONS.contains(&tokens.peek_str()) {
@@ -1352,6 +1353,87 @@ fn handle_interface(
   }) }))
 }
 
+fn handle_try_catch(
+  tokens: &mut TokenList
+) -> Result<Option<ASTNode>, CompilerError> {
+  if tokens.peek_str() != "try" {
+    return Ok(None);
+  }
+
+  let try_token = tokens.consume();
+  tokens.ignore_whitespace();
+  let block_try = match handle_block(tokens) {
+    Ok(Some(block)) => block,
+    _ => {
+      return Err(CompilerError::new(
+        "Expected block after `try`".to_owned(),
+        try_token, tokens
+      ));
+    }
+  };
+
+  tokens.ignore_whitespace();
+  let (capture_catch, capture_catch_type, block_catch) = if tokens.peek_str() == "catch" {
+    let token = tokens.consume();
+    tokens.ignore_whitespace();
+    let (capture_catch, capture_catch_type) = if tokens.peek_str() == "(" {
+      tokens.skip_unchecked();
+      tokens.ignore_whitespace();
+      let capture_catch = tokens.consume_type(TokenType::Identifier)?.value.to_owned();
+      tokens.ignore_whitespace();
+      let capture_catch_type = try_get_type(tokens)?;
+      tokens.ignore_whitespace();
+      tokens.skip(")")?;
+      tokens.ignore_whitespace();
+      (Some(capture_catch), capture_catch_type)
+    } else {
+      (None, None)
+    };
+    let block_catch = match handle_block(tokens) {
+      Ok(Some(block)) => Some(block),
+      _ => {
+        return Err(CompilerError::new(
+          "Expected block after `catch`".to_owned(),
+          token, tokens
+        ));
+      }
+    };
+    (capture_catch, capture_catch_type, block_catch)
+  } else { (None, None, None) };
+  
+  tokens.ignore_whitespace();
+  let block_finally = if tokens.peek_str() == "finally" {
+    let token = tokens.consume();
+    tokens.ignore_whitespace();
+    match handle_block(tokens) {
+      Ok(Some(block)) => Some(block),
+      _ => {
+        return Err(CompilerError::new(
+          "Expected block after `finally`".to_owned(),
+          token, tokens
+        ))
+      }
+    }
+  } else { None };
+
+  if block_catch.is_none() && block_finally.is_none() {
+    return Err(CompilerError::new(
+      "Expected `catch` or `finally`".to_owned(),
+      tokens.peek().clone(), tokens
+    ))
+  }
+
+  return Ok(Some(ASTNode::StatementTryCatchFinally {
+    inner: Box::new(TryCatchFinally {
+      block_try,
+      capture_catch,
+      capture_catch_type,
+      block_catch,
+      block_finally
+    })
+  }));
+}
+
 /// Handles expressions. Basically a soft wrapper around `get_expression`
 fn handle_expression(
   tokens: &mut TokenList
@@ -1580,6 +1662,8 @@ fn parse_infix<'a, 'b>(
     // This captures arrow functions that don't start with parenthesis, or those
     // which don't have an arrow-function-specific header.
 
+    // This avoids re-parsing stuff that can be salvaged!
+
     let params = match left {
       ASTNode::ExprIdentifier { name } => {
         SmallVec::with_element(Declaration::new(name, Type::Unknown, None))
@@ -1595,6 +1679,7 @@ fn parse_infix<'a, 'b>(
               ASTNode::ExprIdentifier { name } => Declaration::new(name, Type::Unknown, Some(*right)),
               _ => unreachable!()
             }
+            ASTNode::Empty => { continue; }
             other => return Err(CompilerError::new(
               format!("Arrow function expected parameter, found {:?}", other),
               other.as_token(), tokens
@@ -1720,6 +1805,7 @@ fn parse_arrow_function_after_arrow(
 
   Ok(ASTNode::ArrowFunctionDefinition { inner: Box::new(ArrowFunctionDefinition {
     is_async: false,
+    generics: SmallVec::new(),
     params,
     rest,
     return_type,
@@ -1785,7 +1871,6 @@ pub fn get_expression<'a, 'b>(
               tokens.restore_checkpoint(checkpoint);
 
               if is_arrow_function {
-                println!("Precedence: {}", precedence);
                 parse_arrow_function(tokens)?
               } else {
                 parse_prefix(tokens, binding_power.1)?
@@ -1796,6 +1881,15 @@ pub fn get_expression<'a, 'b>(
           } else if next.is_identifier() {
             // Could be a name...
             parse_name(tokens)?
+          } else if next.value == "<" {
+            // Arrow function generic!
+            tokens.skip_unchecked();
+            let generics = get_generics(tokens)?;
+            let mut arrow_function = parse_arrow_function(tokens)?;
+            if let ASTNode::ArrowFunctionDefinition { inner } = &mut arrow_function {
+              inner.generics = generics;
+            }
+            arrow_function
           } else {
             // Not a name & no matching operators.
             return Err(CompilerError::new(
