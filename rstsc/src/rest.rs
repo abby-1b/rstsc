@@ -10,6 +10,10 @@ impl Rest {
     Rest(false)
   }
 
+  pub fn exists(&self) -> bool {
+    self.0
+  }
+
   pub fn index_in_decls(&self, decl_count: usize) -> usize {
     if !self.0 { return usize::MAX; }
     decl_count

@@ -92,7 +92,7 @@ pub enum Type {
   WithArgs(Box<Type>, SmallVec<Type>),
 
   /// Tuples (eg. `[string, number]`)
-  Tuple { inner_types: SmallVec<Type>, spread_idx: SizeType },
+  Tuple { inner_types: SmallVec<(Type, bool)> },
 
   /// Array type (eg. `number[]`)
   Array(Box<Type>),
@@ -530,30 +530,18 @@ fn parse_prefix(
     "[" => {
       // Tuple
       let mut inner_types = SmallVec::new();
-      let mut spread_idx = SizeType::MAX;
       tokens.ignore_commas();
       loop {
-        if tokens.peek_str() == "..." {
-          // Get spread
-          if spread_idx != SizeType::MAX {
-            // Multiple spreads are not allowed
-            // eg. `let a: [boolean, ...number[], ...string[]]`
-            return Err(CompilerError::new(
-              "Can't have multiple spread elements in one tuple.".to_string(),
-              tokens.consume(), tokens
-            ));
-          }
-          spread_idx = inner_types.len_natural();
-          tokens.skip_unchecked(); // Skip "..."
-        }
-        inner_types.push(get_expression(tokens, 0)?);
+        let has_spread = tokens.peek_str() == "...";
+        if has_spread { tokens.skip_unchecked(); }
+        inner_types.push((get_expression(tokens, 0)?, has_spread));
 
         // End on brackets
         if tokens.peek_str() == "]" { break }
         tokens.ignore_commas();
       }
       tokens.skip("]")?;
-      Ok(Type::Tuple { inner_types, spread_idx })
+      Ok(Type::Tuple { inner_types })
     }
     "(" => {
       // Parenthesized type!
