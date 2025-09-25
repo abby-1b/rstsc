@@ -337,11 +337,23 @@ fn emit_single(
       }
 
       // Params
-      if arrow_fn.params.len() == 1 && arrow_fn.params[0].value().is_none() && !arrow_fn.rest.exists() {
-        emitter.out(&arrow_fn.params[0].name(), false);
-      } else {
+      let is_simple_param = match arrow_fn.params.as_ref() {
+        [param] => match &param.name {
+          DestructurePattern::Identifier { name } => {
+            emitter.out(name, false);
+            true
+          },
+          _ => false
+        }
+        _ => false
+      };
+      
+      if !is_simple_param {
         emitter.out("(", false);
-        emit_declarations(arrow_fn.params.as_ref(), arrow_fn.rest.clone(), emitter);
+        emit_destructurable_declarations(
+          arrow_fn.params.as_ref(),
+          arrow_fn.rest.clone(), emitter
+        );
         emitter.out(")", false);
       }
 

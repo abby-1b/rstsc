@@ -197,6 +197,7 @@ impl<'a> TokenList<'a> {
   pub fn consume_type<'b>(&mut self, typ: TokenType) -> Result<Token<'b>, CompilerError> where 'a: 'b {
     let ret = self.consume();
     if ret.typ != typ {
+      // println!("{}", std::backtrace::Backtrace::capture());
       Err(CompilerError::new(
         format!(
           "Expected {:?}, found {:?}",

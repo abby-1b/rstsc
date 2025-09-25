@@ -26,6 +26,8 @@ pub fn get_operator_binding_power(
   expr_type: ExprType, opr: &str
 ) -> Option<(u8, u8)> {
   match (&expr_type, opr) {
+    (ExprType::Prefx, "<>") => Some((40, 41)), // Used for C-style casts
+
     (ExprType::Prefx, "{") => Some((40, 41)),
     (ExprType::Prefx, "[") => Some((40, 41)),
     (ExprType::Prefx, "(") => Some((40, 41)),

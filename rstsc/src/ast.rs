@@ -33,7 +33,7 @@ pub struct FunctionDefinition {
 pub struct ArrowFunctionDefinition {
   pub is_async: bool,
   pub generics: SmallVec<Type>,
-  pub params: SmallVec<Declaration>,
+  pub params: SmallVec<DestructurableDeclaration>,
   pub rest: Rest,
   pub return_type: Type,
   pub body: ASTNode

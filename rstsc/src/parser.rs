@@ -1666,17 +1666,26 @@ fn parse_infix<'a, 'b>(
 
     let params = match left {
       ASTNode::ExprIdentifier { name } => {
-        SmallVec::with_element(Declaration::new(name, Type::Unknown, None))
+        SmallVec::with_element(DestructurableDeclaration {
+          name: DestructurePattern::Identifier { name },
+          typ: Type::Unknown
+        })
       }
       ASTNode::Parenthesis { nodes } => {
         let mut params = SmallVec::new();
         for n in nodes {
           params.push(match n {
-            ASTNode::ExprIdentifier { name } => Declaration::new(name, Type::Unknown, None),
+            ASTNode::ExprIdentifier { name } => DestructurableDeclaration {
+              name: DestructurePattern::Identifier { name },
+              typ: Type::Unknown
+            },
             ASTNode::InfixOpr {
               left, opr, right
             } if opr == "=" && matches!(*left, ASTNode::ExprIdentifier { .. }) => match *left {
-              ASTNode::ExprIdentifier { name } => Declaration::new(name, Type::Unknown, Some(*right)),
+              ASTNode::ExprIdentifier { name } => DestructurableDeclaration {
+                name: DestructurePattern::Identifier { name },
+                typ: Type::Unknown
+              },
               _ => unreachable!()
             }
             ASTNode::Empty => { continue; }
@@ -1779,7 +1788,7 @@ fn parse_arrow_function(
   tokens: &mut TokenList,
 ) -> Result<ASTNode, CompilerError> {
   tokens.skip("(")?;
-  let (params, spread) = get_multiple_declarations(tokens, true)?;
+  let (params, spread) = get_multiple_destructurable_declarations(tokens, true)?;
   tokens.skip(")")?;
   tokens.ignore_whitespace();
   let return_type = try_get_type(tokens)?;
@@ -1790,7 +1799,7 @@ fn parse_arrow_function(
 /// Parses an arrow function starting at the arrow (`=>`)
 fn parse_arrow_function_after_arrow(
   tokens: &mut TokenList,
-  params: SmallVec<Declaration>,
+  params: SmallVec<DestructurableDeclaration>,
   rest: Rest,
   return_type: Type
 ) -> Result<ASTNode, CompilerError> {
@@ -1882,14 +1891,31 @@ pub fn get_expression<'a, 'b>(
             // Could be a name...
             parse_name(tokens)?
           } else if next.value == "<" {
-            // Arrow function generic!
+            // Arrow function generic, or C-style type cast (eg. `<number>a`)
+            let generics_token = tokens.peek().clone();
             tokens.skip_unchecked();
             let generics = get_generics(tokens)?;
-            let mut arrow_function = parse_arrow_function(tokens)?;
-            if let ASTNode::ArrowFunctionDefinition { inner } = &mut arrow_function {
-              inner.generics = generics;
+
+            // Get next expression...
+            let mut expr = get_expression(tokens, get_operator_binding_power(ExprType::Prefx, "<>").unwrap().0)?;
+            match &mut expr {
+              ASTNode::ArrowFunctionDefinition { inner } => {
+                inner.generics = generics;
+              },
+              _ => {
+                if generics.len() > 1 {
+                  return Err(CompilerError::new(
+                    format!("Expected one type in cast, found {}", generics.len()),
+                    generics_token, tokens
+                  ));
+                }
+                expr = ASTNode::ExprTypeAssertion {
+                  cast_type: Box::new(generics[0].clone()), value: Box::new(expr)
+                }
+              }
             }
-            arrow_function
+
+            expr
           } else {
             // Not a name & no matching operators.
             return Err(CompilerError::new(
