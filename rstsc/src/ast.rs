@@ -1,6 +1,6 @@
 
 use crate::{
-  ast_common::*, declaration::{Declaration, DeclarationComputable, DestructurableDeclaration}, error_type::CompilerError, small_vec::SmallVec, rest::Rest, tokenizer::Token, types::{KeyValueMap, Type}
+  ast_common::*, declaration::{DeclarationComputable, DestructurableDeclaration}, error_type::CompilerError, small_vec::SmallVec, rest::Rest, tokenizer::Token, types::{KeyValueMap, Type}
 };
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -194,6 +194,11 @@ pub enum ASTNode {
     generics: SmallVec<Type>,
     arguments: SmallVec<ASTNode>,
   },
+  TemplateLiteralTag {
+    callee: Box<ASTNode>,
+    argument: Box<ASTNode>,
+  },
+
   ExprIndexing { callee: Box<ASTNode>, property: Box<ASTNode> },
 
   ExprTernary {
@@ -259,6 +264,7 @@ impl ASTNode {
       ASTNode::ExprIdentifier { .. } => "ExprIdentifier",
       ASTNode::ExprBoolLiteral { .. } => "ExprBoolLiteral",
       ASTNode::ExprFunctionCall { .. } => "ExprFunctionCall",
+      ASTNode::TemplateLiteralTag { .. } => "TemplateLiteralTag",
       ASTNode::ExprIndexing { .. } => "ExprIndexing",
       ASTNode::ExprTernary { .. } => "ExprTernary",
       ASTNode::PrefixOpr { .. } => "PrefixOpr",

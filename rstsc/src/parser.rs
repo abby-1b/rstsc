@@ -4,7 +4,7 @@ use crate::{
     ASTNode, ArrowFunctionDefinition, ClassDefinition, ClassMember, EnumDeclaration, FunctionDefinition, GetterSetter, ImportDefinition, IndividualImport, InterfaceDeclaration, ObjectProperty, TryCatchFinally
   }, ast_common::{
     Modifier, ModifierList, VariableDefType, ACCESSIBILITY_MODIFIERS, MODIFIERS
-  }, declaration::{ComputableDeclarationName, Declaration, DeclarationComputable, DeclarationTyped, DestructurableDeclaration, DestructurePattern}, error_type::CompilerError, operations::{get_operator_binding_power, ExprType, ARROW_FN_PRECEDENCE, COMMA_PRECEDENCE}, rest::Rest, small_vec::SmallVec, tokenizer::{Token, TokenList, TokenType}, types::{
+  }, declaration::{ComputableDeclarationName, Declaration, DeclarationComputable, DeclarationTyped, DestructurableDeclaration, DestructurePattern}, error_type::CompilerError, operations::{get_operator_binding_power, ExprType, ARROW_FN_PRECEDENCE, COMMA_PRECEDENCE, TEMPLATE_LITERAL_TAG_PRECEDENCE}, rest::Rest, small_vec::SmallVec, tokenizer::{Token, TokenList, TokenType}, types::{
     get_comma_separated_types_until, get_generics, get_optional_generics, get_type, parse_object_square_bracket, try_get_type, ObjectSquareBracketReturn, Type
   }
 };
@@ -1457,6 +1457,12 @@ fn parse_string_template(
   tokens: &mut TokenList
 ) -> Result<ASTNode, CompilerError> {
   let head_token = tokens.consume();
+  if head_token.typ == TokenType::String {
+    return Ok(ASTNode::ExprStrLiteral {
+      string: head_token.value.to_string()
+    });
+  }
+
   let head = head_token.value[1..head_token.value.len() - 2].to_owned();
 
   let mut parts = SmallVec::new();
@@ -1828,7 +1834,7 @@ pub fn get_expression<'a, 'b>(
   precedence: u8
 ) -> Result<ASTNode, CompilerError> where 'a: 'b {
   tokens.ignore_whitespace();
-  
+
   // Get left (or sometimes only) side (which can be the prexfix!)
   let mut left = {
     let next = tokens.peek();
@@ -1958,7 +1964,6 @@ pub fn get_expression<'a, 'b>(
     }
 
     // Handle postfix
-
     if let Some(binding_power) = get_operator_binding_power(
       ExprType::Pstfx,
       next.value
@@ -1980,8 +1985,19 @@ pub fn get_expression<'a, 'b>(
       continue;
     }
 
-    // Handle infix
+    // Handle template literal tags
+    if next.value.starts_with("`") {
+      if *TEMPLATE_LITERAL_TAG_PRECEDENCE < precedence {
+        break;
+      }
+      left = ASTNode::TemplateLiteralTag {
+        callee: Box::new(left),
+        argument: Box::new(parse_string_template(tokens)?)
+      };
+      continue;
+    }
 
+    // Handle infix
     let binding_power = if let Some(binding_power) = get_operator_binding_power(
       ExprType::Infx,
       next.value
@@ -1998,6 +2014,7 @@ pub fn get_expression<'a, 'b>(
     // It's infix
     left = parse_infix(left, tokens, binding_power.1)?;
   }
+
   Ok(left)
 }
 

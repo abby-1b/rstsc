@@ -474,6 +474,10 @@ fn emit_single(
       }, ", ", ",");
       emitter.out(")", true);
     }
+    ASTNode::TemplateLiteralTag { callee, argument } => {
+      emit_single(&*callee, emitter);
+      emit_single(&*argument, emitter);
+    }
     ASTNode::ExprIndexing { callee, property } => {
       emit_single(&*callee, emitter);
       emitter.out("[", false);

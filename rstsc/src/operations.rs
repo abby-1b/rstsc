@@ -36,6 +36,7 @@ pub fn get_operator_binding_power(
     (ExprType::Infx, "?.") => Some((38, 39)),
     (ExprType::Infx, "[" ) => Some((38, 39)),
     (ExprType::Infx, "(" ) => Some((38, 39)),
+    (ExprType::Infx, "``") => Some((38, 39)),
 
     (ExprType::Pstfx, "!") => Some((36, 37)), // Non-null assertion
     
@@ -177,4 +178,5 @@ lazy_static::lazy_static! {
   pub static ref ARROW_FN_PRECEDENCE: u8 = get_operator_binding_power(ExprType::Infx, "=>").unwrap().1;
   pub static ref COLON_PRECEDENCE: u8 = get_operator_binding_power(ExprType::Special, ":").unwrap().1;
   pub static ref COMMA_PRECEDENCE: u8 = get_operator_binding_power(ExprType::Infx, ",").unwrap().1;
+  pub static ref TEMPLATE_LITERAL_TAG_PRECEDENCE: u8 = get_operator_binding_power(ExprType::Infx, "``").unwrap().0;
 }
