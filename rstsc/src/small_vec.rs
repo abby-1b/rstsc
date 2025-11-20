@@ -7,13 +7,13 @@ use core::fmt::Debug;
 pub type SizeType = u32;
 
 /// A vector implementation with limited capacity (defined at compile time)
-pub struct SmallVec<T: Debug> {
+pub struct SmallVec<T> {
   memory: NonNull<T>,
   capacity: SizeType,
   length: SizeType,
 }
 
-impl<T: Debug> SmallVec<T> {
+impl<T> SmallVec<T> {
   const MAX_LEN: usize = SizeType::MAX as usize;
 
   pub fn new() -> SmallVec<T> {
@@ -187,7 +187,7 @@ impl<T: Debug> SmallVec<T> {
   }
 }
 
-impl<T: Debug + ToString> SmallVec<T> {
+impl<T: ToString> SmallVec<T> {
   pub fn join(&self, separator: &str) -> String {
     let mut out = String::new();
     let mut remaining = self.length;
@@ -202,13 +202,13 @@ impl<T: Debug + ToString> SmallVec<T> {
   }
 }
 
-impl<T: Debug> Default for SmallVec<T> {
+impl<T> Default for SmallVec<T> {
   fn default() -> Self {
     Self::new()
   }
 }
 
-impl<T: Debug> Drop for SmallVec<T> {
+impl<T> Drop for SmallVec<T> {
   fn drop(&mut self) {
     if self.capacity == 0 { return; }
 
@@ -221,7 +221,7 @@ impl<T: Debug> Drop for SmallVec<T> {
   }
 }
 
-impl<T: Debug + Clone> Clone for SmallVec<T> {
+impl<T: Clone> Clone for SmallVec<T> {
   fn clone(&self) -> Self {
     let mut new_vec: SmallVec<T> = SmallVec::with_capacity(self.capacity());
     for element in self.iter() {
@@ -231,7 +231,7 @@ impl<T: Debug + Clone> Clone for SmallVec<T> {
   }
 }
 
-impl<T: Debug> Index<usize> for SmallVec<T> {
+impl<T> Index<usize> for SmallVec<T> {
   type Output = T;
   fn index(&self, index: usize) -> &Self::Output {
     #[cfg(debug_assertions)]
@@ -248,7 +248,7 @@ impl<T: Debug> Index<usize> for SmallVec<T> {
     unsafe { &*memory_index }
   }
 }
-impl<T: Debug> IndexMut<usize> for SmallVec<T> {
+impl<T> IndexMut<usize> for SmallVec<T> {
   fn index_mut(&mut self, index: usize) -> &mut Self::Output {
     #[cfg(debug_assertions)]
     if index >= self.len() {
@@ -265,7 +265,7 @@ impl<T: Debug> IndexMut<usize> for SmallVec<T> {
   }
 }
 
-impl<T: Debug> Index<Range<usize>> for SmallVec<T> {
+impl<T> Index<Range<usize>> for SmallVec<T> {
   type Output = [T];
   fn index(&self, index: Range<usize>) -> &Self::Output {
     #[cfg(debug_assertions)]
@@ -281,7 +281,7 @@ impl<T: Debug> Index<Range<usize>> for SmallVec<T> {
   }
 }
 
-impl<T: Debug> Index<RangeTo<usize>> for SmallVec<T> {
+impl<T> Index<RangeTo<usize>> for SmallVec<T> {
   type Output = [T];
   fn index(&self, index: RangeTo<usize>) -> &Self::Output {
     #[cfg(debug_assertions)]
@@ -294,7 +294,7 @@ impl<T: Debug> Index<RangeTo<usize>> for SmallVec<T> {
   }
 }
 
-impl<T: Debug> Index<RangeFrom<usize>> for SmallVec<T> {
+impl<T> Index<RangeFrom<usize>> for SmallVec<T> {
   type Output = [T];
   fn index(&self, index: RangeFrom<usize>) -> &Self::Output {
     #[cfg(debug_assertions)]
@@ -310,7 +310,7 @@ impl<T: Debug> Index<RangeFrom<usize>> for SmallVec<T> {
   }
 }
 
-impl<T: Debug> Index<RangeFull> for SmallVec<T> {
+impl<T> Index<RangeFull> for SmallVec<T> {
   type Output = [T];
   #[inline]
   fn index(&self, _index: RangeFull) -> &Self::Output {
@@ -320,7 +320,7 @@ impl<T: Debug> Index<RangeFull> for SmallVec<T> {
   }
 }
 
-impl<T: Debug> AsRef<[T]> for SmallVec<T> {
+impl<T> AsRef<[T]> for SmallVec<T> {
   #[inline]
   fn as_ref(&self) -> &[T] {
     unsafe {
@@ -329,7 +329,7 @@ impl<T: Debug> AsRef<[T]> for SmallVec<T> {
   }
 }
 
-impl<T: Debug> AsMut<[T]> for SmallVec<T> {
+impl<T> AsMut<[T]> for SmallVec<T> {
   #[inline]
   fn as_mut(&mut self) -> &mut [T] {
     unsafe {
@@ -365,7 +365,7 @@ impl<T: Hash + Debug> Hash for SmallVec<T> {
   }
 }
 
-impl<T: Debug> FromIterator<T> for SmallVec<T> {
+impl<T> FromIterator<T> for SmallVec<T> {
   fn from_iter<U: IntoIterator<Item = T>>(iter: U) -> Self {
     let iter = iter.into_iter();
     let (lower, upper) = iter.size_hint();
@@ -384,12 +384,12 @@ impl<T: Debug> FromIterator<T> for SmallVec<T> {
   }
 }
 
-pub struct Iter<'a, T: Debug> {
+pub struct Iter<'a, T> {
   vec: &'a SmallVec<T>,
   index: usize,
 }
 
-impl<'a, T: Debug> Iterator for Iter<'a, T> {
+impl<'a, T> Iterator for Iter<'a, T> {
   type Item = &'a T;
 
   fn next(&mut self) -> Option<Self::Item> {
@@ -403,12 +403,12 @@ impl<'a, T: Debug> Iterator for Iter<'a, T> {
   }
 }
 
-pub struct IterMut<'a, T: Debug> {
+pub struct IterMut<'a, T> {
   vec: &'a mut SmallVec<T>,
   index: usize,
 }
 
-impl<'a, T: Debug> Iterator for IterMut<'a, T> {
+impl<'a, T> Iterator for IterMut<'a, T> {
   type Item = &'a mut T;
 
   fn next(&mut self) -> Option<Self::Item> {
@@ -422,7 +422,7 @@ impl<'a, T: Debug> Iterator for IterMut<'a, T> {
   }
 }
 
-impl<'a, T: Debug> IntoIterator for &'a SmallVec<T> {
+impl<'a, T> IntoIterator for &'a SmallVec<T> {
   type Item = &'a T;
   type IntoIter = Iter<'a, T>;
 
@@ -431,7 +431,7 @@ impl<'a, T: Debug> IntoIterator for &'a SmallVec<T> {
   }
 }
 
-impl<T: Debug> IntoIterator for SmallVec<T> {
+impl<T> IntoIterator for SmallVec<T> {
   type Item = T;
   type IntoIter = IntoIter<T>;
 
@@ -443,12 +443,12 @@ impl<T: Debug> IntoIterator for SmallVec<T> {
   }
 }
 
-pub struct IntoIter<T: Debug> {
+pub struct IntoIter<T> {
   vec: SmallVec<T>,
   index: usize,
 }
 
-impl<T: Debug> Iterator for IntoIter<T> {
+impl<T> Iterator for IntoIter<T> {
   type Item = T;
 
   fn next(&mut self) -> Option<Self::Item> {
@@ -461,7 +461,7 @@ impl<T: Debug> Iterator for IntoIter<T> {
     }
   }
 }
-impl<T: Debug> Drop for IntoIter<T> {
+impl<T> Drop for IntoIter<T> {
   fn drop(&mut self) {
     // Drop any remaining elements
     while let Some(_) = self.next() {}

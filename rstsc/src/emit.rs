@@ -101,7 +101,7 @@ pub fn emit_code(ast: ASTNode, compact: bool) -> String {
       emitter.endline();
     }
   } else {
-    panic!("Expected `Block` node in `emit`!");
+    panic!("Expected `Block` node in emit!");
   }
 
   emitter.finalize()

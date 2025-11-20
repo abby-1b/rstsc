@@ -18,14 +18,14 @@ type StringOrNumber = string | number;
 enum Color { Red, Green, Blue }
 
 enum SomeEnum {
-    ok = (13 * 2) + 1 * 2,
+    ok = 28,
     test = 'crap',
     another = 'ok',
 }
 let enumValue = SomeEnum.ok;
 
 const enum SomeEnum2 {
-    ok = (13 * 2) + 1 * 2,
+    ok = 28,
     test = 'crap',
 }
 let a = SomeEnum2.ok;
@@ -700,103 +700,82 @@ function frame(
     ...processSystemPriorityLessThan: number[] = []
 ) {}
 
-// Spread syntax in function calls
 const arr1 = [1, 2, 3];
 const arr2 = [4, 5, 6];
 console.log(Math.max(...arr1, ...arr2));
 
-// Spread syntax in array expressions
 const combined = [0, ...arr1, 3.5, ...arr2];
 console.log(combined);
 
-// Spread syntax in object expressions
 const obj1 = { a: 1, b: 2 };
 const obj2 = { c: 3, d: 4 };
 const merged = { ...obj1, ...obj2, e: 5 };
 console.log(merged);
 
-// For...of loop with array
 for (const item of arr1) {
     console.log(item);
 }
 
-// For...of loop with string
 for (const char of "hello") {
     console.log(char);
 }
 
-// For...in loop with object
 for (const key in obj1) {
     console.log(key, obj1[key]);
 }
 
-// Array destructuring with rest
 const [first, second, ...rest] = arr2;
 console.log(first, second, rest);
 
-// Object destructuring with renaming
 const { a: newName, b } = obj1;
 console.log(newName, b);
 
-// Nested destructuring
 const nested = { x: { y: 10, z: 20 }, w: 30 };
 const { x: { y, z } } = nested;
 console.log(y, z);
 
-// Destructuring in function parameter
 function destructureParam({ a, b }: { a: number; b: number }) {
     return a + b;
 }
 console.log(destructureParam(obj1));
 
-// For...in with array indices
 for (const index in arr1) {
     console.log(index, arr1[index]);
 }
 
-// Mixed destructuring with spread
 const complexArray = [1, { prop: 2 }, 3];
 const [num1, { prop }, ...others] = complexArray;
 console.log(num1, prop, others);
 
-// Export tests
 export const exportedConst = 42;
 export function exportedFunction() { return "hello"; }
 export class ExportedClass { method() { return "world"; } }
 
-// Decorator tests
 function log(target: any, key: string) {}
 class DecoratedClass {
     @log
     decoratedMethod() {}
 }
 
-// Namespace tests
 namespace MyNamespace {
     export const value = 123;
 }
 
-// Module tests (ES6 modules)
 import { exportedConst } from './other-module';
 export default function defaultExport() {}
 
-// Optional chaining tests
 const obj = { a: { b: 1 } };
 console.log(obj?.a?.b);
 console.log(obj?.nonExistent?.property);
 
-// Comment tests
-// Single line comment
 /* Multi-line
    comment */
 const commented = /* inline comment */ 42;
 
-// Import tests (different forms)
 import * as all from 'module';
 import { specific } from 'other-module';
 import defaultImport from 'default-module';
 
-// Super tests
 class Base {
     method() { return "base"; }
 }
@@ -804,29 +783,24 @@ class Derived extends Base {
     method() { return super.method() + " derived"; }
 }
 
-// Async tests
 async function asyncFunction() {
     return await Promise.resolve("done");
 }
 
-// Getter tests
 class GetterClass {
     private _value = 0;
     get value() { return this._value; }
 }
 
-// Static tests
 class StaticClass {
     static staticMethod() { return "static"; }
 }
 
-// Setter tests
 class SetterClass {
     private _value = 0;
     set value(v: number) { this._value = v; }
 }
 
-// Mixed export with decorator and getter
 export abstract    class   ComplexClass {
   @log
   private static _count=0;
@@ -834,26 +808,21 @@ export abstract    class   ComplexClass {
   set count(v:number){this._count=v}
 }
 
-// Namespace with module imports and optional chaining
 namespace    Weird    .  Nested  .Space{
   import   *as  stuff from  'some-module';
   export const value = stuff?.maybeUndefined?.prop  ||  'default';
 }
 
-// Async with optional chaining and comments
 async function /*comment*/ weirdAsync(){
   const result=await Promise.resolve({data:{nested:{value:42}}});
-  return result?.data?.nested?.value//inline comment
-}
+  return result?.data?.nested?.value}
 
-// Mixed decorator, static, and super
 function   sealed(constructor:Function) {Object.seal(constructor);Object.seal(constructor.prototype)}
 @sealed
 class   Derived   extends Base {
   static  override   method(){return super.method()+' extended'}
 }
 
-// Complex destructuring with optional chaining and comments
 const { 
   a: { 
     b 
@@ -861,26 +830,21 @@ const {
   c: [ d, , ...e ] = [1,2,3,4]
 } = someObj?.maybeUndefined ?? {};
 
-// Import with weird spacing and exports
 import  {  veryLongIdentifierName  as  short } from  "module-path";
 export  { short  as  renamed  } ;
 
-// Mixed for-of and destructuring with comments
 for(  const [  key,  value  ] of /*comment*/Object.entries(obj)){
   console.log(key,value)
 }
 
-// Spread with comments and weird spacing
 const merged = { 
   .../*comment*/obj1, 
   ...obj2, 
   extra: /*value*/ 42 
 };
 
-// Dynamic import with optional chaining
 import(  'module'  ).then(module => module?.default?.())
 
-// Test cases for the Namespace tag
 namespace Outer {
   export namespace Inner {
     export const value = 1;
@@ -896,7 +860,6 @@ namespace SameName {
 }
 const merged = SameName.foo;
 
-// Test cases for the Super tag
 class Base {
   constructor(public name: string) {}
   greet() { return `Hello, ${this.name}`; }
@@ -921,7 +884,6 @@ class DerivedWithStatic extends Base {
   }
 }
 
-// Test cases for the Module tag (using ES Modules)
 export const exportedConstant = 100;
 
 export interface ExportedInterface {
@@ -937,7 +899,6 @@ import { exportedConstant as myNewConst } from './module_test_dependency';
 
 import * as myModule from './module_test_dependency';
 
-// Test cases for the Setter tag
 class MyClassWithSetter {
   private _age: number = 0;
   get age() { return this._age; }
@@ -955,7 +916,6 @@ abstract class AbstractClassWithSetter {
   abstract set data(value: number);
 }
 
-// Test cases for the Getter tag
 class MyClassWithGetter {
   private _firstName: string = "John";
   private _lastName: string = "Doe";
@@ -969,7 +929,6 @@ class ReadOnlyGetter {
   get id() { return this._id; }
 }
 
-// Test cases for the Implements tag
 interface HasName {
   name: string;
 }
@@ -990,7 +949,6 @@ class MaybeHasOptional implements HasOptional {
   optional: string | undefined;
 }
 
-// Test cases for the A-Params (Async Params) tag
 async function destructuringParams({ id, name }: { id: number, name: string }) {
   await new Promise(resolve => setTimeout(resolve, 100));
 }
@@ -1003,7 +961,6 @@ async function defaultAndOptional(a: number = 1, b?: string) {
   await new Promise(resolve => setTimeout(resolve, 100));
 }
 
-// Test cases for the NN-Assert (Non-Null Assertion) tag
 let value: string | null = "hello";
 let nonNullValue = value!;
 
@@ -1013,7 +970,6 @@ let nonNullProp = obj.prop!;
 let arr: string[] | null = ["a", "b"];
 let item = arr![0];
 
-// Test cases for the Async tag
 async function awaitInForOf() {
   const values = [1, 2, 3];
   for (const value of values) {
@@ -1033,3 +989,93 @@ async function awaitInTryCatch() {
   await new Promise(resolve => setTimeout(resolve, 100));
 })();
 
+function test1(): number {
+    try {
+        return 1;
+    } finally {
+        return 2;
+    }
+}
+
+function test2(): number {
+    try {
+        return 1;
+    } finally {
+        throw new Error("finally wins");
+    }
+}
+
+function test3(): string {
+    try {
+        try {
+            throw new Error("inner");
+        } catch (e) {
+            return "caught";
+        } finally {
+            console.log("inner finally");
+        }
+    } finally {
+        console.log("outer finally");
+    }
+}
+
+function test4() {
+    try {
+        throw { code: 404, message: "Not found" };
+    } catch (e: any) {
+        if (e.code === 404) {
+            return "handled";
+        }
+        throw e;
+    }
+}
+
+async function test5(): Promise<number> {
+    try {
+        await Promise.reject("async error");
+        return 1;
+    } catch {
+        return 2;
+    } finally {
+        console.log("async cleanup");
+    }
+}
+
+function test6() {
+    let x = 0;
+    try {
+        throw "error";
+    } catch (e) {
+        x = 1;
+        const y = 2;
+    }
+    return x; }
+
+function test7() {
+    try {
+        return "try";
+    } finally {
+        console.log("cleanup");
+    }
+}
+
+function test8(): number {
+    try {
+        try {
+            throw new Error("test");
+        } catch (e) {
+            if (Math.random() > 0.5) {
+                return 1;
+            }
+            throw e;
+        } finally {
+            if (Math.random() > 0.5) {
+                return 2;
+            }
+        }
+    } catch (e) {
+        return 3;
+    } finally {
+        return 4;
+    }
+}
