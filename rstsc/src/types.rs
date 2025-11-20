@@ -15,6 +15,12 @@ pub union CustomDouble {
   value: f64,
   bits: u64
 }
+impl std::ops::Neg for CustomDouble {
+  type Output = CustomDouble;
+  fn neg(self) -> Self::Output {
+    return CustomDouble { value: unsafe { -self.value } };
+  }
+}
 
 impl Display for CustomDouble {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -586,6 +592,21 @@ fn parse_prefix(
           return_type: Box::new(return_type),
           is_constructor: false
         })
+      }
+    }
+    "-" => {
+      let next_token = tokens.peek().clone();
+      let next_typ = get_expression(tokens, precedence)?;
+      match next_typ {
+        Type::NumberLiteral(lit) => {
+          Ok(Type::NumberLiteral(-lit))
+        }
+        other => {
+          return Err(CompilerError::new(
+            format!("Expected number after \"-\", found {:?}", other),
+            next_token, tokens
+          ));
+        }
       }
     }
     "new" => {
