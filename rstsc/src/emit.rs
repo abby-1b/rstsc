@@ -449,6 +449,12 @@ fn emit_single(
     ASTNode::ExprStrLiteral { string } => {
       emitter.out(&string, true);
     }
+    ASTNode::ExprRegexLiteral { pattern, flags } => {
+      emitter.out("/", false);
+      emitter.out(&pattern, false);
+      emitter.out("/", false);
+      emitter.out(&flags, true);
+    }
     ASTNode::ExprTemplateLiteral { head, parts } => {
       emitter.out("`", false);
       emitter.out(head, false);

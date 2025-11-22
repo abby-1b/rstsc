@@ -186,6 +186,7 @@ pub enum ASTNode {
   ExprIdentifier { name: String },
   ExprNumLiteral { number: String },
   ExprStrLiteral { string: String },
+  ExprRegexLiteral { pattern: String, flags: String },
   ExprTemplateLiteral { head: String, parts: SmallVec<(ASTNode, String)> },
   ExprBoolLiteral { value: bool },
 
@@ -260,6 +261,7 @@ impl ASTNode {
       ASTNode::Dict { .. } => "Dict",
       ASTNode::ExprNumLiteral { .. } => "ExprNumLiteral",
       ASTNode::ExprStrLiteral { .. } => "ExprStrLiteral",
+      ASTNode::ExprRegexLiteral { .. } => "ExprRegexLiteral",
       ASTNode::ExprTemplateLiteral { .. } => "ExprTemplateLiteral",
       ASTNode::ExprIdentifier { .. } => "ExprIdentifier",
       ASTNode::ExprBoolLiteral { .. } => "ExprBoolLiteral",
@@ -283,7 +285,7 @@ impl ASTNode {
   pub fn is_literal(&self) -> bool {
     matches!(
       self,
-      ASTNode::ExprNumLiteral { .. } | ASTNode::ExprStrLiteral { .. } | ASTNode::ExprBoolLiteral { .. }
+      ASTNode::ExprNumLiteral { .. } | ASTNode::ExprStrLiteral { .. } | ASTNode::ExprRegexLiteral { .. } | ASTNode::ExprBoolLiteral { .. }
     )
   }
 

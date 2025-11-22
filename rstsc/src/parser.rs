@@ -1441,16 +1441,77 @@ fn handle_expression(
   get_expression(tokens, 0)
 }
 
-fn parse_number(tokens: &mut TokenList) -> ASTNode {
-  ASTNode::ExprNumLiteral {
-    number: tokens.consume().value.to_string()
+fn parse_number(tokens: &mut TokenList) -> Result<ASTNode, CompilerError> {
+  let mut number = tokens.consume().value.to_owned();
+  let p = tokens.peek();
+  if p.typ == TokenType::Identifier {
+    match p.value.chars().next().unwrap() {
+      'x' | 'b' | 'o' => { number += p.value; }
+      _ => {
+        return Err(CompilerError::new(
+          "Unknown numeric type".to_owned(),
+          p.clone(),
+          &tokens
+        ))
+      }
+    }
+    tokens.skip_unchecked();
   }
+  Ok(ASTNode::ExprNumLiteral { number })
 }
 
 fn parse_string(tokens: &mut TokenList) -> ASTNode {
   ASTNode::ExprStrLiteral {
     string: tokens.consume().value.to_string()
   }
+}
+
+fn parse_regex(
+  tokens: &mut TokenList
+) -> Result<ASTNode, CompilerError> {
+  // Consume the opening '/'
+  let start_token = tokens.consume();
+  
+  let mut pattern = String::new();
+  let mut is_escaped = false;
+  
+  // Parse the regex pattern
+  while !tokens.is_done() {
+    let token = tokens.peek();
+    
+    if token.value == "/" && !is_escaped {
+      tokens.skip_unchecked(); // Skip the closing '/'
+      break;
+    }
+    
+    if token.value == "\\" && !is_escaped {
+      is_escaped = true;
+      pattern.push_str(token.value);
+      tokens.skip_unchecked();
+      continue;
+    }
+    
+    if is_escaped {
+      is_escaped = false;
+    }
+    
+    pattern.push_str(token.value);
+    tokens.skip_unchecked();
+  }
+  
+  // Parse flags (if any)
+  let mut flags = String::new();
+  while !tokens.is_done() {
+    let token = tokens.peek();
+    if token.is_identifier() {
+      flags.push_str(token.value);
+      tokens.skip_unchecked();
+    } else {
+      break;
+    }
+  }
+  
+  Ok(ASTNode::ExprRegexLiteral { pattern, flags })
 }
 
 fn parse_string_template(
@@ -1845,13 +1906,16 @@ pub fn get_expression<'a, 'b>(
     }
 
     match next.typ {
-      TokenType::Number => parse_number(tokens),
+      TokenType::Number => parse_number(tokens)?,
       TokenType::String => parse_string(tokens),
       TokenType::StringTemplateStart => parse_string_template(tokens)?,
       TokenType::Symbol | TokenType::Identifier => {
-        // `class` can be used inside an expression, but calling it a
-        // prefix feels strange... I'm going to handle it here
-        if next.value == "class" {
+        // Check for regex literal (starts with '/' and not division operator)
+        if next.value == "/" {
+          parse_regex(tokens)?
+        } else if next.value == "class" {
+          // `class` can be used inside an expression, but calling it a
+          // prefix feels strange... I'm going to handle it here
           get_class_expression(tokens)?
         } else if next.value == "function" {
           tokens.skip_unchecked(); // Skip "function"
@@ -2017,4 +2081,3 @@ pub fn get_expression<'a, 'b>(
 
   Ok(left)
 }
-

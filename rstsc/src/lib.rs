@@ -9,7 +9,7 @@ pub mod types;
 pub mod ast_common;
 pub mod ast;
 pub mod parser;
-// pub mod scope_tracking;
+pub mod scope_tracking;
 // pub mod type_checking;
 // pub mod minify;
 pub mod emit;
