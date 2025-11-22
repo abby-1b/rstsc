@@ -1,17 +1,23 @@
-use crate::{ast::{ASTNode, ClassMember, FunctionDefinition, ObjectProperty}, declaration::{Declaration, DeclarationComputable, DestructurableDeclaration, DestructurePattern}, rest::Rest, small_vec::SmallVec};
+use crate::{
+  ast::{ASTNode, ClassMember, FunctionDefinition, ImportDefinition, ObjectProperty},
+  declaration::{Declaration, DeclarationComputable, DestructurableDeclaration, DestructurePattern},
+  rest::Rest,
+  symbol_table::SymbolTable
+};
 
 static NO_REST: Rest = Rest::new();
 
-struct Emitter {
+struct Emitter<'a> {
   output: String,
   is_compact: bool,
   line_has_data: bool,
   is_mid_line: bool,
   indent_level: usize,
   curr_line: usize,
+  symbol_table: &'a SymbolTable,
 }
 
-impl Emitter {
+impl<'a> Emitter<'a> {
   pub fn curr_line(&self) -> usize {
     self.curr_line
   }
@@ -41,7 +47,7 @@ impl Emitter {
     mut traversal_fn: F,
     normal_separator: &str,
     compact_separator: &str
-  ) where F: FnMut(&I, &mut Emitter) {
+  ) where F: FnMut(&I, &mut Emitter) -> bool {
     let separator = if self.is_compact {
       compact_separator
     } else {
@@ -49,8 +55,8 @@ impl Emitter {
     };
     let mut remaining = vector.len();
     for part in vector {
-      traversal_fn(part, self);
       remaining -= 1;
+      if !traversal_fn(part, self) { continue; }
       if remaining != 0 {
         self.out(separator, false);
       }
@@ -84,14 +90,15 @@ impl Emitter {
 }
 
 /// Emits code given an AST
-pub fn emit_code(ast: ASTNode, compact: bool) -> String {
+pub fn emit_code(ast: ASTNode, symbol_table: &SymbolTable, compact: bool) -> String {
   let mut emitter = Emitter {
     output: String::new(),
     is_compact: compact,
     line_has_data: false,
     is_mid_line: false,
     indent_level: 0,
-    curr_line: 0
+    curr_line: 0,
+    symbol_table,
   };
 
   // Handle the program `Block` node
@@ -115,6 +122,10 @@ fn emit_single(
     ASTNode::Block { nodes } => {
       if nodes.is_empty() {
         emitter.out("{}", false);
+      } else if nodes.len() == 1 {
+        emitter.out_diff("{ ", "{", false);
+        emit_single(&nodes[0], emitter);
+        emitter.out_diff(" }", "}", false);
       } else {
         emitter.out("{", false);
         emitter.endline();
@@ -140,44 +151,39 @@ fn emit_single(
     }
     ASTNode::StatementImport { inner } => {
       emitter.out("import ", false);
-      let mut parts =
-        inner.default_alias.is_some() as i8 +
-        inner.wildcard.is_some() as i8 +
-        (inner.individual.len() > 0) as i8;
-      let has_distinction = parts > 0;
-      if let Some(default_alias) = &inner.default_alias {
-        emitter.out(default_alias, false);
-        if parts > 1 {
-          emitter.out_diff(", ", ",", false);
-          parts -= 1;
+      match &**inner {
+        ImportDefinition::DefaultAliased { source, alias } => {
+          emitter.out(&alias, false);
+          emitter.out(" from ", true);
+          emitter.out(&source, true);
+        }
+        ImportDefinition::AllAsAlias { source, alias } => {
+          emitter.out("* as ", false);
+          emitter.out(&alias, false);
+          emitter.out(" from ", true);
+          emitter.out(&source, true);
+        }
+        ImportDefinition::Individual { source, parts } => {
+          emitter.out_diff("{ ", "{", false);
+          emitter.emit_vec(parts.as_ref(), |i, emitter| {
+            if emitter.symbol_table.lookup(&i.name).is_some_and(|s| !s.is_used) {
+              return false;
+            }
+            emitter.out(&i.name, false);
+            if let Some(alias) = &i.alias {
+              emitter.out(" as ", false);
+              emitter.out(&alias, false);
+            }
+            true
+          }, ", ", ",");
+          emitter.out_diff(" }", "}", false);
+          emitter.out(" from ", true);
+          emitter.out(&source, true);
+        }
+        ImportDefinition::SourceOnly { source } => {
+          emitter.out(&source, true);
         }
       }
-
-      if let Some(wildcard) = &inner.wildcard {
-        emitter.out("* as ", false);
-        emitter.out(&wildcard, false);
-        if parts > 1 {
-          emitter.out_diff(", ", ",", false);
-          // parts -= 1;
-        }
-      }
-
-      if inner.individual.len() > 0 {
-        emitter.out_diff("{ ", "{", false);
-        emitter.emit_vec(inner.individual.as_ref(), |i, emitter| {
-          emitter.out(&i.name, false);
-          if let Some(alias) = &i.alias {
-            emitter.out(" as ", false);
-            emitter.out(&alias, false);
-          }
-        }, ", ", ",");
-        emitter.out_diff(" }", "}", false);
-      }
-
-      if has_distinction {
-        emitter.out(" from ", false);
-      }
-      emitter.out(&inner.source, true);
     }
     ASTNode::ExpressionImport { value } => {
       emitter.out("import(", false);
@@ -206,7 +212,15 @@ fn emit_single(
         emit_single(alternate, emitter);
       }
     }
-    // ASTNode::StatementWhile { .. } => "StatementWhile"
+    ASTNode::StatementWhile { condition, body } => {
+      // Head
+      emitter.out_diff("while (", "while(", false);
+      emit_single(condition, emitter);
+      emitter.out_diff(") ", ")", false);
+
+      // Body
+      emit_single(body, emitter);
+    }
     ASTNode::StatementFor { init, condition, update, body } => {
       // Head
       emitter.out_diff("for (", "for(", false);
@@ -411,6 +425,7 @@ fn emit_single(
       emitter.out("(", false);
       emitter.emit_vec(nodes.as_ref(), |node, emitter| {
         emit_single(&node, emitter);
+        true
       }, ", ", ",");
       emitter.out(")", true);
     }
@@ -418,6 +433,7 @@ fn emit_single(
       emitter.out_diff("[ ", "[", false);
       emitter.emit_vec(nodes.as_ref(), |node, emitter| {
         emit_single(&node, emitter);
+        true
       }, ", ", ",");
       emitter.out_diff(" ]", "]", true);
     }
@@ -440,6 +456,7 @@ fn emit_single(
             emitter.out(key, false);
           }
         }
+        true
       }, ", ", ",");
       emitter.out_diff(" }", "}", true);
     }
@@ -477,6 +494,7 @@ fn emit_single(
       emitter.out("(", false);
       emitter.emit_vec(arguments.as_ref(), |argument, emitter| {
         emit_single(argument, emitter);
+        true
       }, ", ", ",");
       emitter.out(")", true);
     }
@@ -533,6 +551,7 @@ fn emit_single(
     ASTNode::ExprAs { value, .. } => { emit_single(&*value, emitter); }
     ASTNode::ExprTypeAssertion { value, .. } => { emit_single(&*value, emitter); }
     ASTNode::EnumDeclaration { inner } => {
+      emitter.out(&inner.modifiers.emit(true), false);
       emitter.out("var ", false);
       emitter.out(&inner.name, true);
       emitter.endline();
@@ -570,6 +589,9 @@ fn emit_single(
       emitter.out(&format!("[ {} ]", other.name()), true);
     }
   }
+
+  // Don't put any code here.
+  // Any return statements above will mess you up.
 }
 
 fn emit_declarations(
@@ -582,6 +604,7 @@ fn emit_declarations(
     i -= 1;
     if i == 0 { emitter.out("...", false); }
     emit_single_declaration(decl, emitter);
+    true
   }, ", ", ",");
 }
 
@@ -595,6 +618,7 @@ fn emit_destructurable_declarations(
     i -= 1;
     if i == 0 { emitter.out("...", false); }
     emit_single_variable_declaration(declaration, emitter);
+    true
   }, ", ", ",");
 }
 
@@ -649,6 +673,7 @@ fn emit_destructure_pattern(
       emitter.out_diff("[ ", "[", false);
       emitter.emit_vec(elements.as_ref(), |element, emitter| {
         emit_destructure_pattern(element, emitter);
+        true
       }, ", ", ",");
       if let Some(rest) = spread {
         if elements.len() > 0 {
@@ -672,6 +697,7 @@ fn emit_destructure_pattern(
             emit_destructure_pattern(alias, emitter);
           }
         }
+        true
       }, ", ", ",");
       if let Some(spread) = spread {
         if properties.len() > 0 {

@@ -91,12 +91,15 @@ pub struct IndividualImport {
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
-pub struct ImportDefinition {
-  pub default_alias: Option<String>,
-  pub wildcard: Option<String>,
-  pub individual: SmallVec<IndividualImport>,
-
-  pub source: String,
+pub enum ImportDefinition {
+  /// Used in `import Defaults from '...'`
+  DefaultAliased { source: String, alias: String },
+  /// Used in `import * as Alias from '...'`
+  AllAsAlias { source: String, alias: String },
+  /// Used in `import { A, B, C } from '...'`
+  Individual { source: String, parts: SmallVec<IndividualImport> },
+  /// Used in `import '...'`
+  SourceOnly { source: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]

@@ -786,7 +786,7 @@ pub fn parse_object_square_bracket(
   if tokens.peek_str() != ":" {
     // It's computed!
     tokens.restore_checkpoint(checkpoint);
-    let computed = parser::get_expression(tokens, 0)?;
+    let computed = parser::get_expression_without_symbol_table(tokens, 0)?;
     tokens.skip("]")?;
     return Ok(
       ObjectSquareBracketReturn::ComputedProp(computed)
