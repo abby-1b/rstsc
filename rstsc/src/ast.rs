@@ -1,4 +1,3 @@
-
 use crate::{
   ast_common::*, declaration::{DeclarationComputable, DestructurableDeclaration}, error_type::CompilerError, small_vec::SmallVec, rest::Rest, tokenizer::Token, types::{KeyValueMap, Type}
 };
@@ -91,6 +90,18 @@ pub struct IndividualImport {
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
+pub struct ExportSpecifier {
+  pub name: String,
+  pub alias: Option<String>,
+  pub is_type: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub struct ExportDeclaration {
+  pub specifiers: SmallVec<ExportSpecifier>,
+}
+
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub enum ImportDefinition {
   /// Used in `import Defaults from '...'`
   DefaultAliased { source: String, alias: String },
@@ -133,6 +144,9 @@ pub enum ASTNode {
 
   StatementImport { inner: Box<ImportDefinition> },
   ExpressionImport { value: Box<ASTNode> },
+
+  /// Block export statement (e.g., `export { Real, type Fake }`)
+  StatementExport { inner: Box<ExportDeclaration> },
 
   StatementIf {
     condition: Box<ASTNode>,
@@ -245,6 +259,7 @@ impl ASTNode {
       ASTNode::VariableDeclaration { .. } => "VariableDeclaration",
       ASTNode::StatementImport { .. } => "StatementImport",
       ASTNode::ExpressionImport { .. } => "ExpressionImport",
+      ASTNode::StatementExport { .. } => "StatementExport",
       ASTNode::StatementIf { .. } => "StatementIf",
       ASTNode::StatementWhile { .. } => "StatementWhile",
       ASTNode::StatementFor { .. } => "StatementFor",

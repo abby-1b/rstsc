@@ -190,6 +190,22 @@ fn emit_single(
       emit_single(value, emitter);
       emitter.out(")", true);
     }
+    ASTNode::StatementExport { inner } => {
+      emitter.out("export ", false);
+      emitter.out_diff("{ ", "{", false);
+      emitter.emit_vec(inner.specifiers.as_ref(), |specifier, emitter| {
+        if specifier.is_type {
+          return false;
+        }
+        emitter.out(&specifier.name, false);
+        if let Some(alias) = &specifier.alias {
+          emitter.out(" as ", false);
+          emitter.out(alias, false);
+        }
+        true
+      }, ", ", ",");
+      emitter.out_diff(" }", "}", true);
+    }
     ASTNode::StatementIf { condition, body, alternate } => {
       let start_line = emitter.curr_line();
 

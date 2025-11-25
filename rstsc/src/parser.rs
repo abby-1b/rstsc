@@ -79,8 +79,8 @@ fn get_single_statement<'a, 'b>(
   else if let Some(control_flow)         = handle_control_flow(tokens, symbol_table)? { control_flow }
   else if let Some(function_declaration) = handle_function_declaration(tokens, symbol_table)? { function_declaration }
   else if let Some(class_declaration)    = handle_class_declaration(tokens, symbol_table)? { class_declaration }
-  else if let Some(modifiers)            = handle_modifiers(tokens, symbol_table)? { modifiers }
   else if let Some(import)               = handle_import(tokens, symbol_table)? { import }
+  else if let Some(modifiers)            = handle_modifiers(tokens, symbol_table)? { modifiers }
   else if let Some(other_statements)     = handle_other_statements(tokens, symbol_table)? { other_statements }
   else if let Some(type_declaration)     = handle_type_declaration(tokens, symbol_table)? { type_declaration }
   else if let Some(result_enum)          = handle_enum(tokens, false, symbol_table)? { result_enum }
@@ -1152,11 +1152,61 @@ fn handle_modifiers(
   // Get the modifiers
   let modifiers = fetch_modifier_list(tokens);
 
-  // Get the node that goes after the modifiers
-  let mut node_after_modifiers = get_single_statement(tokens, symbol_table)?;
+  if modifiers.flags == (Modifier::Export as u8) && tokens.peek_str() == "{" {
+    // block export: export { ... }
+    tokens.skip_unchecked(); // Skip "{"
+    tokens.ignore_whitespace();
 
-  node_after_modifiers.apply_modifiers(modifiers)?;
-  Ok(Some(node_after_modifiers))
+    let mut specifiers = SmallVec::new();
+
+    while !tokens.is_done() && tokens.peek_str() != "}" {
+      // Check for "type" keyword
+      let is_type = tokens.peek_str() == "type";
+      if is_type {
+        tokens.skip_unchecked();
+        tokens.ignore_whitespace();
+      }
+
+      // Get the export name
+      let name = tokens.consume_type(TokenType::Identifier)?.value.to_owned();
+      tokens.ignore_whitespace();
+
+      // Check for alias (as)
+      let alias = if tokens.peek_str() == "as" {
+        tokens.skip_unchecked();
+        tokens.ignore_whitespace();
+        Some(tokens.consume_type(TokenType::Identifier)?.value.to_owned())
+      } else {
+        None
+      };
+      tokens.ignore_whitespace();
+
+      specifiers.push(crate::ast::ExportSpecifier {
+        name,
+        alias,
+        is_type,
+      });
+
+      // Skip comma if present
+      if tokens.peek_str() == "," {
+        tokens.skip_unchecked();
+        tokens.ignore_whitespace();
+      }
+    }
+
+    tokens.skip("}")?;
+
+    Ok(Some(ASTNode::StatementExport { 
+      inner: Box::new(crate::ast::ExportDeclaration { specifiers }) 
+    }))
+  } else {
+    // Get the node that goes after the modifiers
+    let mut node_after_modifiers = get_single_statement(tokens, symbol_table)?;
+  
+    node_after_modifiers.apply_modifiers(modifiers)?;
+    Ok(Some(node_after_modifiers))
+  }
+
 }
 
 fn fetch_modifier_list(tokens: &mut TokenList) -> ModifierList {
