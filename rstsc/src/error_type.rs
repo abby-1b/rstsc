@@ -103,7 +103,7 @@ impl CompilerError {
       s.push_str(&(message + "\n"));
       s
     } else {
-      message + "\n"
+      message + " (at EOF)\n"
     };
     CompilerError { text }
   }
