@@ -27,6 +27,7 @@ fn should_chain(left: char, right: char) -> bool {
     ('%', '=') => true,
     ('&', '=') => true,
     ('|', '=') => true,
+    ('^', '=') => true,
 
     // And / Or
     ('&', '&') => true,
@@ -58,6 +59,7 @@ pub enum TokenType {
   StringTemplateStart,
   StringTemplateMiddle,
   StringTemplateEnd,
+  Regex,
   Spacing,
   LineTerminator,
   EndOfFile,
@@ -389,7 +391,6 @@ impl<'a> TokenList<'a> {
           },
           TokenType::String
         );
-        // TODO: template literal support
       } else if
         curr_char == '`' || (
           curr_char == '}' &&
@@ -437,17 +438,17 @@ impl<'a> TokenList<'a> {
         }
         break 'token_done (len, typ);
       } else if curr_char == '/' {
-        // Comments
+        // Comments / Regex
         match self.char_iter.peek_far().unwrap_or(' ') {
           '/' => {
-            // Single comment
+            // Single comment (Existing code)
             break 'token_done (
               self.char_iter.consume_all(|c| c != '\n'),
               TokenType::Spacing
             );
           },
           '*' => {
-            // Multiline comment
+            // Multiline comment (Existing code)
             let mut has_newline = false;
             let mut token_len = 2;
             self.char_iter.skip();
@@ -466,7 +467,47 @@ impl<'a> TokenList<'a> {
               }
             )
           },
-          _ => {}
+          _ => {
+            // It is not a comment. Is it a Regex?
+            if self.is_regex_position() {
+              let mut token_len = 1; // we already have the first '/'
+              self.char_iter.consume(); 
+
+              let mut in_class = false; // To handle [ ... ]
+              let mut is_escaped = false;
+
+              loop {
+                if let Some(c) = self.char_iter.peek() {
+                  // JS Regex cannot contain unescaped newlines
+                  if c == '\n' { break; } 
+                  
+                  token_len += c.len_utf8();
+                  self.char_iter.consume();
+
+                  if !is_escaped {
+                    if c == '[' { 
+                      in_class = true; 
+                    } else if c == ']' { 
+                      in_class = false; 
+                    } else if c == '/' && !in_class { 
+                      // End of Regex body
+                      break; 
+                    }
+                  }
+                  
+                  is_escaped = c == '\\' && !is_escaped;
+                } else {
+                  break; // EOF
+                }
+              }
+
+              // Consume Regex Flags (e.g. 'g', 'i', 'm' in /abc/gim)
+              token_len += self.char_iter.consume_all(|c| c.is_ascii_alphabetic());
+
+              break 'token_done (token_len, TokenType::Regex);
+            }
+            // fallthrough here allows for division
+          }
         }
       }
 
@@ -498,6 +539,32 @@ impl<'a> TokenList<'a> {
       value: &self.source[self.find_index..self.find_index + len]
     });
     self.find_index += len;
+  }
+
+  fn is_regex_position(&self) -> bool {
+    // Look backwards through existing tokens
+    for token in self.next_tokens.iter().rev() {
+      if token.is_whitespace() { continue; }
+
+      return match token.typ {
+        // If the last thing was a value, a slash is Division (e.g. "x / 5")
+        TokenType::Identifier | TokenType::Number | TokenType::String | 
+        TokenType::StringTemplateEnd | TokenType::Regex => false,
+        
+        // If the last thing was a symbol, we need to check specific symbols
+        TokenType::Symbol => {
+          match token.value {
+            ")" | "]" | "}" => false, // e.g. "(a + b) / 2"
+            _ => true // e.g. "x = /abc/", "return /abc/"
+          }
+        },
+        
+        // For keywords (if you parsed them as specific types) or Start of File
+        _ => true 
+      };
+    }
+    // If no previous tokens exist, we are at start of file -> Regex
+    true
   }
 }
 

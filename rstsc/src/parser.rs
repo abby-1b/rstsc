@@ -926,6 +926,11 @@ fn get_class_expression<'a, 'b>(
     _ => None
   };
 
+  // Mark import
+  if let Some(Type::Custom(name)) = &extends {
+    symbol_table.mark_used_string(name);
+  }
+
   // Classes change the way things are parsed!
   let mut kv_maps = SmallVec::new();
   let mut members: SmallVec<ClassMember> = SmallVec::new();
@@ -1526,54 +1531,6 @@ fn parse_string(tokens: &mut TokenList) -> ASTNode {
   }
 }
 
-fn parse_regex(
-  tokens: &mut TokenList
-) -> Result<ASTNode, CompilerError> {
-  // Consume the opening '/'
-  let start_token = tokens.consume();
-  
-  let mut pattern = String::new();
-  let mut is_escaped = false;
-  
-  // Parse the regex pattern
-  while !tokens.is_done() {
-    let token = tokens.peek();
-    
-    if token.value == "/" && !is_escaped {
-      tokens.skip_unchecked(); // Skip the closing '/'
-      break;
-    }
-    
-    if token.value == "\\" && !is_escaped {
-      is_escaped = true;
-      pattern.push_str(token.value);
-      tokens.skip_unchecked();
-      continue;
-    }
-    
-    if is_escaped {
-      is_escaped = false;
-    }
-    
-    pattern.push_str(token.value);
-    tokens.skip_unchecked();
-  }
-  
-  // Parse flags (if any)
-  let mut flags = String::new();
-  while !tokens.is_done() {
-    let token = tokens.peek();
-    if token.is_identifier() {
-      flags.push_str(token.value);
-      tokens.skip_unchecked();
-    } else {
-      break;
-    }
-  }
-  
-  Ok(ASTNode::ExprRegexLiteral { pattern, flags })
-}
-
 fn parse_string_template(
   tokens: &mut TokenList,
   symbol_table: &mut SymbolTable,
@@ -1613,6 +1570,18 @@ fn parse_string_template(
   }
 
   Ok(ASTNode::ExprTemplateLiteral { head, parts })
+}
+
+fn parse_regex(tokens: &mut TokenList) -> ASTNode {
+  let val = tokens.consume().value;
+
+  let (pattern, flags) = val[1..].split_once('/')
+    .unwrap_or((&val[1..], ""));
+
+  ASTNode::ExprRegexLiteral { 
+    pattern: pattern.to_string(), 
+    flags: flags.to_string() 
+  }
 }
 
 fn parse_name(
@@ -1996,12 +1965,11 @@ pub fn get_expression<'a, 'b>(
     match next.typ {
       TokenType::Number => parse_number(tokens)?,
       TokenType::String => parse_string(tokens),
+      TokenType::Regex => parse_regex(tokens),
       TokenType::StringTemplateStart => parse_string_template(tokens, symbol_table)?,
       TokenType::Symbol | TokenType::Identifier => {
         // Check for regex literal (starts with '/' and not division operator)
-        if next.value == "/" {
-          parse_regex(tokens)?
-        } else if next.value == "class" {
+        if next.value == "class" {
           // `class` can be used inside an expression, but calling it a
           // prefix feels strange... I'm going to handle it here
           get_class_expression(tokens, symbol_table)?

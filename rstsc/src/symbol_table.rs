@@ -105,6 +105,12 @@ impl SymbolTable {
     None
   }
 
+  pub fn mark_used_string(&mut self, name: &str) {
+    if let Some(symbol) = self.lookup_mut(name) {
+      symbol.is_used = true;
+    }
+  }
+
   /// Marks a symbol as used. Returns an error if the symbol wasn't found.
   pub fn mark_used(&mut self, token: &Token, tokens: &mut TokenList) -> Result<(), CompilerError> {
     if let Some(symbol) = self.lookup_mut(token.value) {
