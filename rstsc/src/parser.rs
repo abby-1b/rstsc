@@ -65,28 +65,31 @@ pub fn get_block(tokens: &mut TokenList, symbol_table: &mut SymbolTable) -> Resu
 /// Gets a single statement, until it reaches either a `;` or a group end
 /// (eg. `)]}`). Only consumes semicolons, not group ends. If a group start is
 /// reached (eg. `([{`), calls the corresponding function for said group.
+/// Gets a single statement, until it reaches either a `;` or a group end
+/// (eg. `)]}`). Only consumes semicolons, not group ends. If a group start is
+/// reached (eg. `([{`), calls the corresponding function for said group.
 fn get_single_statement<'a, 'b>(
   tokens: &'b mut TokenList,
   symbol_table: &mut SymbolTable
 ) -> Result<ASTNode, CompilerError> where 'a: 'b {
-  // Ignore whitespace
   tokens.ignore_whitespace();
   
-  // Handlers
-  // Note that handlers don't consume `;`!
-  let ret = if let Some(block) = handle_block(tokens, symbol_table)? { block }
-  else if let Some(vars)                 = handle_var(tokens, symbol_table)? { vars }
-  else if let Some(control_flow)         = handle_control_flow(tokens, symbol_table)? { control_flow }
-  else if let Some(function_declaration) = handle_function_declaration(tokens, symbol_table)? { function_declaration }
-  else if let Some(class_declaration)    = handle_class_declaration(tokens, symbol_table)? { class_declaration }
-  else if let Some(import)               = handle_import(tokens, symbol_table)? { import }
-  else if let Some(modifiers)            = handle_modifiers(tokens, symbol_table)? { modifiers }
-  else if let Some(other_statements)     = handle_other_statements(tokens, symbol_table)? { other_statements }
-  else if let Some(type_declaration)     = handle_type_declaration(tokens, symbol_table)? { type_declaration }
-  else if let Some(result_enum)          = handle_enum(tokens, false, symbol_table)? { result_enum }
-  else if let Some(interface)            = handle_interface(tokens, symbol_table)? { interface }
-  else if let Some(interface)            = handle_try_catch(tokens, symbol_table)? { interface }
-  else { handle_expression(tokens, symbol_table)? }; // Expression fallback
+  let ret = match tokens.peek_str() {
+    "{" => handle_block(tokens, symbol_table)?.unwrap(),
+    "var" | "let" | "const" => handle_var(tokens, symbol_table)?.unwrap(),
+    "if" | "while" | "for" | "switch" => handle_control_flow(tokens, symbol_table)?.unwrap(),
+    "function" => handle_function_declaration(tokens, symbol_table)?.unwrap(),
+    "class" => handle_class_declaration(tokens, symbol_table)?.unwrap(),
+    "import" => handle_import(tokens, symbol_table)?.unwrap(),
+    "export" | "async" | "static" | "public" | "private" | "protected" | "readonly" | "abstract" | "override" => 
+        handle_modifiers(tokens, symbol_table)?.unwrap(),
+    "return" | "break" | "continue" | "throw" => handle_other_statements(tokens, symbol_table)?.unwrap(),
+    "type" => handle_type_declaration(tokens, symbol_table)?.unwrap(),
+    "enum" => handle_enum(tokens, false, symbol_table)?.unwrap(),
+    "interface" => handle_interface(tokens, symbol_table)?.unwrap(),
+    "try" => handle_try_catch(tokens, symbol_table)?.unwrap(),
+    _ => handle_expression(tokens, symbol_table)?,
+  };
 
   tokens.ignore_whitespace();
   if tokens.peek_str() == ";" {
@@ -435,10 +438,10 @@ fn handle_control_flow(
     return Ok(None);
   }
 
-  let control_flow_type = tokens.consume().value.to_string();
+  let control_flow_type = tokens.consume().value;
   tokens.ignore_whitespace();
 
-  Ok(Some(match control_flow_type.as_str() {
+  Ok(Some(match control_flow_type {
     "if" | "while" => {
       // Get condition
       tokens.skip("(")?;
@@ -629,7 +632,7 @@ fn handle_import(
   let mut has_distinction = 0;
 
   // Default imports `import Defaults from '...'`
-  let default_alias = if tokens.peek().is_identifier() {
+  let default_alias = if tokens.peek().typ == TokenType::Identifier {
     let alias = Some(tokens.consume().value.to_owned());
     tokens.ignore_whitespace();
     let _ = tokens.try_skip_and_ignore_whitespace(",");
@@ -745,7 +748,7 @@ fn handle_function_declaration<'a, 'b>(
 
   // Get name
   tokens.ignore_whitespace();
-  let name = if tokens.peek().is_identifier() {
+  let name = if tokens.peek().typ == TokenType::Identifier {
     // Named function
     Some(tokens.consume().value.to_string())
   } else {
@@ -1106,7 +1109,7 @@ fn get_typed_header(
   tokens.ignore_whitespace();
   let name = tokens.peek();
   let is_illegal_name = DISALLOWED_VARIABLE_NAMES.contains(&name.value);
-  let name: Option<String> = if name.is_identifier() && !is_illegal_name {
+  let name: Option<String> = if name.typ == TokenType::Identifier && !is_illegal_name {
     Some(tokens.consume().value.to_owned())
   } else if require_name {
     let t = tokens.consume();
@@ -1605,9 +1608,11 @@ fn parse_string_template(
         literal_part, tokens
       ));
     }
+    println!("{:?} {:?}", literal_part, tokens.peek());
+    let first_char_size = literal_part.value.chars().next().unwrap().len_utf8();
     parts.push((expr, match literal_part.typ {
-      TokenType::StringTemplateMiddle => literal_part.value[1..literal_part.value.len() - 2].to_owned(),
-      TokenType::StringTemplateEnd => literal_part.value[1..literal_part.value.len() - 1].to_owned(),
+      TokenType::StringTemplateMiddle => literal_part.value[first_char_size..literal_part.value.len() - 2].to_owned(),
+      TokenType::StringTemplateEnd => literal_part.value[first_char_size..literal_part.value.len() - 1].to_owned(),
       _ => unreachable!()
     }));
     if literal_part.typ == TokenType::StringTemplateEnd { break; }
@@ -2063,7 +2068,7 @@ pub fn get_expression<'a, 'b>(
             } else {
               parse_prefix(tokens, binding_power.1, symbol_table)?
             }
-          } else if next.is_identifier() {
+          } else if next.typ == TokenType::Identifier {
             // Could be a name...
             parse_name(tokens, symbol_table)?
           } else if next.value == "<" {
