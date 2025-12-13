@@ -80,10 +80,6 @@ impl<'a> Token<'a> {
     matches!(self.typ, TokenType::Spacing | TokenType::LineTerminator)
   }
 
-  pub fn is_identifier(&self) -> bool {
-    self.typ == TokenType::Identifier
-  }
-
   pub fn from(value: &'a str) -> Token<'a> {
     Token {
       typ: TokenType::Unknown,
@@ -367,8 +363,64 @@ impl<'a> TokenList<'a> {
         );
       } else if curr_char.is_numeric() || (curr_char == '.' && self.char_iter.peek_far().is_some_and(|x| x.is_numeric())) {
         // Numbers
+        enum Ending {
+          FALSE,
+          EXPECT_SIGN,
+          EXPECT_NUMBER,
+          EXPECT
+        }
+        let mut is_exponent: Ending = Ending::FALSE;
+        let mut token_len = 0;
+        loop {
+          if let Some(c) = self.char_iter.peek() {
+            match is_exponent {
+              Ending::FALSE => {
+                if c.is_numeric() || c == '_' {
+                  token_len += c.len_utf8();
+                  self.char_iter.skip();
+                } else if c == '.' {
+                  token_len += c.len_utf8();
+                  self.char_iter.skip();
+                } else if c == 'e' || c == 'E' {
+                  is_exponent = Ending::EXPECT_SIGN;
+                  token_len += c.len_utf8();
+                  self.char_iter.skip();
+                } else if c == 'n' {
+                  token_len += c.len_utf8();
+                  self.char_iter.skip();
+                  break;
+                } else {
+                  break;
+                }
+              },
+              Ending::EXPECT_SIGN => {
+                if c == '+' || c == '-' {
+                  is_exponent = Ending::EXPECT_NUMBER;
+                  token_len += c.len_utf8();
+                  self.char_iter.skip();
+                } else if c.is_numeric() {
+                  is_exponent = Ending::EXPECT_NUMBER;
+                } else {
+                  break;
+                }
+              },
+              Ending::EXPECT_NUMBER => {
+                if c.is_numeric() || c == '_' {
+                  token_len += c.len_utf8();
+                  self.char_iter.skip();
+                } else {
+                  break;
+                }
+              },
+              Ending::EXPECT => unreachable!(),
+            }
+          } else {
+            break;
+          }
+        }
+
         break 'token_done (
-          self.char_iter.consume_all(|c| c.is_numeric() || c == '_' || c == '.' || c == 'n'),
+          token_len,
           TokenType::Number
         );
       } else if curr_char == '"' || curr_char == '\'' {
@@ -411,7 +463,6 @@ impl<'a> TokenList<'a> {
         let len = loop {
           if let Some(curr_char) = self.char_iter.peek() {
             token_len += curr_char.len_utf8();
-            // if curr_char == '\n' { break token_len - 1; }
             self.char_iter.consume();
             let is_end_char = curr_char == '`' && !is_escaped;
             let is_expr_char = curr_char == '{' && is_ready_for_expression;
