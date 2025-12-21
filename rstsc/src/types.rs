@@ -877,7 +877,7 @@ fn get_expression(
         if let Some(binding_power) = binding_power {
           // Prefix operators
           parse_prefix(tokens, binding_power.1)?
-        } else if next.is_identifier() {
+        } else if next.typ == TokenType::Identifier {
           // Could be a name...
           parse_name(tokens)
         } else {
