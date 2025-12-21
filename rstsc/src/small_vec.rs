@@ -32,7 +32,7 @@ impl<T> SmallVec<T> {
   }
 
   pub fn with_capacity(capacity: usize) -> SmallVec<T> {
-    debug_assert!(capacity <= Self::MAX_LEN, "TinyVec exceeded max capacity while initializing with capacity");
+    debug_assert!(capacity <= Self::MAX_LEN, "SmallVec exceeded max capacity while initializing with capacity");
     let mut v = Self::new();
     unsafe { v.allocate(capacity as SizeType); }
     v
@@ -80,7 +80,7 @@ impl<T> SmallVec<T> {
 
   pub fn push(&mut self, value: T) {
     if self.capacity == 0 || self.length == self.capacity {
-      debug_assert!(self.len() != Self::MAX_LEN, "TinyVec exceeded max capacity while pushing");
+      debug_assert!(self.len() != Self::MAX_LEN, "SmallVec exceeded max capacity while pushing");
       let new_cap = if self.capacity == 0 { 1 } else { self.capacity.saturating_mul(2) };
       unsafe { self.allocate(new_cap) }
     }
