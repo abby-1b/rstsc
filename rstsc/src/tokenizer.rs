@@ -648,16 +648,13 @@ impl<'a> CustomCharIterator<'a> {
   }
 
   pub fn consume_all<F>(&mut self, consume_fn: F) -> usize where F: Fn(char) -> bool {
-    let start_size = self.bytes_left();
+    let mut byte_count = 0;
     while self.peek().is_some_and(&consume_fn) {
+      let c = self.peek().unwrap();
+      byte_count += c.len_utf8();
       self.skip();
     }
-    start_size - self.bytes_left()
-  }
-
-  #[inline]
-  fn bytes_left(&self) -> usize {
-    unsafe { self.inner_iter.size_hint().1.unwrap_unchecked() }
+    byte_count
   }
 }
 
