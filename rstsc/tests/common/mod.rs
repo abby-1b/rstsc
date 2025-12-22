@@ -79,7 +79,7 @@ pub fn test_code(source: &str, compiled: &str, whitespace: &WhiteSpace) -> Resul
 	// Get the `rstsc` output
 	// println!("RSTSC compiling: {:?}", code);
 	let out = std::panic::catch_unwind(|| {
-		rstsc::compile(code)
+		rstsc::compile(code, false)
 	});
  	let mut actual: String = match out {
 		Ok(Ok(code)) => code.clone(),
