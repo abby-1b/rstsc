@@ -11,9 +11,9 @@ pub enum VariableDefType {
 impl VariableDefType {
   pub fn emit(&self) -> String {
     match self {
-      VariableDefType::Var => "var ",
-      VariableDefType::Let => "let ",
-      VariableDefType::Const => "const ",
+      VariableDefType::Var => "var",
+      VariableDefType::Let => "let",
+      VariableDefType::Const => "const",
     }.to_string()
   }
 }

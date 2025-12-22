@@ -146,6 +146,12 @@ fn emit_single(
     } => {
       emitter.out(&modifiers.emit(true), false);
       emitter.out(&def_type.emit(), false);
+
+      if emitter.is_compact && pattern_potentially_starts_with_symbol(&defs[0].name) {
+        // Omit space!
+      } else {
+        emitter.out(" ", false);
+      }
       emit_destructurable_declarations(defs.as_ref(), NO_REST.clone(), emitter);
       emitter.out("", true);
     }
@@ -177,7 +183,7 @@ fn emit_single(
             true
           }, ", ", ",");
           emitter.out_diff(" }", "}", false);
-          emitter.out(" from ", true);
+          emitter.out_diff(" from ", "from", true);
           emitter.out(&source, true);
         }
         ImportDefinition::SourceOnly { source } => {
@@ -191,7 +197,7 @@ fn emit_single(
       emitter.out(")", true);
     }
     ASTNode::StatementExport { inner } => {
-      emitter.out("export ", false);
+      emitter.out_diff("export ", "export", false);
       emitter.out_diff("{ ", "{", false);
       emitter.emit_vec(inner.specifiers.as_ref(), |specifier, emitter| {
         if specifier.is_type {
@@ -210,7 +216,7 @@ fn emit_single(
       let start_line = emitter.curr_line();
 
       // Head
-      emitter.out("if (", false);
+      emitter.out_diff("if (", "if(", false);
       emit_single(condition, emitter);
       emitter.out_diff(") ", ")", false);
 
@@ -219,11 +225,18 @@ fn emit_single(
 
       // Else (if any)
       if let Some(alternate) = alternate {
-        if emitter.curr_line() == start_line {
-          emitter.endline();
-          emitter.out("else ", false);
+        if emitter.is_compact && node_potentially_starts_with_symbol(alternate) {
+          // Compact
+          emitter.out("else", false);
         } else {
-          emitter.out(" else ", false);
+          if emitter.curr_line() == start_line {
+            // If the if statement remained single-line, do a new line
+            emitter.endline();
+            emitter.out("else ", false);
+          } else {
+            // Otherwise, 
+            emitter.out(" else ", false);
+          }
         }
         emit_single(alternate, emitter);
       }
@@ -254,7 +267,7 @@ fn emit_single(
       // Head
       emitter.out_diff("for (", "for(", false);
       emit_single(init, emitter);
-      emitter.out_diff(" of ", "of", false);
+      emitter.out(" of ", false);
       emit_single(expression, emitter);
       emitter.out_diff(") ", ")", false);
 
@@ -265,7 +278,7 @@ fn emit_single(
       // Head
       emitter.out_diff("for (", "for(", false);
       emit_single(init, emitter);
-      emitter.out_diff(" in ", "in", false);
+      emitter.out(" in ", false);
       emit_single(expression, emitter);
       emitter.out_diff(") ", ")", false);
 
@@ -273,16 +286,20 @@ fn emit_single(
       emit_single(body, emitter);
     }
     ASTNode::StatementSwitch { condition, cases, default } => {
-      emitter.out("switch (", false);
+      emitter.out_diff("switch (", "switch(", false);
       emit_single(condition, emitter);
-      emitter.out(") {", false);
+      emitter.out_diff(") {", "){", false);
       emitter.endline();
       emitter.indent();
 
       for (case_cond, case_body) in cases.iter() {
-        emitter.out("case ", false);
+        if emitter.is_compact && node_potentially_starts_with_symbol(case_cond) {
+          emitter.out("case", false);
+        } else {
+          emitter.out("case ", false);
+        }
         emit_single(case_cond, emitter);
-        emitter.out(": ", false);
+        emitter.out_diff(": ", ":", false);
         emitter.endline();
         emitter.indent();
         for stmt in case_body.iter() {
@@ -293,7 +310,7 @@ fn emit_single(
       }
 
       if let Some(default_body) = default {
-        emitter.out("default: ", false);
+        emitter.out_diff("default: ", "default:", false);
         emitter.endline();
         emitter.indent();
         for stmt in default_body.iter() {
@@ -309,7 +326,12 @@ fn emit_single(
     ASTNode::StatementReturn { value } => {
       emitter.out("return", true);
       if let Some(value) = value {
-        emitter.out(" ", false);
+        let can_omit_space = node_potentially_starts_with_symbol(value);
+        if emitter.is_compact && can_omit_space {
+          // Omit space!
+        } else {
+          emitter.out(" ", false);
+        }
         emit_single(value, emitter);
       }
     }
@@ -412,6 +434,10 @@ fn emit_single(
       for member in inner.members.iter() {
         match member {
           ClassMember::Property(declaration, modifiers) => {
+            let is_skippable = declaration.name.is_named() && declaration.value.is_none();
+            if is_skippable && emitter.is_compact {
+              continue;
+            }
             emitter.out(&modifiers.emit(true), false);
             emit_single_declaration_computable(declaration, emitter);
             emitter.endline();
@@ -477,7 +503,46 @@ fn emit_single(
       emitter.out_diff(" }", "}", true);
     }
     ASTNode::ExprNumLiteral { number } => {
-      emitter.out(&number.to_string(), true);
+      let mut out = number.to_owned();
+      if emitter.is_compact {
+        let is_negative = if out.starts_with("-") {
+          out = out[1..].to_owned();
+          true
+        } else { false };
+        if out.starts_with("+") {
+          out = out[1..].to_owned();
+        }
+        let is_bigint = if out.ends_with("n") {
+          out = out[0..out.len() - 1].to_owned();
+          true
+        } else { false };
+
+        if number.contains("0.") {
+          // Shorten leading zero before decimal
+          out = out[1..].to_owned();
+        } else if number.starts_with("0b") {
+          // Convert binary to decimal
+          out = convert_binary_str_to_decimal_str(&out[2..]);
+        } else if number.starts_with("0x") {
+          // Convert hexadecimal to decimal
+          out = convert_hexadecimal_str_to_decimal_str(&out[2..]);
+        }
+
+        while out.len() > 1 && out.starts_with("0") {
+          out = out[1..].to_owned();
+        }
+
+        if !out.contains(".") {
+          if let Some(shorter) = decimal_to_hex_if_shorter(&out) {
+            out = shorter;
+          }
+        }
+
+        // Put negative back
+        if is_negative { out = "-".to_owned() + &out; }
+        if is_bigint { out += "n"; }
+      }
+      emitter.out(&out, true);
     }
     ASTNode::ExprStrLiteral { string } => {
       emitter.out(&string, true);
@@ -503,7 +568,13 @@ fn emit_single(
       emitter.out(&name, true);
     }
     ASTNode::ExprBoolLiteral { value } => {
-      emitter.out(if *value { "true" } else { "false" }, true);
+      let offset = *value as u8 + ((emitter.is_compact as u8) << 1);
+      emitter.out([
+        "false",
+        "true",
+        "!1",
+        "!0",
+      ][offset as usize], true);
     }
     ASTNode::ExprFunctionCall { callee, generics: _, arguments } => {
       emit_single(&*callee, emitter);
@@ -784,3 +855,147 @@ fn emit_function_definition(
     emit_single(&body, emitter);
   }
 }
+
+fn node_potentially_starts_with_symbol(node: &ASTNode) -> bool {
+  match node {
+    ASTNode::ExprNumLiteral { number } => number.starts_with("."),
+    ASTNode::ExprStrLiteral { .. } => true,
+    ASTNode::ExprTemplateLiteral { .. } => true,
+    ASTNode::Array { .. } => true,
+    ASTNode::Dict { .. } => true,
+    ASTNode::Block { .. } => true,
+
+    ASTNode::PrefixOpr { opr, .. } => !opr.chars().next().unwrap().is_alphanumeric(),
+    ASTNode::InfixOpr { left, .. } => node_potentially_starts_with_symbol(left),
+    ASTNode::PostfixOpr { expr, .. } => node_potentially_starts_with_symbol(expr),
+    ASTNode::Parenthesis { .. } => true,
+
+    _ => false
+  }
+}
+
+fn pattern_potentially_starts_with_symbol(pattern: &DestructurePattern) -> bool {
+  match pattern {
+    DestructurePattern::Array { .. } => true,
+    DestructurePattern::Object { .. } => true,
+    DestructurePattern::WithInitializer { pattern, .. } => pattern_potentially_starts_with_symbol(pattern),
+    _ => false
+  }
+}
+
+fn convert_binary_str_to_decimal_str(binary: &str) -> String {
+  let mut decimal = String::from("0");
+  for bit in binary.chars() {
+    // Multiply current decimal by 2
+    let mut carry = 0;
+    let mut new_decimal = String::new();
+    for digit_char in decimal.chars().rev() {
+      let digit = digit_char.to_digit(10).unwrap();
+      let product = digit * 2 + carry;
+      new_decimal.push(std::char::from_digit(product % 10, 10).unwrap());
+      carry = product / 10;
+    }
+    if carry > 0 {
+      new_decimal.push(std::char::from_digit(carry, 10).unwrap());
+    }
+    decimal = new_decimal.chars().rev().collect();
+
+    // Add current bit
+    if bit == '1' {
+      let mut carry = 1;
+      let mut new_decimal = String::new();
+      for digit_char in decimal.chars().rev() {
+        let digit = digit_char.to_digit(10).unwrap();
+        let sum = digit + carry;
+        new_decimal.push(std::char::from_digit(sum % 10, 10).unwrap());
+        carry = sum / 10;
+      }
+      if carry > 0 {
+        new_decimal.push(std::char::from_digit(carry, 10).unwrap());
+      }
+      decimal = new_decimal.chars().rev().collect();
+    }
+  }
+  decimal
+}
+
+fn convert_hexadecimal_str_to_decimal_str(hex: &str) -> String {
+  let mut decimal = String::from("0");
+  for hex_char in hex.chars() {
+    let hex_value = hex_char.to_digit(16).unwrap();
+
+    // Multiply current decimal by 16
+    let mut carry = 0;
+    let mut new_decimal = String::new();
+    for digit_char in decimal.chars().rev() {
+      let digit = digit_char.to_digit(10).unwrap();
+      let product = digit * 16 + carry;
+      new_decimal.push(std::char::from_digit(product % 10, 10).unwrap());
+      carry = product / 10;
+    }
+    while carry > 0 {
+      new_decimal.push(std::char::from_digit(carry % 10, 10).unwrap());
+      carry /= 10;
+    }
+    decimal = new_decimal.chars().rev().collect();
+
+    // Add hex value
+    let mut carry = hex_value;
+    let mut new_decimal = String::new();
+    for digit_char in decimal.chars().rev() {
+      let digit = digit_char.to_digit(10).unwrap();
+      let sum = digit + carry;
+      new_decimal.push(std::char::from_digit(sum % 10, 10).unwrap());
+      carry = sum / 10;
+    }
+    while carry > 0 {
+      new_decimal.push(std::char::from_digit(carry % 10, 10).unwrap());
+      carry /= 10;
+    }
+    decimal = new_decimal.chars().rev().collect();
+  }
+  decimal
+}
+
+pub fn decimal_to_hex_if_shorter(input: &str) -> Option<String> {
+  if input.is_empty() || !input.bytes().all(|b| b.is_ascii_digit()) {
+    return None;
+  }
+
+  let dec_len = input.len();
+
+  if input.bytes().all(|b| b == b'0') {
+    let hex = "0x0".to_string();
+    return (hex.len() < dec_len).then_some(hex);
+  }
+
+  let mut digits: Vec<u8> = input.bytes().map(|b| b - b'0').collect();
+  let mut hex_nibbles = Vec::new();
+
+  while !digits.is_empty() {
+    let mut carry: u32 = 0;
+    let mut next = Vec::with_capacity(digits.len());
+
+    for &d in &digits {
+      let cur = carry * 10 + d as u32;
+      let q = (cur / 16) as u8;
+      carry = cur % 16;
+      if !next.is_empty() || q != 0 {
+        next.push(q);
+      }
+    }
+
+    hex_nibbles.push(carry as u8);
+    digits = next;
+  }
+
+  const HEX: &[u8; 16] = b"0123456789abcdef";
+  let mut hex = String::with_capacity(hex_nibbles.len() + 2);
+  hex.push_str("0x");
+  for &n in hex_nibbles.iter().rev() {
+    hex.push(HEX[n as usize] as char);
+  }
+
+  (hex.len() < dec_len).then_some(hex)
+}
+
