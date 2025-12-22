@@ -66,6 +66,8 @@ pub struct CodeObfuscator {
   used_renames: HashSet<String>,
   /// Names that must not be renamed (exports, globals)
   protected_names: HashSet<String>,
+  /// Stack of scope-local variable names (for scope-aware renaming)
+  scope_stack: Vec<HashSet<String>>,
 }
 
 impl CodeObfuscator {
@@ -77,6 +79,7 @@ impl CodeObfuscator {
       rename_map: HashMap::new(),
       used_renames: HashSet::new(),
       protected_names: HashSet::new(),
+      scope_stack: Vec::new(),
     }
   }
 
@@ -148,25 +151,32 @@ impl CodeObfuscator {
       self.transform_literals(node);
     }
 
-    // Recursively visit children
-    // Note: We use a specific pattern here because we might need to 
-    // replace the node entirely or mutate its children structure.
+    // Recursively visit children, managing scope stack
     match node {
       ASTNode::Block { nodes } => {
+        // Enter new block scope
+        self.scope_stack.push(HashSet::new());
         // Pass 3: Structural Modifications (Dead Code Insertion)
         if self.config.enable_dead_code && self.config.enable_structural {
           self.inject_dead_code(nodes);
         }
-        
         for child in nodes.iter_mut() {
           self.transform_node(child);
         }
+        // Exit block scope
+        self.pop_scope();
       }
       ASTNode::FunctionDefinition { inner } => {
+        // Enter new function scope
+        self.scope_stack.push(HashSet::new());
         self.transform_function(inner);
+        self.pop_scope();
       }
       ASTNode::ArrowFunctionDefinition { inner } => {
+        // Enter new function scope
+        self.scope_stack.push(HashSet::new());
         self.transform_arrow_function(inner);
+        self.pop_scope();
       }
       ASTNode::StatementIf { condition, body, alternate } => {
         self.transform_node(condition);
@@ -176,20 +186,26 @@ impl CodeObfuscator {
         }
       }
       ASTNode::StatementFor { init, condition, update, body } => {
+        self.scope_stack.push(HashSet::new());
         self.transform_node(init);
         self.transform_node(condition);
         self.transform_node(update);
         self.transform_node(body);
+        self.pop_scope();
       }
       ASTNode::StatementForIn { init, expression, body } => {
+        self.scope_stack.push(HashSet::new());
         self.transform_node(init);
         self.transform_node(expression);
         self.transform_node(body);
+        self.pop_scope();
       }
       ASTNode::StatementForOf { init, expression, body } => {
+        self.scope_stack.push(HashSet::new());
         self.transform_node(init);
         self.transform_node(expression);
         self.transform_node(body);
+        self.pop_scope();
       }
       ASTNode::StatementSwitch { condition, cases, default } => {
         self.transform_node(condition);
@@ -259,7 +275,7 @@ impl CodeObfuscator {
       }
       ASTNode::ClassDefinition { inner } => {
         if let Some(name) = &mut inner.name {
-          if let Some(new_name) = self.rename_identifier(&name) {
+          if let Some(new_name) = self.rename_identifier_scoped(&name) {
             *name = new_name;
           }
         }
@@ -272,7 +288,7 @@ impl CodeObfuscator {
                 self.transform_node(&mut computed_name.clone());
               } else if decl.name.is_named() {
                 let named_name = unsafe { decl.name.get_named_unchecked() };
-                if let Some(new_name) = self.rename_identifier(named_name) {
+                if let Some(new_name) = self.rename_identifier_scoped(named_name) {
                   decl.name = ComputableDeclarationName::new_named(new_name);
                 }
               }
@@ -287,15 +303,24 @@ impl CodeObfuscator {
           }
         }
       }
-      // _ => println!("Unvisited node in obfuscation: {:?}", node)
       _ => {}
+    }
+  }
+  /// Pops the current scope and removes all variable renames and used names for that scope
+  fn pop_scope(&mut self) {
+    if let Some(scope) = self.scope_stack.pop() {
+      for orig in scope {
+        if let Some(obf) = self.rename_map.remove(&orig) {
+          self.used_renames.remove(&obf);
+        }
+      }
     }
   }
 
   fn transform_destructure_pattern(&mut self, var_decl: &mut DestructurePattern) {
     match var_decl {
       DestructurePattern::Identifier { name } => {
-        if let Some(new_name) = self.rename_identifier(name) {
+        if let Some(new_name) = self.rename_identifier_scoped(name) {
           *name = new_name;
         }
       }
@@ -314,7 +339,7 @@ impl CodeObfuscator {
 
   fn transform_function(&mut self, func: &mut FunctionDefinition) {
     if let Some(name) = &func.name {
-      if let Some(new_name) = self.rename_identifier(name) {
+      if let Some(new_name) = self.rename_identifier_scoped(name) {
         func.name = Some(new_name);
       }
     }
@@ -364,7 +389,6 @@ impl CodeObfuscator {
       if self.rng.chance(0.8) && name.chars().skip(1).next().unwrap().is_alphabetic() {
         name = name[1..].to_owned();
       }
-      println!("trying name: {}", name);
       if self.used_renames.contains(&name) { continue; }
       break name;
     };
@@ -373,15 +397,20 @@ impl CodeObfuscator {
     name
   }
 
-  fn rename_identifier(&mut self, original: &str) -> Option<String> {
-    if !self.protected_names.contains(original) {
-      if !self.rename_map.contains_key(original) {
-        let new_name = self.generate_obfuscated_name(&original);
-        self.rename_map.insert(original.to_owned(), new_name);
-      }
-      return Some(self.rename_map.get(original).unwrap().clone());
+  /// Scope-aware identifier renaming: records variable in current scope
+  fn rename_identifier_scoped(&mut self, original: &str) -> Option<String> {
+    if self.protected_names.contains(original) {
+      return None;
     }
-    None
+    if !self.rename_map.contains_key(original) {
+      let new_name = self.generate_obfuscated_name(&original);
+      self.rename_map.insert(original.to_owned(), new_name);
+      // Record this variable in the current scope for later cleanup
+      if let Some(scope) = self.scope_stack.last_mut() {
+        scope.insert(original.to_owned());
+      }
+    }
+    Some(self.rename_map.get(original).unwrap().clone())
   }
 
   fn apply_renaming(&mut self, node: &mut ASTNode) {
@@ -391,7 +420,7 @@ impl CodeObfuscator {
         for def in defs.iter_mut() {
           match &mut def.name {
             DestructurePattern::Identifier { name } => {
-              if let Some(new_name) = self.rename_identifier(name) {
+              if let Some(new_name) = self.rename_identifier_scoped(name) {
                 *name = new_name;
               }
             }
@@ -412,6 +441,9 @@ impl CodeObfuscator {
             if !self.rename_map.contains_key(name) {
               let new_name = self.generate_obfuscated_name(name);
               self.rename_map.insert(name.clone(), new_name);
+              if let Some(scope) = self.scope_stack.last_mut() {
+                scope.insert(name.clone());
+              }
             }
             inner.name = Some(self.rename_map.get(name).unwrap().clone());
           }
@@ -546,6 +578,92 @@ impl CodeObfuscator {
     };
 
     // TODO: Fix ternary obfuscation (issues come up in large files, test accordingly)
+    // if replacement.is_none() && self.rng.chance(0.5) {
+    //   let should_wrap = match node {
+    //     ASTNode::ExprNumLiteral { .. }
+    //     | ASTNode::ExprStrLiteral { .. }
+    //     | ASTNode::ExprBoolLiteral { .. }
+    //     | ASTNode::ExprIdentifier { .. }
+    //     | ASTNode::InfixOpr { .. }
+    //     | ASTNode::Parenthesis { .. }
+    //     | ASTNode::ExprFunctionCall { .. }
+    //     | ASTNode::Array { .. }
+    //     | ASTNode::Dict { .. } => true,
+    //     _ => false,
+    //   };
+    //   if should_wrap {
+    //     let original = std::mem::replace(node, ASTNode::Empty);
+    //     let mut swap_arms = false;
+    //     let mut use_weird_expr = false;
+    //     let mut use_array_cond = false;
+    //     let mut use_infix_cond = false;
+    //     let mut use_strange_bool = false;
+    //     if self.rng.chance(0.9) { swap_arms = true; }
+    //     if self.rng.chance(0.2) { use_weird_expr = true; }
+    //     if self.rng.chance(0.1) { use_array_cond = true; }
+    //     if self.rng.chance(0.1) { use_infix_cond = true; }
+    //     if self.rng.chance(0.1) { use_strange_bool = true; }
+
+    //     let mut cond = if use_weird_expr {
+    //       let a = self.rng.range(2, 10);
+    //       let b = self.rng.range(2, 10);
+    //       Box::new(ASTNode::InfixOpr {
+    //         left: Box::new(ASTNode::InfixOpr {
+    //           left: Box::new(ASTNode::ExprNumLiteral { number: a.to_string() }),
+    //           opr: "*".to_string(),
+    //           right: Box::new(ASTNode::ExprNumLiteral { number: b.to_string() }),
+    //         }),
+    //         opr: "-".to_string(),
+    //         right: Box::new(ASTNode::ExprNumLiteral { number: (a * b).to_string() }),
+    //       })
+    //     } else if use_array_cond {
+    //       Box::new(ASTNode::InfixOpr {
+    //         left: Box::new(ASTNode::Array { nodes: SmallVec::new() }),
+    //         opr: "==".to_string(),
+    //         right: Box::new(ASTNode::ExprBoolLiteral { value: false }),
+    //       })
+    //     } else if use_infix_cond {
+    //       Box::new(ASTNode::InfixOpr {
+    //         left: Box::new(ASTNode::InfixOpr {
+    //           left: Box::new(self.random_string_literal()),
+    //           opr: "+".to_string(),
+    //           right: Box::new(self.random_string_literal()),
+    //         }),
+    //         opr: ">".to_string(),
+    //         right: Box::new(ASTNode::ExprNumLiteral { number: "0".to_string() }),
+    //       })
+    //     } else if use_strange_bool {
+    //       Box::new(ASTNode::InfixOpr {
+    //         left: Box::new(ASTNode::ExprBoolLiteral { value: true }),
+    //         opr: "!=".to_string(),
+    //         right: Box::new(ASTNode::ExprBoolLiteral { value: false }),
+    //       })
+    //     } else {
+    //       Box::new(ASTNode::ExprBoolLiteral { value: true })
+    //     };
+
+    //     if swap_arms {
+    //       cond = Box::new(ASTNode::PrefixOpr {
+    //         opr: "!".to_owned(),
+    //         expr: Box::new(ASTNode::Parenthesis {
+    //           nodes: SmallVec::with_element(*cond)
+    //         })
+    //       });
+    //     }
+
+    //     let (if_true, if_false) = if swap_arms {
+    //       (Box::new(ASTNode::ExprNumLiteral { number: self.rng.range(0, 1000).to_string() }), Box::new(original))
+    //     } else {
+    //       (Box::new(original.clone()), Box::new(self.random_string_literal()))
+    //     };
+
+    //     replacement = Some(ASTNode::Parenthesis { nodes: SmallVec::with_element(ASTNode::ExprTernary {
+    //       condition: cond,
+    //       if_true,
+    //       if_false,
+    //     }) });
+    //   }
+    // }
 
     if let Some(new_node) = replacement {
       *node = new_node;
