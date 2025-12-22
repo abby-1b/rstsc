@@ -1608,7 +1608,6 @@ fn parse_string_template(
         literal_part, tokens
       ));
     }
-    println!("{:?} {:?}", literal_part, tokens.peek());
     let first_char_size = literal_part.value.chars().next().unwrap().len_utf8();
     parts.push((expr, match literal_part.typ {
       TokenType::StringTemplateMiddle => literal_part.value[first_char_size..literal_part.value.len() - 2].to_owned(),
@@ -2124,8 +2123,6 @@ pub fn get_expression<'a, 'b>(
     tokens.ignore_whitespace();
     let next = tokens.peek();
     if next.typ == TokenType::EndOfFile { break; }
-
-    // println!("Handling infix/postfix (w/ min precedence {}): {:?}", precedence, next);
 
     // `as` statements get special treatment
     if next.value == "as" {
