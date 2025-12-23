@@ -771,10 +771,19 @@ pub fn parse_object_square_bracket(
   tokens.skip("[")?;
   tokens.ignore_whitespace();
 
+  if tokens.peek().typ != TokenType::Identifier {
+    // Anything that isn't an identifier is a computed property
+    let computed = parser::get_expression_without_symbol_table(tokens, 0)?;
+    tokens.skip("]")?;
+    return Ok(
+      ObjectSquareBracketReturn::ComputedProp(computed)
+    )
+  }
+
   let checkpoint = tokens.get_checkpoint();
-  
+
   // Although this is usually "key", it can be any identifier!
-  let key_token = tokens.consume_type(TokenType::Identifier)?;
+  let key_token = tokens.consume();
   tokens.ignore_whitespace();
 
   if tokens.peek_str() == "in" {
