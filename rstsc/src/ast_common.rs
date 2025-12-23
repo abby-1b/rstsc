@@ -59,6 +59,11 @@ impl ModifierList {
     ModifierList { flags: 0 }
   }
 
+  #[inline]
+  pub fn is_empty(&self) -> bool {
+    self.flags == 0
+  }
+
   /// Sets the modifier in the list
   #[inline]
   pub fn set(&mut self, modifier: Modifier) {

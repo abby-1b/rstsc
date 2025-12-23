@@ -1154,6 +1154,13 @@ fn handle_modifiers(
 
   // Get the modifiers
   let modifiers = fetch_modifier_list(tokens);
+  if modifiers.is_empty() {
+    return Err(CompilerError::new(
+      "Token not allowed after modifiers!".to_owned(),
+      tokens.consume(),
+      tokens
+    ));
+  }
 
   if modifiers.flags == (Modifier::Export as u8) && tokens.peek_str() == "{" {
     // block export: export { ... }
@@ -1205,7 +1212,7 @@ fn handle_modifiers(
   } else {
     // Get the node that goes after the modifiers
     let mut node_after_modifiers = get_single_statement(tokens, symbol_table)?;
-  
+
     node_after_modifiers.apply_modifiers(modifiers)?;
     Ok(Some(node_after_modifiers))
   }
