@@ -58,12 +58,17 @@ impl CompilerError {
       } else {
         lines.last_mut().unwrap().0.push(c);
       }
-      let is_part = i >= t_start_idx && i <= t_end_idx;
-      if is_part && t_start_line.is_none() {
+      let is_part_of_snippet = i >= t_start_idx && i <= t_end_idx;
+      if is_part_of_snippet && t_start_line.is_none() {
         t_start_line = Some(line_idx);
-      } else if !is_part && t_start_line.is_some() && t_end_line.is_none() {
+      } else if !is_part_of_snippet && t_start_line.is_some() && t_end_line.is_none() {
         t_end_line = Some(line_idx);
       }
+    }
+
+    // If no end line is found, set it to the line after the last one
+    if t_end_line.is_none() {
+      t_end_line = Some(t_start_line.unwrap() + 1);
     }
     
     let start_printing_at = t_start_line.unwrap().saturating_sub(PRINT_LINES_BEFORE);
