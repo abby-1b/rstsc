@@ -156,37 +156,45 @@ fn emit_single(
       emitter.out("", true);
     }
     ASTNode::StatementImport { inner } => {
-      emitter.out("import ", false);
       match &**inner {
         ImportDefinition::DefaultAliased { source, alias } => {
+          emitter.out("import ", false);
           emitter.out(&alias, false);
           emitter.out(" from ", true);
           emitter.out(&source, true);
         }
         ImportDefinition::AllAsAlias { source, alias } => {
+          emitter.out("import ", false);
           emitter.out("* as ", false);
           emitter.out(&alias, false);
           emitter.out(" from ", true);
           emitter.out(&source, true);
         }
         ImportDefinition::Individual { source, parts } => {
-          emitter.out_diff("{ ", "{", false);
-          emitter.emit_vec(parts.as_ref(), |i, emitter| {
-            if emitter.symbol_table.lookup(&i.name).is_some_and(|s| !s.is_used) {
-              return false;
-            }
-            emitter.out(&i.name, false);
-            if let Some(alias) = &i.alias {
-              emitter.out(" as ", false);
-              emitter.out(&alias, false);
-            }
-            true
-          }, ", ", ",");
-          emitter.out_diff(" }", "}", false);
-          emitter.out_diff(" from ", "from", true);
-          emitter.out(&source, true);
+          let has_imports = parts.iter().any(|i| {
+            emitter.symbol_table.lookup(&i.name).is_some_and(|s| s.is_used)
+          });
+          if has_imports {
+            emitter.out("import ", false);
+            emitter.out_diff("{ ", "{", false);
+            emitter.emit_vec(parts.as_ref(), |i, emitter| {
+              if emitter.symbol_table.lookup(&i.name).is_some_and(|s| !s.is_used) {
+                return false;
+              }
+              emitter.out(&i.name, false);
+              if let Some(alias) = &i.alias {
+                emitter.out(" as ", false);
+                emitter.out(&alias, false);
+              }
+              true
+            }, ", ", ",");
+            emitter.out_diff(" }", "}", false);
+            emitter.out_diff(" from ", "from", true);
+            emitter.out(&source, true);
+          }
         }
         ImportDefinition::SourceOnly { source } => {
+          emitter.out("import ", false);
           emitter.out(&source, true);
         }
       }
