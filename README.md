@@ -25,44 +25,47 @@ whitespace-only lines) gave me **37k lines/second** on my machine excluding type
 
 # Roadmap
 
-### Phase 1: Core Syntax Parsing (80% Completed)
+### Phase 1: Core Syntax Parsing (100% Completed)
 
-Completed Tasks:
- - Building an Abstract Syntax Tree (AST)
- - Visibility modifier removal (public, private, protected)
- - Function type-hint removal
- - Type declaration removal
- - Basic type/generic arguments handling (e.g., `Record<string, number>`)
- - Typed dictionaries
- - Interface removal
- - Class method/variable differentiation
- - Visibility modifiers in class constructors (auto-declaration)
- - Arrow functions (code and types)
- - Ternary operations
- - Conditional chaining
- - Non-null assertion removal
- - Basic Automatic Semicolon Insertion (ASI)
- - Enum transformation
- - Switch statements
- - Full non-null assertion handling
- - String literal support (types inside literals)
+Tasks:
+- [x] Building an Abstract Syntax Tree (AST)
+- [x] Visibility modifier removal (public, private, protected)
+- [x] Function type-hint removal
+- [x] Type declaration removal
+- [x] Basic type/generic arguments handling (e.g., `Record<string, number>`)
+- [x] Typed dictionaries
+- [x] Interface removal
+- [x] Class method/variable differentiation
+- [x] Visibility modifiers in class constructors (auto-declaration)
+- [x] Arrow functions (code and types)
+- [x] Ternary operations
+- [x] Conditional chaining
+- [x] Non-null assertion removal
+- [x] Basic Automatic Semicolon Insertion (ASI)
+- [x] Enum transformation
+- [x] Switch statements
+- [x] Full non-null assertion handling
+- [x] String literal support (types inside literals)
+- [x] Basic regex parsing
 
 ### Phase 2: Advanced Syntax and Declarations
 
 Tasks:
- - Declarations
- - Variable scope tracking
- - Module import removal (unused import handling and emission)
- - Source map generation
- - Full ASI
+- [x] Add TSC project test snippets
+- [x] Module import removal (unused import handling and emission)
+- [ ] Variable scope tracking
+- [ ] Declarations
+- [ ] Source map generation
+- [ ] Full ASI
 
 ### Phase 3: Test Coverage & Efficiency
 
 Tasks:
- - Complete test coverage for everything
- - Optimize compiler performance for speed and resource efficiency
-   - Make strings within the project reference the source file instead of allocating separately
-   - When the file isn't loaded, make a string pool that the AST can reference
+- Complete test coverage for everything
+- Optimize compiler performance for speed and resource efficiency
+  - Make strings within the project reference the source file instead of allocating separately
+  - When the file isn't loaded, make a string pool that the AST can reference
+- Full regex parsing
 
 
 # License
