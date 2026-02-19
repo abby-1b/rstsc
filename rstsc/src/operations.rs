@@ -1,7 +1,9 @@
+use phf::phf_map;
+
 use crate::ast::ASTNode;
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum ExprType {
   Prefx,
   Infx,
@@ -180,4 +182,29 @@ lazy_static::lazy_static! {
   pub static ref COLON_PRECEDENCE: u8 = get_operator_binding_power(ExprType::Special, ":").unwrap().1;
   pub static ref COMMA_PRECEDENCE: u8 = get_operator_binding_power(ExprType::Infx, ",").unwrap().1;
   pub static ref TEMPLATE_LITERAL_TAG_PRECEDENCE: u8 = get_operator_binding_power(ExprType::Infx, "``").unwrap().0;
+}
+static MODIFYING_KW: phf::Map<&'static str, ExprType> = phf_map! {
+  "="    => ExprType::Infx,
+  "+="   => ExprType::Infx,
+  "-="   => ExprType::Infx,
+  "**="  => ExprType::Infx,
+  "*="   => ExprType::Infx,
+  "/="   => ExprType::Infx,
+  "%="   => ExprType::Infx,
+  "<<="  => ExprType::Infx,
+  ">>="  => ExprType::Infx,
+  ">>>=" => ExprType::Infx,
+  "&="   => ExprType::Infx,
+  "^="   => ExprType::Infx,
+  "|="   => ExprType::Infx,
+  "&&="  => ExprType::Infx,
+  "||="  => ExprType::Infx,
+  "??="  => ExprType::Infx,
+};
+
+/// If this operator is modifying, returns Some() with the operator's type
+/// If it isn't, returns None.
+#[inline]
+pub fn is_modifying(opr: &str) -> Option<ExprType> {
+  MODIFYING_KW.get(opr).copied()
 }
