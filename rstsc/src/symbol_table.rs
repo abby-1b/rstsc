@@ -1,19 +1,19 @@
 use std::collections::HashMap;
-use crate::{ast::ASTNode, error_type::CompilerError, tokenizer::{Token, TokenList}};
+use crate::{error_type::CompilerError, tokenizer::{Token, TokenList}, types::Type};
 
 /// Represents the origin of a symbol in the code
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub enum SymbolOrigin {
-  Import,    // Imported symbols
-  Variable,    // var/let/const declarations
-  Parameter,   // Function parameters
-  Function,    // Function declarations
-  Class,     // Class declarations
-  Interface,   // Interface declarations
-  Enum,      // Enum declarations
-  TypeAlias,   // Type alias declarations
+  Import,        // Imported symbols
+  Variable,      // var/let/const declarations
+  Parameter,     // Function parameters
+  Function,      // Function declarations
+  Class,         // Class declarations
+  Interface,     // Interface declarations
+  Enum,          // Enum declarations
+  TypeAlias,     // Type alias declarations
   CatchVariable, // Catch clause variables
-  ForLoop,     // For loop variables
+  ForLoop,       // For loop variables
 }
 
 /// Represents a symbol with metadata about its usage and origin
@@ -21,15 +21,17 @@ pub enum SymbolOrigin {
 pub struct Symbol {
   pub name: String,
   pub origin: SymbolOrigin,
+  pub typ: Type,
   pub is_in_type: bool,  // Used inside type annotations
   pub is_used: bool,     // Used outside type annotations
 }
 
 impl Symbol {
-  pub fn new(name: String, origin: SymbolOrigin) -> Self {
+  pub fn new(name: String, origin: SymbolOrigin, typ: Type) -> Self {
     Self {
       name,
       origin,
+      typ,
       is_in_type: false,
       is_used: false,
     }
