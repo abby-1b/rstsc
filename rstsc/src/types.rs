@@ -8,7 +8,8 @@ use crate::declaration::{ComputableDeclarationName, DeclarationTyped};
 use crate::error_type::CompilerError;
 use crate::operations::{get_type_operator_binding_power, ExprType};
 use crate::parser;
-use crate::small_vec::{SizeType, SmallVec};
+use crate::small_vec::SmallVec;
+use crate::source_properties::SourceProperties;
 use crate::tokenizer::{Token, TokenList, TokenType};
 
 #[derive(Copy, Clone)]
@@ -379,41 +380,44 @@ impl Type {
 /// Gets a type, regardless of whether it starts with `:` or not.
 /// If it *does* start with a `:`, that gets consumed and the type is returned.
 pub fn get_type(
-  tokens: &mut TokenList
+  tokens: &mut TokenList,
+  sp: &mut SourceProperties,
 ) -> Result<Type, CompilerError> {
   if tokens.peek_str() == ":" {
     tokens.skip_unchecked();
   }
-  get_expression(tokens, 0)
+  get_expression(tokens, 0, sp)
 }
 
 /// Gets a type only if the next token is `:`.
 /// Otherwise, returns None
 pub fn try_get_type(
-  tokens: &mut TokenList
+  tokens: &mut TokenList,
+  sp: &mut SourceProperties,
 ) -> Result<Option<Type>, CompilerError> {
   if tokens.peek_str() != ":" {
     Ok(None)
   } else {
     tokens.skip_unchecked(); // Skip ":"
-    Ok(Some(get_expression(tokens, 0)?))
+    Ok(Some(get_expression(tokens, 0, sp)?))
   }
 }
 
 fn parse_infix(
   mut left: Type,
   tokens: &mut TokenList,
-  precedence: u8
+  precedence: u8,
+  sp: &mut SourceProperties,
 ) -> Result<Type, CompilerError> {
   let conditional = tokens.try_skip_and_ignore_whitespace("?");
   let infix_opr = tokens.consume();
   match infix_opr.value {
     "|" => {
-      left.union(get_expression(tokens, precedence)?);
+      left.union(get_expression(tokens, precedence, sp)?);
       Ok(left)
     }
     "&" => {
-      left.intersection(get_expression(tokens, precedence)?);
+      left.intersection(get_expression(tokens, precedence, sp)?);
       Ok(left)
     }
     "is" => {
@@ -423,13 +427,13 @@ fn parse_infix(
       Ok(Type::Guard(
         // The left side of a type guard is a variable from the scope!
         left.get_single_name(),
-        Box::new(get_expression(tokens, precedence)?)
+        Box::new(get_expression(tokens, precedence, sp)?)
       ))
     }
     ":" => {
       tokens.skip_unchecked();
       tokens.ignore_whitespace();
-      let typ = get_expression(tokens, precedence)?;
+      let typ = get_expression(tokens, precedence, sp)?;
       Ok(Type::ColonDeclaration {
         spread: false,
         name: left.get_single_name(),
@@ -444,7 +448,7 @@ fn parse_infix(
       if tokens.peek_str() != "]" {
         loop {
           tokens.ignore_whitespace();
-          arguments.push(get_expression(tokens, 0)?);
+          arguments.push(get_expression(tokens, 0, sp)?);
           if tokens.peek_str() != "," {
             break;
           }
@@ -482,7 +486,7 @@ fn parse_infix(
       })
     }
     "<" => {
-      Ok(Type::WithArgs(Box::new(left), get_generics(tokens)?))
+      Ok(Type::WithArgs(Box::new(left), get_generics(tokens, sp)?))
     }
     "extends" => {
       // This could be a normal `extends` (like generics), or a conditional
@@ -491,10 +495,7 @@ fn parse_infix(
       ).unwrap().0;
 
       // Get the next type
-      let right_type = get_expression(
-        tokens,
-        extends_precedence
-      )?;
+      let right_type = get_expression(tokens, extends_precedence, sp)?;
 
       tokens.ignore_whitespace();
       if tokens.peek_str() != "?" {
@@ -506,13 +507,13 @@ fn parse_infix(
       }
       tokens.skip_unchecked(); // Skip "?"
 
-      let if_true = get_expression(tokens, extends_precedence)?;
+      let if_true = get_expression(tokens, extends_precedence, sp)?;
 
       // Skip ":"
       tokens.ignore_whitespace();
       tokens.skip(":")?;
 
-      let if_false = get_expression(tokens, extends_precedence)?;
+      let if_false = get_expression(tokens, extends_precedence, sp)?;
 
       Ok(Type::Conditional {
         cnd_left: Box::new(left),
@@ -597,13 +598,14 @@ fn types_into_params(
 
 fn parse_prefix(
   tokens: &mut TokenList,
-  precedence: u8
+  precedence: u8,
+  sp: &mut SourceProperties,
 ) -> Result<Type, CompilerError> {
   let prefix_opr = tokens.consume();
   match prefix_opr.value {
     "{" => {
       // Curly brace types (Objects or Mapped types)
-      parse_curly_braces(tokens, precedence)
+      parse_curly_braces(tokens, sp)
     }
     "[" => {
       // Tuple
@@ -612,7 +614,7 @@ fn parse_prefix(
       loop {
         let has_spread = tokens.peek_str() == "...";
         if has_spread { tokens.skip_unchecked(); }
-        inner_types.push((get_expression(tokens, 0)?, has_spread));
+        inner_types.push((get_expression(tokens, 0, sp)?, has_spread));
 
         // End on brackets
         if tokens.peek_str() == "]" { break }
@@ -631,7 +633,7 @@ fn parse_prefix(
         tokens.ignore_whitespace();
         if tokens.peek_str() == ")" { break }
 
-        paren_contents.push(get_type(tokens)?);
+        paren_contents.push(get_type(tokens, sp)?);
         if !tokens.ignore_commas() { break }
       }
       tokens.skip_unchecked(); // Skip ")"
@@ -657,7 +659,7 @@ fn parse_prefix(
         // Function
         let params = types_into_params(paren_contents, tokens)?;
         tokens.skip_unchecked();
-        let return_type = get_expression(tokens, precedence)?;
+        let return_type = get_expression(tokens, precedence, sp)?;
         Ok(Type::Function {
           generics: SmallVec::new(),
           params,
@@ -668,7 +670,7 @@ fn parse_prefix(
     }
     "-" => {
       let next_token = tokens.peek().clone();
-      let next_typ = get_expression(tokens, precedence)?;
+      let next_typ = get_expression(tokens, precedence, sp)?;
       match next_typ {
         Type::NumberLiteral(lit) => {
           Ok(Type::NumberLiteral(-lit))
@@ -684,7 +686,7 @@ fn parse_prefix(
     "new" => {
       // Makes the proceeding function a constructor
       let next_token = tokens.peek().clone();
-      let mut next_type = get_expression(tokens, precedence)?;
+      let mut next_type = get_expression(tokens, precedence, sp)?;
       match &mut next_type {
         Type::Function { is_constructor, .. } => {
           *is_constructor = true;
@@ -700,7 +702,7 @@ fn parse_prefix(
     }
     "..." => {
       // Spread for arguments
-      let mut param = get_expression(tokens, 0)?;
+      let mut param = get_expression(tokens, 0, sp)?;
       match &mut param {
         Type::ColonDeclaration { spread, .. } => {
           *spread = true;
@@ -719,13 +721,13 @@ fn parse_prefix(
     }
     "|" | "&" => {
       // Prefix symbols used as syntactic sugar are ignored
-      get_expression(tokens, precedence)
+      get_expression(tokens, precedence, sp)
     }
     "<" => {
       // Start of function with generics
-      let mut generics = get_generics(tokens)?;
+      let mut generics = get_generics(tokens, sp)?;
       let next_token = tokens.peek().clone();
-      let mut next_fn = get_expression(tokens, precedence)?;
+      let mut next_fn = get_expression(tokens, precedence, sp)?;
       match &mut next_fn {
         Type::Function { generics: inner_generics, .. } => {
           inner_generics.append(&mut generics);
@@ -741,13 +743,13 @@ fn parse_prefix(
     }
     "asserts" | "unique" | "abstract" => {
       // These types are ignored
-      get_expression(tokens, precedence)
+      get_expression(tokens, precedence, sp)
     }
     "typeof" => {
-      Ok(Type::TypeOf(Box::new(get_expression(tokens, precedence)?)))
+      Ok(Type::TypeOf(Box::new(get_expression(tokens, precedence, sp)?)))
     }
     "keyof" => {
-      Ok(Type::KeyOf(Box::new(get_expression(tokens, precedence)?)))
+      Ok(Type::KeyOf(Box::new(get_expression(tokens, precedence, sp)?)))
     }
     "infer" => {
       tokens.ignore_whitespace();
@@ -755,7 +757,7 @@ fn parse_prefix(
     }
     "readonly" => {
       Ok(Type::Readonly(
-        Box::new(get_expression(tokens, precedence)?)
+        Box::new(get_expression(tokens, precedence, sp)?)
       ))
     }
     other => {
@@ -772,7 +774,7 @@ fn parse_prefix(
 
 fn parse_curly_braces(
   tokens: &mut TokenList,
-  precedence: u8
+  sp: &mut SourceProperties,
 ) -> Result<Type, CompilerError> {
   let mut obj_parts = SmallVec::new();
   let mut kv_maps = SmallVec::new();
@@ -787,7 +789,7 @@ fn parse_curly_braces(
     }
     
     let property = if tokens.peek_str() == "[" {
-      let osbr = parse_object_square_bracket(tokens)?;
+      let osbr = parse_object_square_bracket(tokens, sp)?;
       match osbr {
         ObjectSquareBracketReturn::KVMap(kv_map) => {
           kv_maps.push(kv_map);
@@ -815,7 +817,11 @@ fn parse_curly_braces(
     tokens.ignore_whitespace();
     let property_type = if tokens.peek_str() == ":" {
       tokens.skip_unchecked(); // Skip ":"
-      get_expression(tokens, *crate::operations::COMMA_PRECEDENCE)?
+      get_expression(
+        tokens,
+        *crate::operations::COMMA_PRECEDENCE,
+        sp
+      )?
     } else {
       Type::Any
     };
@@ -838,14 +844,15 @@ fn parse_curly_braces(
 }
 
 pub fn parse_object_square_bracket(
-  tokens: &mut TokenList
+  tokens: &mut TokenList,
+  sp: &mut SourceProperties,
 ) -> Result<ObjectSquareBracketReturn, CompilerError> {
   tokens.skip("[")?;
   tokens.ignore_whitespace();
 
   if tokens.peek().typ != TokenType::Identifier {
     // Anything that isn't an identifier is a computed property
-    let computed = parser::get_expression_without_symbol_table(tokens, 0)?;
+    let computed = parser::get_expression(tokens, 0, sp)?;
     tokens.skip("]")?;
     return Ok(
       ObjectSquareBracketReturn::ComputedProp(computed)
@@ -860,14 +867,14 @@ pub fn parse_object_square_bracket(
 
   if tokens.peek_str() == "in" {
     tokens.ignore_checkpoint(checkpoint);
-    return get_kvc_complex_key(key_token, tokens);
+    return get_kvc_complex_key(key_token, tokens, sp);
   }
 
   tokens.ignore_whitespace();
   if tokens.peek_str() != ":" {
     // It's computed!
     tokens.restore_checkpoint(checkpoint);
-    let computed = parser::get_expression_without_symbol_table(tokens, 0)?;
+    let computed = parser::get_expression(tokens, 0, sp)?;
     tokens.skip("]")?;
     return Ok(
       ObjectSquareBracketReturn::ComputedProp(computed)
@@ -877,7 +884,7 @@ pub fn parse_object_square_bracket(
   }
   tokens.skip(":")?;
 
-  let key_type = get_expression(tokens, 0)?;
+  let key_type = get_expression(tokens, 0, sp)?;
 
   tokens.ignore_whitespace();
   tokens.skip("]")?;
@@ -886,7 +893,7 @@ pub fn parse_object_square_bracket(
   let is_optional = tokens.try_skip_and_ignore_whitespace("?");
   tokens.skip(":")?;
 
-  let mut value_type = get_expression(tokens, 0)?;
+  let mut value_type = get_expression(tokens, 0, sp)?;
   if is_optional {
     // Make value type also include `undefined`
     value_type.union(Type::Void);
@@ -899,18 +906,19 @@ pub fn parse_object_square_bracket(
 
 fn get_kvc_complex_key(
   key_token: Token,
-  tokens: &mut TokenList
+  tokens: &mut TokenList,
+  sp: &mut SourceProperties,
 ) -> Result<ObjectSquareBracketReturn, CompilerError> {
   let key_name = key_token.value.to_string();
   tokens.skip("in")?;
   tokens.ignore_whitespace();
-  let key_type = get_expression(tokens, 0)?;
+  let key_type = get_expression(tokens, 0, sp)?;
   tokens.ignore_whitespace();
   tokens.skip("]")?;
   tokens.ignore_whitespace();
   let is_optional = tokens.try_skip_and_ignore_whitespace("?");
   tokens.skip(":")?;
-  let mut value_type = get_expression(tokens, 0)?;
+  let mut value_type = get_expression(tokens, 0, sp)?;
   if is_optional {
     // Make value type also include `undefined`
     value_type.union(Type::Void);
@@ -926,7 +934,8 @@ fn get_kvc_complex_key(
 
 fn get_expression(
   tokens: &mut TokenList,
-  precedence: u8
+  precedence: u8,
+  sp: &mut SourceProperties,
 ) -> Result<Type, CompilerError> {
   tokens.ignore_whitespace();
 
@@ -957,7 +966,7 @@ fn get_expression(
         );
         if let Some(binding_power) = binding_power {
           // Prefix operators
-          parse_prefix(tokens, binding_power.1)?
+          parse_prefix(tokens, binding_power.1, sp)?
         } else if next.typ == TokenType::Identifier {
           // Could be a name...
           parse_name(tokens)
@@ -1007,7 +1016,7 @@ fn get_expression(
       break;
     };
 
-    left = parse_infix(left, tokens, binding_power.1)?;
+    left = parse_infix(left, tokens, binding_power.1, sp)?;
   }
 
   Ok(left)
@@ -1016,7 +1025,8 @@ fn get_expression(
 /// Gets types separated by commas
 pub fn get_comma_separated_types_until(
   tokens: &mut TokenList,
-  until_str: &[&str]
+  until_str: &[&str],
+  sp: &mut SourceProperties,
 ) -> Result<SmallVec<Type>, CompilerError> {
   let mut types = SmallVec::new();
   tokens.ignore_commas();
@@ -1024,13 +1034,13 @@ pub fn get_comma_separated_types_until(
     if until_str.contains(&tokens.peek_str()) {
       break
     }
-    types.push(get_type(tokens)?);
+    types.push(get_type(tokens, sp)?);
     if tokens.peek_str() == "=" {
       // Type defaults are ignored! They're an artifact of TypeScript's
       // older type inference, which couldn't infer a lot of the more
       // complex types.
       tokens.skip_unchecked();
-      get_type(tokens)?;
+      get_type(tokens, sp)?;
     }
     if !tokens.ignore_commas() { break }
   }
@@ -1039,21 +1049,23 @@ pub fn get_comma_separated_types_until(
 
 /// Gets generics if available, otherwise returns an empty vec
 pub fn get_optional_generics(
-  tokens: &mut TokenList
+  tokens: &mut TokenList,
+  sp: &mut SourceProperties,
 ) -> Result<SmallVec<Type>, CompilerError> {
   // Get generics
   if tokens.peek_str() != "<" { return Ok(SmallVec::new()); }
   tokens.skip_unchecked(); // Skip "<"
-  get_generics(tokens)
+  get_generics(tokens, sp)
 }
 
 /// Gets generics until it finds a ">", consuming it.
 /// Used after the first "<", as it will not consume it!
 pub fn get_generics(
-  tokens: &mut TokenList
+  tokens: &mut TokenList,
+  sp: &mut SourceProperties,
 ) -> Result<SmallVec<Type>, CompilerError> {
   let generics = get_comma_separated_types_until(
-    tokens, &[ ">", ")", ";" ]
+    tokens, &[ ">", ")", ";" ], sp
   )?;
   if !tokens.peek_str().starts_with(">") {
     return Err(CompilerError::expected(

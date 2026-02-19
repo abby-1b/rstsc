@@ -1,8 +1,5 @@
 use crate::{
-  ast::{ASTNode, ClassMember, FunctionDefinition, ImportDefinition, ObjectProperty},
-  declaration::{Declaration, DeclarationComputable, DestructurableDeclaration, DestructurePattern},
-  rest::Rest,
-  symbol_table::SymbolTable
+  ast::{ASTNode, ClassMember, FunctionDefinition, ImportDefinition, ObjectProperty}, declaration::{Declaration, DeclarationComputable, DestructurableDeclaration, DestructurePattern}, rest::Rest, source_properties::SourceProperties
 };
 
 static NO_REST: Rest = Rest::new();
@@ -14,7 +11,7 @@ struct Emitter<'a> {
   is_mid_line: bool,
   indent_level: usize,
   curr_line: usize,
-  symbol_table: &'a SymbolTable,
+  source_properties: &'a SourceProperties,
 }
 
 impl<'a> Emitter<'a> {
@@ -90,7 +87,7 @@ impl<'a> Emitter<'a> {
 }
 
 /// Emits code given an AST
-pub fn emit_code(ast: ASTNode, symbol_table: &SymbolTable, compact: bool) -> String {
+pub fn emit_code(ast: ASTNode, source_properties: &SourceProperties, compact: bool) -> String {
   let mut emitter = Emitter {
     output: String::new(),
     is_compact: compact,
@@ -98,7 +95,7 @@ pub fn emit_code(ast: ASTNode, symbol_table: &SymbolTable, compact: bool) -> Str
     is_mid_line: false,
     indent_level: 0,
     curr_line: 0,
-    symbol_table,
+    source_properties,
   };
 
   // Handle the program `Block` node
@@ -172,13 +169,13 @@ fn emit_single(
         }
         ImportDefinition::Individual { source, parts } => {
           let has_imports = parts.iter().any(|i| {
-            emitter.symbol_table.lookup(&i.name).is_some_and(|s| s.is_used)
+            emitter.source_properties.st.lookup(&i.name).is_some_and(|s| s.is_used)
           });
           if has_imports {
             emitter.out("import ", false);
             emitter.out_diff("{ ", "{", false);
             emitter.emit_vec(parts.as_ref(), |i, emitter| {
-              if emitter.symbol_table.lookup(&i.name).is_some_and(|s| !s.is_used) {
+              if emitter.source_properties.st.lookup(&i.name).is_some_and(|s| !s.is_used) {
                 return false;
               }
               emitter.out(&i.name, false);

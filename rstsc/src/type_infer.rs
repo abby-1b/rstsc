@@ -1,10 +1,6 @@
 
 use crate::{
-  ast::{ASTNode, ObjectProperty},
-  declaration::DeclarationTyped,
-  small_vec::SmallVec,
-  symbol_table::SymbolTable,
-  types::{CustomDouble, Type}
+  ast::{ASTNode, ObjectProperty}, declaration::DeclarationTyped, small_vec::SmallVec, source_properties::SourceProperties, types::{CustomDouble, Type}
 };
 
 pub fn widen_type(typ: &Type) -> Type {
@@ -25,9 +21,12 @@ pub fn widen_type(typ: &Type) -> Type {
 
 // Helper rule functions
 
-fn recurse_all(nodes: &SmallVec<ASTNode>, st: &mut SymbolTable) {
+fn recurse_all(
+  nodes: &SmallVec<ASTNode>,
+  sp: &mut SourceProperties,
+) {
   for node in nodes.iter() {
-    infer_types_with_symbol_table(node, st);
+    infer_types(node, sp);
   }
 }
 
@@ -118,17 +117,20 @@ fn index_result(arr: &Type, index: &Type) -> Type {
 
 // Main inference functions
 
-pub fn infer_types_with_symbol_table(node: &ASTNode, st: &mut SymbolTable) -> Type {
+pub fn infer_types(
+  node: &ASTNode,
+  sp: &mut SourceProperties,
+) -> Type {
   use ASTNode::*;
 
   match node {
     Block { nodes } => {
-      recurse_all(nodes, st);
+      recurse_all(nodes, sp);
       Type::Void
     },
 
     ExprIdentifier { name } => {
-      if let Some(symbol) = st.lookup(name) {
+      if let Some(symbol) = sp.st.lookup(name) {
         symbol.typ.clone()
       } else {
         Type::Unknown
@@ -138,17 +140,16 @@ pub fn infer_types_with_symbol_table(node: &ASTNode, st: &mut SymbolTable) -> Ty
     ExprStrLiteral { string } => Type::StringLiteral(string.clone()),
     ExprRegexLiteral { .. } => Type::RegExp,
     ExprTemplateLiteral { .. } => Type::String,
-    ExprFunctionCall { callee, generics, arguments } => Type::Unknown,
     ExprBoolLiteral { value } => Type::BooleanLiteral(*value),
 
     ExprIndexing { callee, property } => index_result(
-      &infer_types_with_symbol_table(callee, st),
-      &infer_types_with_symbol_table(property, st),
+      &infer_types(callee, sp),
+      &infer_types(property, sp),
     ),
     ExprTernary { condition, if_true, if_false } => {
-      let cond_t = infer_types_with_symbol_table(condition, st);
-      let a = infer_types_with_symbol_table(if_true, st);
-      let b = infer_types_with_symbol_table(if_false, st);
+      let cond_t = infer_types(condition, sp);
+      let a = infer_types(if_true, sp);
+      let b = infer_types(if_false, sp);
       match cond_t {
         Type::BooleanLiteral(true) => a,
         Type::BooleanLiteral(false) => b,
@@ -157,20 +158,20 @@ pub fn infer_types_with_symbol_table(node: &ASTNode, st: &mut SymbolTable) -> Ty
     },
 
     PrefixOpr { opr, expr } => {
-      let t = infer_types_with_symbol_table(expr, st);
+      let t = infer_types(expr, sp);
       let r = prefix_result(opr.as_str(), t);
       r
     },
 
     InfixOpr { left, opr, right } => {
-      let l = infer_types_with_symbol_table(left, st);
-      let r = infer_types_with_symbol_table(right, st);
+      let l = infer_types(left, sp);
+      let r = infer_types(right, sp);
       let res = infix_result(opr.as_str(), l, r);
       res
     },
 
     PostfixOpr { expr, opr } => {
-      let t = infer_types_with_symbol_table(expr, st);
+      let t = infer_types(expr, sp);
       let r = postfix_result(opr.as_str(), t);
       r
     },
@@ -181,7 +182,7 @@ pub fn infer_types_with_symbol_table(node: &ASTNode, st: &mut SymbolTable) -> Ty
       } else {
         let mut last: Option<Type> = None;
         for n in nodes.iter() {
-          last = Some(infer_types_with_symbol_table(n, st));
+          last = Some(infer_types(n, sp));
         }
         last.unwrap()
       }
@@ -190,7 +191,7 @@ pub fn infer_types_with_symbol_table(node: &ASTNode, st: &mut SymbolTable) -> Ty
     Array { nodes } => {
       let mut types = SmallVec::new();
       for n in nodes {
-        types.push(infer_types_with_symbol_table(n, st));
+        types.push(infer_types(n, sp));
       }
       Type::union_from(&types)
     },
@@ -200,7 +201,7 @@ pub fn infer_types_with_symbol_table(node: &ASTNode, st: &mut SymbolTable) -> Ty
       for p in properties {
         match p {
           ObjectProperty::Property { computed, key, value } => {
-            let typ = infer_types_with_symbol_table(value, st);
+            let typ = infer_types(value, sp);
             match (*computed, key) {
               (false, ExprIdentifier { name }) => parts.push(
                 DeclarationTyped::named(name.clone(), typ)
@@ -211,10 +212,27 @@ pub fn infer_types_with_symbol_table(node: &ASTNode, st: &mut SymbolTable) -> Ty
             }
           },
           ObjectProperty::Rest { argument } => {
-            // TODO: rest type inference
+            let arg_type = infer_types(argument, sp);
+            match arg_type {
+              Type::Object { key_value: ref kv, parts: ref ps } => {
+                for part in ps.iter() {
+                  parts.push(part.clone());
+                }
+              },
+              _ => {
+                parts.push(DeclarationTyped::computed(argument.clone(), arg_type));
+              }
+            }
           },
           ObjectProperty::Shorthand { key } => {
-            // TODO: shorthand type inference
+            // Look up the variable in the symbol table; its type becomes the
+            // property type (falls back to Unknown if the symbol isn't found)
+            let typ = if let Some(symbol) = sp.st.lookup(key) {
+              symbol.typ.clone()
+            } else {
+              Type::Unknown
+            };
+            parts.push(DeclarationTyped::named(key.clone(), typ));
           },
         }
       }
@@ -223,7 +241,7 @@ pub fn infer_types_with_symbol_table(node: &ASTNode, st: &mut SymbolTable) -> Ty
 
     StatementReturn { value } => {
       if let Some(e) = value {
-        infer_types_with_symbol_table(e, st)
+        infer_types(e, sp)
       } else {
         Type::Void
       }
@@ -234,7 +252,10 @@ pub fn infer_types_with_symbol_table(node: &ASTNode, st: &mut SymbolTable) -> Ty
   }
 }
 
-fn infer_return_type(body: &ASTNode, st: &mut SymbolTable) -> Type {
+fn infer_return_type(
+  body: &ASTNode,
+  sp: &mut SourceProperties
+) -> Type {
   match body {
     ASTNode::Block { nodes } => {
       // find returns. if none, void
@@ -242,18 +263,18 @@ fn infer_return_type(body: &ASTNode, st: &mut SymbolTable) -> Type {
       for stmt in nodes.iter() {
         match stmt {
           ASTNode::StatementReturn { value } => {
-            let t = if let Some(e) = value { infer_types_with_symbol_table(e, st) } else { Type::Void };
+            let t = if let Some(e) = value { infer_types(e, sp) } else { Type::Void };
             if let Some(prev) = acc.as_mut() { prev.union(t); } else { acc = Some(t); }
           },
           ASTNode::Block { .. } | ASTNode::ExprFunctionCall { .. } | ASTNode::InfixOpr { .. } | ASTNode::PrefixOpr { .. } | ASTNode::PostfixOpr { .. }=> {
             // still walk nested statements to widen/modify symbol table types
-            infer_types_with_symbol_table(stmt, st);
+            infer_types(stmt, sp);
           },
-          _ => { infer_types_with_symbol_table(stmt, st); }
+          _ => { infer_types(stmt, sp); }
         }
       }
       acc.unwrap_or(Type::Void)
     }
-    _ => infer_types_with_symbol_table(body, st),
+    _ => infer_types(body, sp),
   }
 }

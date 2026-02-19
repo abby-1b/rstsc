@@ -4,19 +4,10 @@ use crate::{
     ASTNode, ArrowFunctionDefinition, ClassDefinition, ClassMember,
     EnumDeclaration, FunctionDefinition, GetterSetter, ImportDefinition,
     IndividualImport, InterfaceDeclaration, ObjectProperty, TryCatchFinally
-  },
-  ast_common::{ACCESSIBILITY_MODIFIERS, MODIFIERS, Modifier, ModifierList, VariableDefType},
-  declaration::{
+  }, ast_common::{ACCESSIBILITY_MODIFIERS, MODIFIERS, Modifier, ModifierList, VariableDefType}, declaration::{
     ComputableDeclarationName, Declaration, DeclarationComputable,
     DeclarationTyped, DestructurableDeclaration, DestructurePattern
-  },
-  error_type::CompilerError,
-  operations::{ARROW_FN_PRECEDENCE, COMMA_PRECEDENCE, ExprType, TEMPLATE_LITERAL_TAG_PRECEDENCE, get_operator_binding_power},
-  rest::Rest, small_vec::SmallVec,
-  symbol_table::{Symbol, SymbolOrigin, SymbolTable},
-  tokenizer::{Token, TokenList, TokenType},
-  type_infer::infer_types_with_symbol_table,
-  types::{
+  }, error_type::CompilerError, operations::{ARROW_FN_PRECEDENCE, COMMA_PRECEDENCE, ExprType, TEMPLATE_LITERAL_TAG_PRECEDENCE, get_operator_binding_power}, rest::Rest, small_vec::SmallVec, source_properties::SourceProperties, symbol_table::{Symbol, SymbolOrigin}, tokenizer::{Token, TokenList, TokenType}, type_infer::infer_types, types::{
     ObjectSquareBracketReturn, Type, get_comma_separated_types_until,
     get_generics, get_optional_generics, get_type, parse_object_square_bracket,
     try_get_type
@@ -55,13 +46,13 @@ pub static DISALLOWED_VARIABLE_NAMES: phf::Set<&'static str> = phf_set! {
 /// Parses a single block. Consumes the ending token, but not the starting token.
 pub fn get_block(
   tokens: &mut TokenList,
-  symbol_table: &mut SymbolTable
+  sp: &mut SourceProperties
 ) -> Result<ASTNode, CompilerError> {
   let mut nodes = SmallVec::new();
 
   // Go through the tokens list
   loop {
-    nodes.push(get_single_statement(tokens, symbol_table)?);
+    nodes.push(get_single_statement(tokens, sp)?);
 
     if tokens.peek_str() == ";" { tokens.skip_unchecked(); continue; }
     if tokens.is_done() { break; }
@@ -84,7 +75,7 @@ pub fn get_block(
 /// reached (eg. `([{`), calls the corresponding function for said group.
 fn get_single_statement<'a, 'b>(
   tokens: &'b mut TokenList,
-  symbol_table: &mut SymbolTable
+  sp: &mut SourceProperties
 ) -> Result<ASTNode, CompilerError> where 'a: 'b {
   tokens.ignore_whitespace();
   if tokens.is_done() {
@@ -92,21 +83,21 @@ fn get_single_statement<'a, 'b>(
   }
   
   let ret = match tokens.peek_str() {
-    "{" => handle_block(tokens, symbol_table)?.unwrap(),
-    "var" | "let" | "const" => handle_var(tokens, symbol_table)?.unwrap(),
-    "if" | "while" | "for" | "switch" => handle_control_flow(tokens, symbol_table)?.unwrap(),
-    "function" => handle_function_declaration(tokens, symbol_table)?.unwrap(),
-    "class" => handle_class_declaration(tokens, symbol_table)?.unwrap(),
-    "import" => handle_import(tokens, symbol_table)?.unwrap(),
+    "{" => handle_block(tokens, sp)?.unwrap(),
+    "var" | "let" | "const" => handle_var(tokens, sp)?.unwrap(),
+    "if" | "while" | "for" | "switch" => handle_control_flow(tokens, sp)?.unwrap(),
+    "function" => handle_function_declaration(tokens, sp)?.unwrap(),
+    "class" => handle_class_declaration(tokens, sp)?.unwrap(),
+    "import" => handle_import(tokens, sp)?.unwrap(),
     "export" | "async" | "static" | "public" | "private" | "protected" | "readonly" | "abstract" | "override" => 
-        handle_modifiers(tokens, symbol_table)?.unwrap(),
-    "return" | "break" | "continue" | "throw" => handle_other_statements(tokens, symbol_table)?.unwrap(),
-    "type" => handle_type_declaration(tokens, symbol_table)?.unwrap(),
-    "enum" => handle_enum(tokens, false, symbol_table)?.unwrap(),
-    "interface" => handle_interface(tokens, symbol_table)?.unwrap(),
-    "try" => handle_try_catch(tokens, symbol_table)?.unwrap(),
-    "declare" => handle_declare(tokens, symbol_table)?.unwrap(),
-    _ => handle_expression(tokens, symbol_table)?,
+        handle_modifiers(tokens, sp)?.unwrap(),
+    "return" | "break" | "continue" | "throw" => handle_other_statements(tokens, sp)?.unwrap(),
+    "type" => handle_type_declaration(tokens, sp)?.unwrap(),
+    "enum" => handle_enum(tokens, false, sp)?.unwrap(),
+    "interface" => handle_interface(tokens, sp)?.unwrap(),
+    "try" => handle_try_catch(tokens, sp)?.unwrap(),
+    "declare" => handle_declare(tokens, sp)?.unwrap(),
+    _ => handle_expression(tokens, sp)?,
   };
 
   tokens.ignore_whitespace();
@@ -120,19 +111,19 @@ fn get_single_statement<'a, 'b>(
 /// Handles blocks (defined as a non-expression `{` token)
 fn handle_block(
   tokens: &mut TokenList,
-  symbol_table: &mut SymbolTable,
+  sp: &mut SourceProperties
 ) -> Result<Option<ASTNode>, CompilerError> {
   if tokens.peek_str() != "{" {
     return Ok(None);
   }
   tokens.skip_unchecked(); // Skip "{"
-  Ok(Some(get_block(tokens, symbol_table)?))
+  Ok(Some(get_block(tokens, sp)?))
 }
 
 /// Handles variable initialization
 fn handle_var<'a, 'b>(
   tokens: &'b mut TokenList,
-  symbol_table: &mut SymbolTable,
+  sp: &mut SourceProperties
 ) -> Result<Option<ASTNode>, CompilerError> where 'a: 'b {
   if !VARIABLE_DECLARATIONS.contains(&tokens.peek_str()) {
     return Ok(None);
@@ -142,11 +133,11 @@ fn handle_var<'a, 'b>(
 
   if matches!(def_type, VariableDefType::Const) && tokens.peek_str() == "enum" {
     // Const enums
-    return handle_enum(tokens, true, symbol_table);
+    return handle_enum(tokens, true, sp);
   }
 
   // Get the variable definitions
-  let (defs, _) = get_multiple_destructurable_declarations(tokens, false, symbol_table)?;
+  let (defs, _) = get_multiple_destructurable_declarations(tokens, false, sp)?;
 
   Ok(Some(ASTNode::VariableDeclaration {
     modifiers: ModifierList::new(),
@@ -176,30 +167,30 @@ fn get_variable_def_type<'b>(
 /// with or without a value. Does NOT handle rest parameters!
 fn get_declaration<'a, 'b>(
   tokens: &'b mut TokenList,
-  symbol_table: &mut SymbolTable,
+  sp: &mut SourceProperties,
 ) -> Result<Declaration, CompilerError> where 'a: 'b {
   tokens.ignore_whitespace();
   let name = tokens.consume_type(TokenType::Identifier)?.value.to_owned();
-  let (typ, value) = get_declaration_after_name(tokens, symbol_table)?;
+  let (typ, value) = get_declaration_after_name(tokens, sp)?;
   
   // Create symbol for this declaration
   let symbol = Symbol::new(
     name.clone(),
     SymbolOrigin::Variable,
     if let Some(value) = &value {
-      infer_types_with_symbol_table(&value, symbol_table)
+      infer_types(&value, sp)
     } else {
       Type::Unknown
     }
   );
-  symbol_table.add_symbol(symbol)?;
+  sp.st.add_symbol(symbol)?;
   
   Ok(Declaration::new(name, typ, value))
 }
 
 fn get_declaration_after_name<'a, 'b>(
   tokens: &'b mut TokenList,
-  symbol_table: &mut SymbolTable,
+  sp: &mut SourceProperties,
 ) -> Result<(Type, Option<ASTNode>), CompilerError> where 'a: 'b {
   let typ = if tokens.try_skip_and_ignore_whitespace("?") {
     if tokens.peek_str() != ":" {
@@ -208,7 +199,7 @@ fn get_declaration_after_name<'a, 'b>(
         tokens.consume(), tokens
       ))
     }
-    let mut typ = get_type(tokens)?;
+    let mut typ = get_type(tokens, sp)?;
     typ.intersection(Type::Void);
     Some(typ)
   } else if tokens.try_skip_and_ignore_whitespace("!") {
@@ -218,15 +209,15 @@ fn get_declaration_after_name<'a, 'b>(
         tokens.consume(), tokens
       ))
     }
-    Some(get_type(tokens)?)
+    Some(get_type(tokens, sp)?)
   } else {
-    try_get_type(tokens)?
+    try_get_type(tokens, sp)?
   }.unwrap_or(Type::Unknown);
 
   tokens.ignore_whitespace();
   let value = if tokens.peek_str() == "=" {
     tokens.skip_unchecked();
-    Some(get_expression(tokens, *crate::operations::COMMA_PRECEDENCE, symbol_table)?)
+    Some(get_expression(tokens, *crate::operations::COMMA_PRECEDENCE, sp)?)
   } else {
     None
   };
@@ -236,10 +227,10 @@ fn get_declaration_after_name<'a, 'b>(
 
 fn get_destructurable_declaration<'a, 'b>(
   tokens: &'b mut TokenList,
-  symbol_table: &mut SymbolTable,
+  sp: &mut SourceProperties,
 ) -> Result<DestructurableDeclaration, CompilerError> where 'a: 'b {
-  let name = parse_destructure_pattern(tokens, false, symbol_table)?;
-  let (typ, initializer) = get_declaration_after_name(tokens, symbol_table)?;
+  let name = parse_destructure_pattern(tokens, false, sp)?;
+  let (typ, initializer) = get_declaration_after_name(tokens, sp)?;
   
   // Create symbol for identifier patterns
   if let DestructurePattern::Identifier { name: identifier_name } = &name {
@@ -247,12 +238,12 @@ fn get_destructurable_declaration<'a, 'b>(
       identifier_name.clone(),
       SymbolOrigin::Variable,
       if let Some(init) = &initializer {
-        infer_types_with_symbol_table(init, symbol_table)
+        infer_types(init, sp)
       } else {
         Type::Unknown
       }
     );
-    symbol_table.add_symbol(symbol)?;
+    sp.st.add_symbol(symbol)?;
   }
   
   Ok(DestructurableDeclaration {
@@ -266,14 +257,14 @@ fn get_destructurable_declaration<'a, 'b>(
 fn get_multiple_destructurable_declarations<'a, 'b>(
   tokens: &'b mut TokenList,
   allow_rest: bool,
-  symbol_table: &mut SymbolTable,
+  sp: &mut SourceProperties,
 ) -> Result<(SmallVec<DestructurableDeclaration>, Rest), CompilerError> where 'a: 'b {
   tokens.ignore_whitespace();
   let mut declarations: SmallVec<DestructurableDeclaration> = SmallVec::new();
   let mut rest = Rest::new();
   while ![ ";", ")" ].contains(&tokens.peek_str()) {
     rest.try_set(tokens, allow_rest)?;
-    declarations.push(get_destructurable_declaration(tokens, symbol_table)?);
+    declarations.push(get_destructurable_declaration(tokens, sp)?);
     if !tokens.ignore_commas() { break }
   }
   Ok((declarations, rest))
@@ -282,7 +273,7 @@ fn get_multiple_destructurable_declarations<'a, 'b>(
 fn parse_destructure_pattern(
   tokens: &mut TokenList,
   capture_initializer: bool,
-  symbol_table: &mut SymbolTable,
+  sp: &mut SourceProperties,
 ) -> Result<DestructurePattern, CompilerError> {
   tokens.ignore_whitespace();
   let pattern = match tokens.peek_str() {
@@ -301,7 +292,7 @@ fn parse_destructure_pattern(
             ))
           }
           tokens.skip_unchecked();
-          spread = Some(Box::new(parse_destructure_pattern(tokens, false, symbol_table)?));
+          spread = Some(Box::new(parse_destructure_pattern(tokens, false, sp)?));
         } else if tokens.peek_str() == "," {
           if spread.is_some() {
             return Err(CompilerError::new(
@@ -319,7 +310,7 @@ fn parse_destructure_pattern(
               tokens.consume(), tokens
             ))
           }
-          elements.push(parse_destructure_pattern(tokens, true, symbol_table)?);
+          elements.push(parse_destructure_pattern(tokens, true, sp)?);
         }
         tokens.ignore_whitespace();
         if tokens.peek_str() == "," {
@@ -345,7 +336,7 @@ fn parse_destructure_pattern(
             ))
           }
           tokens.skip_unchecked();
-          rest = Some(Box::new(parse_destructure_pattern(tokens, false, symbol_table)?));
+          rest = Some(Box::new(parse_destructure_pattern(tokens, false, sp)?));
           if tokens.peek_str() == "=" {
             return Err(CompilerError::new(
               "A rest element cannot have an initializer".to_owned(),
@@ -367,7 +358,7 @@ fn parse_destructure_pattern(
               tokens.consume(), tokens
             ))
           }
-          let property = parse_destructure_pattern(tokens, false, symbol_table)?;
+          let property = parse_destructure_pattern(tokens, false, sp)?;
           let needs_alias = match property {
             DestructurePattern::NumericProperty { .. } => true,
             DestructurePattern::StringProperty { .. } => true,
@@ -375,7 +366,7 @@ fn parse_destructure_pattern(
           };
           let alias = if tokens.peek_str() == ":" {
             tokens.skip_unchecked();
-            parse_destructure_pattern(tokens, false, symbol_table)?
+            parse_destructure_pattern(tokens, false, sp)?
           } else if needs_alias {
             return Err(CompilerError::new(
               "Expected `:`".to_owned(),
@@ -384,7 +375,7 @@ fn parse_destructure_pattern(
           } else {
             property.clone()
           };
-          let alias = try_parse_destructure_pattern_initializer(tokens, alias, symbol_table)?;
+          let alias = try_parse_destructure_pattern_initializer(tokens, alias, sp)?;
           tokens.ignore_whitespace();
           properties.push((property, alias));
         }
@@ -415,7 +406,7 @@ fn parse_destructure_pattern(
   };
 
   if capture_initializer {
-    try_parse_destructure_pattern_initializer(tokens, pattern, symbol_table)
+    try_parse_destructure_pattern_initializer(tokens, pattern, sp)
   } else {
     Ok(pattern)
   }
@@ -425,13 +416,13 @@ fn parse_destructure_pattern(
 fn try_parse_destructure_pattern_initializer(
   tokens: &mut TokenList,
   curr_pattern: DestructurePattern,
-  symbol_table: &mut SymbolTable,
+  sp: &mut SourceProperties,
 ) -> Result<DestructurePattern, CompilerError> {
   if tokens.peek_str() == "=" {
     tokens.skip_unchecked();
     Ok(DestructurePattern::WithInitializer {
       pattern: Box::new(curr_pattern),
-      initializer: get_expression(tokens, *COMMA_PRECEDENCE, symbol_table)?
+      initializer: get_expression(tokens, *COMMA_PRECEDENCE, sp)?
     })
   } else {
     Ok(curr_pattern)
@@ -441,7 +432,7 @@ fn try_parse_destructure_pattern_initializer(
 /// Handles control flow, like `if`, `while`, and `for`
 fn handle_control_flow(
   tokens: &mut TokenList,
-  symbol_table: &mut SymbolTable,
+  sp: &mut SourceProperties,
 ) -> Result<Option<ASTNode>, CompilerError> {
   const CONTROL_FLOW: &[&str] = &[ "if", "while", "for", "switch" ];
   if !CONTROL_FLOW.contains(&tokens.peek_str()) {
@@ -455,11 +446,11 @@ fn handle_control_flow(
     "if" | "while" => {
       // Get condition
       tokens.skip("(")?;
-      let condition = get_expression(tokens, 0, symbol_table)?;
+      let condition = get_expression(tokens, 0, sp)?;
       tokens.skip_with_whitespace(")")?;
       
       // Get body
-      let body = get_single_statement(tokens, symbol_table)?;
+      let body = get_single_statement(tokens, sp)?;
 
       // Add to parent
       if control_flow_type == "if" {
@@ -468,7 +459,7 @@ fn handle_control_flow(
 
         let alternate = if tokens.peek_str() == "else" {
           tokens.skip_unchecked();
-          Some(Box::new(get_single_statement(tokens, symbol_table)?))
+          Some(Box::new(get_single_statement(tokens, sp)?))
         } else {
           None
         };
@@ -484,11 +475,11 @@ fn handle_control_flow(
         }
       }
     },
-    "for" => handle_for_loop(tokens, symbol_table)?,
+    "for" => handle_for_loop(tokens, sp)?,
     "switch" => {
       // Get condition
       tokens.skip("(")?;
-      let condition = get_expression(tokens, 0, symbol_table)?;
+      let condition = get_expression(tokens, 0, sp)?;
       tokens.skip_with_whitespace(")")?;
       tokens.skip("{")?;
 
@@ -499,11 +490,11 @@ fn handle_control_flow(
         tokens.ignore_whitespace();
         if tokens.peek_str() == "case" {
           tokens.skip_unchecked();
-          let case_condition = get_expression(tokens, 0, symbol_table)?;
+          let case_condition = get_expression(tokens, 0, sp)?;
           tokens.skip_with_whitespace(":")?;
           let mut case_body = SmallVec::new();
           while !tokens.is_done() && ![ "case", "default", "}" ].contains(&tokens.peek_str()) {
-            case_body.push(get_single_statement(tokens, symbol_table)?);
+            case_body.push(get_single_statement(tokens, sp)?);
             tokens.ignore_whitespace();
           }
           cases.push((case_condition, case_body));
@@ -519,7 +510,7 @@ fn handle_control_flow(
           tokens.skip(":")?;
           let mut default_body = SmallVec::new();
           while !tokens.is_done() && ![ "case", "}" ].contains(&tokens.peek_str()) {
-            default_body.push(get_single_statement(tokens, symbol_table)?);
+            default_body.push(get_single_statement(tokens, sp)?);
             tokens.ignore_whitespace();
           }
           default = Some(default_body);
@@ -545,7 +536,7 @@ fn handle_control_flow(
 
 fn handle_for_loop(
   tokens: &mut TokenList,
-  symbol_table: &mut SymbolTable,
+  sp: &mut SourceProperties,
 ) -> Result<ASTNode, CompilerError> {
   tokens.skip("(")?;
   tokens.ignore_whitespace();
@@ -553,22 +544,22 @@ fn handle_for_loop(
     ASTNode::Empty
   } else if VARIABLE_DECLARATIONS.contains(&tokens.peek_str()) {
     let def_typ = get_variable_def_type(tokens)?;
-    let defs = get_multiple_destructurable_declarations(tokens, false, symbol_table)?.0;
+    let defs = get_multiple_destructurable_declarations(tokens, false, sp)?.0;
     ASTNode::VariableDeclaration {
       modifiers: ModifierList::new(),
       def_type: def_typ,
       defs
     }
   } else {
-    get_expression(tokens, 0, symbol_table)?
+    get_expression(tokens, 0, sp)?
   };
     tokens.ignore_whitespace();
     Ok(if tokens.try_skip_and_ignore_whitespace(";") {
-    let condition = get_single_statement(tokens, symbol_table)?;
-    let update = get_single_statement(tokens, symbol_table)?;
+    let condition = get_single_statement(tokens, sp)?;
+    let update = get_single_statement(tokens, sp)?;
 
     tokens.skip(")")?;
-    let body = get_single_statement(tokens, symbol_table)?;
+    let body = get_single_statement(tokens, sp)?;
 
     ASTNode::StatementFor {
       init: Box::new(init),
@@ -577,10 +568,10 @@ fn handle_for_loop(
       body: Box::new(body)
     }
   } else if tokens.try_skip_and_ignore_whitespace("of") {
-    let expression = get_expression(tokens, 0, symbol_table)?;
+    let expression = get_expression(tokens, 0, sp)?;
 
     tokens.skip(")")?;
-    let body = get_single_statement(tokens, symbol_table)?;
+    let body = get_single_statement(tokens, sp)?;
 
     ASTNode::StatementForOf {
       init: Box::new(init),
@@ -588,10 +579,10 @@ fn handle_for_loop(
       body: Box::new(body)
     }
   } else if tokens.try_skip_and_ignore_whitespace("in") {
-    let expression = get_expression(tokens, 0, symbol_table)?;
+    let expression = get_expression(tokens, 0, sp)?;
     
     tokens.skip(")")?;
-    let body = get_single_statement(tokens, symbol_table)?;
+    let body = get_single_statement(tokens, sp)?;
 
     ASTNode::StatementForIn {
       init: Box::new(init),
@@ -615,7 +606,7 @@ fn handle_for_loop(
 /// Handles import statements
 fn handle_import(
   tokens: &mut TokenList,
-  symbol_table: &mut SymbolTable,
+  sp: &mut SourceProperties,
 ) -> Result<Option<ASTNode>, CompilerError> {
   if tokens.peek_str() != "import" {
     return Ok(None);
@@ -626,7 +617,7 @@ fn handle_import(
 
   if tokens.try_skip_and_ignore_whitespace("(") {
     tokens.restore_checkpoint(checkpoint);
-    return Ok(Some(get_expression(tokens, 0, symbol_table)?));
+    return Ok(Some(get_expression(tokens, 0, sp)?));
   } else {
     tokens.ignore_checkpoint(checkpoint);
   }
@@ -650,7 +641,7 @@ fn handle_import(
     tokens.skip_with_whitespace("as")?;
     has_distinction += 1;
     let name = tokens.consume_type(TokenType::Identifier)?.value.to_owned();
-    symbol_table.add_symbol(Symbol::new(
+    sp.st.add_symbol(Symbol::new(
       name.clone(),
       SymbolOrigin::Import,
       Type::Unknown
@@ -676,7 +667,7 @@ fn handle_import(
       tokens.ignore_whitespace();
       let _ = tokens.try_skip_and_ignore_whitespace(",");
       let final_name = alias.clone().unwrap_or(name.clone());
-      symbol_table.add_symbol(Symbol::new(
+      sp.st.add_symbol(Symbol::new(
         final_name,
         SymbolOrigin::Import,
         Type::Unknown
@@ -714,7 +705,7 @@ fn handle_import(
 /// Handles `return`, `break`, `continue`, and `throw`
 fn handle_other_statements(
   tokens: &mut TokenList,
-  symbol_table: &mut SymbolTable,
+  sp: &mut SourceProperties,
 ) -> Result<Option<ASTNode>, CompilerError> {
   const STATEMENT_NAMES: &[&str] = &[
     "return",
@@ -730,7 +721,7 @@ fn handle_other_statements(
   tokens.ignore_whitespace();
 
   let value = if tokens.peek_str() != ";" {
-    Some(Box::new(get_expression(tokens, 0, symbol_table)?))
+    Some(Box::new(get_expression(tokens, 0, sp)?))
   } else {
     None
   };
@@ -746,7 +737,7 @@ fn handle_other_statements(
 
 fn handle_function_declaration<'a, 'b>(
   tokens: &'b mut TokenList,
-  symbol_table: &mut SymbolTable,
+  sp: &mut SourceProperties,
 ) -> Result<Option<ASTNode>, CompilerError> where 'a: 'b {
   if tokens.peek_str() != "function" {
     return Ok(None);
@@ -765,11 +756,7 @@ fn handle_function_declaration<'a, 'b>(
   };
 
   Ok(Some(ASTNode::FunctionDefinition {
-    inner: Box::new(get_function_after_name(
-      tokens,
-      name,
-      symbol_table
-    )?)
+    inner: Box::new(get_function_after_name(tokens, name, sp)?)
   }))
 }
 
@@ -778,21 +765,21 @@ fn handle_function_declaration<'a, 'b>(
 fn get_function_after_name<'a, 'b>(
   tokens: &'b mut TokenList,
   name: Option<String>,
-  symbol_table: &mut SymbolTable,
+  sp: &mut SourceProperties,
 ) -> Result<FunctionDefinition, CompilerError> where 'a: 'b {
   tokens.ignore_whitespace();
 
-  let generics = get_optional_generics(tokens)?;
+  let generics = get_optional_generics(tokens, sp)?;
   
   // Get parameters and return type
   tokens.ignore_whitespace();
   tokens.skip("(")?;
 
   // Create a new symbol table for function parameters and body
-  symbol_table.up_scope();
-  let params = get_multiple_destructurable_declarations(tokens, true, symbol_table)?;
+  sp.st.up_scope();
+  let params = get_multiple_destructurable_declarations(tokens, true, sp)?;
   tokens.skip(")")?;
-  let return_type = try_get_type(tokens)?;
+  let return_type = try_get_type(tokens, sp)?;
 
   // Get body
   tokens.ignore_whitespace();
@@ -801,10 +788,10 @@ fn get_function_after_name<'a, 'b>(
     None
   } else {
     tokens.skip("{")?;
-    Some(get_block(tokens, symbol_table)?)
+    Some(get_block(tokens, sp)?)
   };
 
-  symbol_table.down_scope();
+  sp.st.down_scope();
 
   Ok(FunctionDefinition {
     modifiers: ModifierList::new(),
@@ -821,7 +808,7 @@ fn get_function_after_name<'a, 'b>(
 fn get_constructor_after_name<'a, 'b>(
   tokens: &'b mut TokenList,
   members: &mut SmallVec<ClassMember>,
-  symbol_table: &mut SymbolTable,
+  sp: &mut SourceProperties,
 ) -> Result<FunctionDefinition, CompilerError> where 'a: 'b {
   tokens.ignore_whitespace();
 
@@ -843,7 +830,7 @@ fn get_constructor_after_name<'a, 'b>(
     rest.try_set(tokens, true)?;
     if ACCESSIBILITY_MODIFIERS.contains(&tokens.peek_str()) {
       let modifiers = fetch_modifier_list(tokens);
-      let mut declaration = get_declaration(tokens, symbol_table)?;
+      let mut declaration = get_declaration(tokens, sp)?;
       params.push(declaration.clone().into());
       declaration.clear_value();
       members.push(ClassMember::Property(
@@ -859,7 +846,7 @@ fn get_constructor_after_name<'a, 'b>(
         right: Box::new(ASTNode::ExprIdentifier { name: declaration.name().clone() })
       })
     } else {
-      params.push(get_destructurable_declaration(tokens, symbol_table)?);
+      params.push(get_destructurable_declaration(tokens, sp)?);
     }
     tokens.ignore_whitespace();
     if !tokens.try_skip_and_ignore_whitespace(",") {
@@ -870,7 +857,7 @@ fn get_constructor_after_name<'a, 'b>(
 
   // Get return type
   tokens.ignore_whitespace();
-  let return_type = try_get_type(tokens)?;
+  let return_type = try_get_type(tokens, sp)?;
 
   // Get body
   tokens.ignore_whitespace();
@@ -879,7 +866,7 @@ fn get_constructor_after_name<'a, 'b>(
     None
   } else {
     tokens.skip("{")?;
-    let mut body = get_block(tokens, symbol_table)?;
+    let mut body = get_block(tokens, sp)?;
     match &mut body {
       ASTNode::Block { nodes } => {
         nodes.append_front(&mut set_properties);
@@ -907,17 +894,17 @@ fn get_constructor_after_name<'a, 'b>(
 
 fn handle_class_declaration<'a, 'b>(
   tokens: &'b mut TokenList,
-  symbol_table: &mut SymbolTable,
+  sp: &mut SourceProperties,
 ) -> Result<Option<ASTNode>, CompilerError> where 'a: 'b {
   if tokens.peek_str() != "class" {
     return Ok(None);
   }
-  Ok(Some(get_class_expression(tokens, symbol_table)?))
+  Ok(Some(get_class_expression(tokens, sp)?))
 }
 
 fn get_class_expression<'a, 'b>(
   tokens: &'b mut TokenList,
-  symbol_table: &mut SymbolTable,
+  sp: &mut SourceProperties,
 ) -> Result<ASTNode, CompilerError> where 'a: 'b {
   tokens.skip_unchecked(); // Skip "class"
   tokens.ignore_whitespace();
@@ -927,7 +914,7 @@ fn get_class_expression<'a, 'b>(
     generics,
     extends,
     implements
-  } = get_typed_header(tokens, false)?;
+  } = get_typed_header(tokens, false, sp)?;
   let extends = match extends.len() {
     len if len > 1 => return Err(CompilerError::new(
       "Classes can only extend once!".to_owned(),
@@ -939,7 +926,7 @@ fn get_class_expression<'a, 'b>(
 
   // Mark import
   if let Some(Type::Custom(name)) = &extends {
-    symbol_table.mark_used_string(name);
+    sp.st.mark_used_string(name);
   }
 
   // Classes change the way things are parsed!
@@ -962,12 +949,12 @@ fn get_class_expression<'a, 'b>(
 
     if tokens.peek_str() == "[" {
       let init_token = tokens.peek().clone();
-      match parse_object_square_bracket(tokens)? {
+      match parse_object_square_bracket(tokens, sp)? {
         ObjectSquareBracketReturn::KVMap(kv_map) => {
           kv_maps.push(kv_map);
         }
         ObjectSquareBracketReturn::ComputedProp(name) => {
-          let (typ, value) = get_declaration_after_name(tokens, symbol_table)?;
+          let (typ, value) = get_declaration_after_name(tokens, sp)?;
           members.push(ClassMember::Property(
             DeclarationComputable {
               name: ComputableDeclarationName::new_computed(name),
@@ -1013,7 +1000,7 @@ fn get_class_expression<'a, 'b>(
     if tokens.peek_str() == "{" && modifiers.has(Modifier::Static) {
       // Static initialization block
       tokens.skip_unchecked(); // Skip "{"
-      let body = get_block(tokens, symbol_table)?;
+      let body = get_block(tokens, sp)?;
       members.push(ClassMember::StaticBlock(body));
       tokens.ignore_whitespace();
       let _ = tokens.try_skip_and_ignore_whitespace(";");
@@ -1034,7 +1021,7 @@ fn get_class_expression<'a, 'b>(
       }
 
       // Get the declaration
-      let (typ, value) = get_declaration_after_name(tokens, symbol_table)?;
+      let (typ, value) = get_declaration_after_name(tokens, sp)?;
       members.push(ClassMember::Property(
         DeclarationComputable::named(name.value.to_owned(), typ, value),
         modifiers
@@ -1051,13 +1038,13 @@ fn get_class_expression<'a, 'b>(
         get_constructor_after_name(
           tokens,
           &mut members,
-          symbol_table,
+          sp,
         )?
       } else {
         get_function_after_name(
           tokens,
           Some(name.value.to_string()),
-          symbol_table
+          sp
         )?
       };
 
@@ -1109,7 +1096,8 @@ struct TypedHeader {
 /// Gets a typed header for a class or interface.
 fn get_typed_header(
   tokens: &mut TokenList,
-  require_name: bool
+  require_name: bool,
+  sp: &mut SourceProperties,
 ) -> Result<TypedHeader, CompilerError> {
   tokens.ignore_whitespace();
   let name = tokens.peek();
@@ -1126,12 +1114,12 @@ fn get_typed_header(
     None
   };
 
-  let generics = get_optional_generics(tokens)?;
+  let generics = get_optional_generics(tokens, sp)?;
   tokens.ignore_whitespace();
 
   let extends = if tokens.peek_str() == "extends" {
     tokens.skip_unchecked(); // Skip "extends"
-    get_comma_separated_types_until(tokens, &[ "implements", "{", "=" ])?
+    get_comma_separated_types_until(tokens, &[ "implements", "{", "=" ], sp)?
   } else {
     SmallVec::new()
   };
@@ -1139,7 +1127,7 @@ fn get_typed_header(
 
   let implements = if tokens.peek_str() == "implements" {
     tokens.skip_unchecked(); // Skip "implements"
-    get_comma_separated_types_until(tokens, &[ "{", "=" ])?
+    get_comma_separated_types_until(tokens, &[ "{", "=" ], sp)?
   } else {
     SmallVec::new()
   };
@@ -1151,7 +1139,7 @@ fn get_typed_header(
 
 fn handle_modifiers(
   tokens: &mut TokenList,
-  symbol_table: &mut SymbolTable,
+  sp: &mut SourceProperties,
 ) -> Result<Option<ASTNode>, CompilerError> {
   if !MODIFIERS.contains(&tokens.peek_str()) {
     return Ok(None);
@@ -1216,7 +1204,7 @@ fn handle_modifiers(
     }))
   } else {
     // Get the node that goes after the modifiers
-    let mut node_after_modifiers = get_single_statement(tokens, symbol_table)?;
+    let mut node_after_modifiers = get_single_statement(tokens, sp)?;
 
     node_after_modifiers.apply_modifiers(modifiers)?;
     Ok(Some(node_after_modifiers))
@@ -1254,7 +1242,7 @@ fn fetch_modifier_list(tokens: &mut TokenList) -> ModifierList {
 
 fn handle_type_declaration(
   tokens: &mut TokenList,
-  _symbol_table: &mut SymbolTable,
+  sp: &mut SourceProperties,
 ) -> Result<Option<ASTNode>, CompilerError> {
   if tokens.peek_str() != "type" {
     return Ok(None);
@@ -1264,7 +1252,7 @@ fn handle_type_declaration(
   let TypedHeader {
     name, generics,
     extends, implements
-  } = get_typed_header(tokens, true)?;
+  } = get_typed_header(tokens, true, sp)?;
   let name = unsafe { name.unwrap_unchecked() };
   if !extends.is_empty() {
     return Err(CompilerError::new(
@@ -1284,7 +1272,7 @@ fn handle_type_declaration(
   tokens.skip("=")?;
 
   // Get the second type
-  let equals_typ = get_type(tokens)?;
+  let equals_typ = get_type(tokens, sp)?;
 
   Ok(Some(ASTNode::InterfaceDeclaration { inner: Box::new(InterfaceDeclaration {
     modifiers: ModifierList::new(),
@@ -1298,7 +1286,7 @@ fn handle_type_declaration(
 fn handle_enum(
   tokens: &mut TokenList,
   is_const: bool,
-  symbol_table: &mut SymbolTable,
+  sp: &mut SourceProperties
 ) -> Result<Option<ASTNode>, CompilerError> {
   if tokens.peek_str() != "enum" {
     return Ok(None)
@@ -1341,7 +1329,7 @@ fn handle_enum(
     tokens.ignore_whitespace();
     let value = if tokens.peek_str() == "=" {
       tokens.skip_unchecked();
-      get_expression(tokens, 1, symbol_table)? // TODO: why 1?
+      get_expression(tokens, 1, sp)? // TODO: why 1?
     } else {
       let number = counter.to_string();
       counter += 1;
@@ -1365,7 +1353,7 @@ fn handle_enum(
 
 fn handle_interface(
   tokens: &mut TokenList,
-  symbol_table: &mut SymbolTable,
+  sp: &mut SourceProperties,
 ) -> Result<Option<ASTNode>, CompilerError> {
   if tokens.peek_str() != "interface" {
     return Ok(None);
@@ -1375,7 +1363,7 @@ fn handle_interface(
   let TypedHeader {
     name, generics,
     extends, implements
-  } = get_typed_header(tokens, true)?;
+  } = get_typed_header(tokens, true, sp)?;
   let name = unsafe { name.unwrap_unchecked() };
   if !implements.is_empty() {
     return Err(CompilerError::new(
@@ -1401,17 +1389,17 @@ fn handle_interface(
 
     if next == "(" {
       // Function
-      let function = get_type(tokens)?;
+      let function = get_type(tokens, sp)?;
       function_types.union(function);
     } else if next == "[" {
       // This could be either a Key-value map,
       // or a computed property
-      match parse_object_square_bracket(tokens)? {
+      match parse_object_square_bracket(tokens, sp)? {
         ObjectSquareBracketReturn::KVMap(kv_map) => key_value.push(kv_map),
         ObjectSquareBracketReturn::ComputedProp(value) => {
           named_parts.push(DeclarationTyped::computed(
             value,
-            try_get_type(tokens)?.unwrap_or(Type::Unknown)
+            try_get_type(tokens, sp)?.unwrap_or(Type::Unknown)
           ))
         },
         ObjectSquareBracketReturn::MappedType(..) => {
@@ -1430,7 +1418,7 @@ fn handle_interface(
       if tokens.peek_str() == "(" {
         // It's a function! (which is a member)
         tokens.ignore_checkpoint(checkpoint);
-        let function = get_type(tokens)?;
+        let function = get_type(tokens, sp)?;
         named_parts.push(DeclarationTyped::named(
           function_name.value.to_owned(),
           function
@@ -1438,7 +1426,7 @@ fn handle_interface(
       } else {
         // It isn't a function, treat it as a named declaration
         tokens.restore_checkpoint(checkpoint);
-        let decl = get_declaration(tokens, symbol_table)?;
+        let decl = get_declaration(tokens, sp)?;
         named_parts.push(DeclarationTyped::named(
           decl.name().clone(),
           decl.typ().clone()
@@ -1483,7 +1471,7 @@ fn handle_interface(
 
 fn handle_try_catch(
   tokens: &mut TokenList,
-  symbol_table: &mut SymbolTable,
+  sp: &mut SourceProperties,
 ) -> Result<Option<ASTNode>, CompilerError> {
   if tokens.peek_str() != "try" {
     return Ok(None);
@@ -1491,7 +1479,7 @@ fn handle_try_catch(
 
   let try_token = tokens.consume();
   tokens.ignore_whitespace();
-  let block_try = match handle_block(tokens, symbol_table) {
+  let block_try = match handle_block(tokens, sp) {
     Ok(Some(block)) => block,
     _ => {
       return Err(CompilerError::new(
@@ -1510,13 +1498,13 @@ fn handle_try_catch(
       tokens.ignore_whitespace();
       let capture_catch = tokens.consume_type(TokenType::Identifier)?.value.to_owned();
       tokens.ignore_whitespace();
-      let capture_catch_type = try_get_type(tokens)?;
+      let capture_catch_type = try_get_type(tokens, sp)?;
       tokens.skip_with_whitespace(")")?;
       (Some(capture_catch), capture_catch_type)
     } else {
       (None, None)
     };
-    let block_catch = match handle_block(tokens, symbol_table) {
+    let block_catch = match handle_block(tokens, sp) {
       Ok(Some(block)) => Some(block),
       _ => {
         return Err(CompilerError::new(
@@ -1532,7 +1520,7 @@ fn handle_try_catch(
   let block_finally = if tokens.peek_str() == "finally" {
     let token = tokens.consume();
     tokens.ignore_whitespace();
-    match handle_block(tokens, symbol_table) {
+    match handle_block(tokens, sp) {
       Ok(Some(block)) => Some(block),
       _ => {
         return Err(CompilerError::new(
@@ -1563,7 +1551,7 @@ fn handle_try_catch(
 
 fn handle_declare(
   tokens: &mut TokenList,
-  symbol_table: &mut SymbolTable,
+  sp: &mut SourceProperties,
 ) -> Result<Option<ASTNode>, CompilerError> {
   if tokens.peek_str() != "declare" {
     return Ok(None);
@@ -1576,7 +1564,7 @@ fn handle_declare(
     tokens.skip_unchecked();
   }
   tokens.skip_unchecked();
-  let _discarded_block = get_block(tokens, symbol_table);
+  let _discarded_block = get_block(tokens, sp);
 
   Ok(Some(ASTNode::Empty))
 }
@@ -1584,9 +1572,9 @@ fn handle_declare(
 /// Handles expressions. Basically a soft wrapper around `get_expression`
 fn handle_expression(
   tokens: &mut TokenList,
-  symbol_table: &mut SymbolTable,
+  sp: &mut SourceProperties,
 ) -> Result<ASTNode, CompilerError> {
-  get_expression(tokens, 0, symbol_table)
+  get_expression(tokens, 0, sp)
 }
 
 fn parse_number(tokens: &mut TokenList) -> Result<ASTNode, CompilerError> {
@@ -1616,7 +1604,7 @@ fn parse_string(tokens: &mut TokenList) -> ASTNode {
 
 fn parse_string_template(
   tokens: &mut TokenList,
-  symbol_table: &mut SymbolTable,
+  sp: &mut SourceProperties,
 ) -> Result<ASTNode, CompilerError> {
   let head_token = tokens.consume();
   if head_token.typ == TokenType::String {
@@ -1630,7 +1618,7 @@ fn parse_string_template(
   let mut parts = SmallVec::new();
 
   while tokens.peek().typ != TokenType::EndOfFile {
-    let expr = get_expression(tokens, 0, symbol_table)?;
+    let expr = get_expression(tokens, 0, sp)?;
     let literal_part = tokens.consume();
     if literal_part.typ != TokenType::StringTemplateMiddle && literal_part.typ != TokenType::StringTemplateEnd {
       return Err(CompilerError::new(
@@ -1670,7 +1658,7 @@ fn parse_regex(tokens: &mut TokenList) -> ASTNode {
 
 fn parse_name(
   tokens: &mut TokenList,
-  symbol_table: &mut SymbolTable,
+  sp: &mut SourceProperties,
 ) -> Result<ASTNode, CompilerError> {
   let token = tokens.consume();
   match token.value {
@@ -1678,7 +1666,7 @@ fn parse_name(
     "false" => { Ok(ASTNode::ExprBoolLiteral { value: false }) }
     name => {
       // Mark symbol as used (not in type context)
-      symbol_table.mark_used(&token, tokens)?;
+      sp.st.mark_used(&token, tokens)?;
       Ok(ASTNode::ExprIdentifier { name: name.to_string() }) 
     }
   }
@@ -1687,14 +1675,14 @@ fn parse_name(
 fn parse_prefix(
   tokens: &mut TokenList,
   precedence: u8,
-  symbol_table: &mut SymbolTable,
+  sp: &mut SourceProperties,
 ) -> Result<ASTNode, CompilerError> {
   let prefix_start = tokens.consume().value.to_string();
 
   let is_grouping = [ "(", "[" ].contains(&prefix_start.as_str());
   if is_grouping {
     // Groupings get special treatment!
-    let nodes = separate_commas(get_expression(tokens, 0, symbol_table)?);
+    let nodes = separate_commas(get_expression(tokens, 0, sp)?);
     let ret = match prefix_start.as_str() {
       "(" => ASTNode::Parenthesis { nodes },
       "[" => ASTNode::Array { nodes },
@@ -1718,7 +1706,7 @@ fn parse_prefix(
         tokens.skip_unchecked(); // Skip "..."
 
         properties.push(ObjectProperty::Rest {
-          argument: get_expression(tokens, 1, symbol_table)?
+          argument: get_expression(tokens, 1, sp)?
         });
       } else {
         // Identifier, String, Number, or computed key
@@ -1735,7 +1723,7 @@ fn parse_prefix(
           (TokenType::Symbol, "[") => {
             // Computed key
             tokens.skip_unchecked();
-            let inner_key = get_expression(tokens, 0, symbol_table)?;
+            let inner_key = get_expression(tokens, 0, sp)?;
   
             tokens.ignore_whitespace();
             tokens.skip("]")?;
@@ -1764,7 +1752,7 @@ fn parse_prefix(
         }
   
         // Get value
-        let value = get_expression(tokens, 1, symbol_table)?;
+        let value = get_expression(tokens, 1, sp)?;
         
         properties.push(ObjectProperty::Property {
           computed,
@@ -1782,7 +1770,7 @@ fn parse_prefix(
   } else {
     Ok(ASTNode::PrefixOpr {
       opr: prefix_start,
-      expr: Box::new(get_expression(tokens, precedence, symbol_table)?)
+      expr: Box::new(get_expression(tokens, precedence, sp)?)
     })
   }
 }
@@ -1792,13 +1780,13 @@ fn parse_infix<'a, 'b>(
   left: ASTNode,
   tokens: &'b mut TokenList,
   precedence: u8,
-  symbol_table: &mut SymbolTable,
+  sp: &mut SourceProperties,
 ) -> Result<ASTNode, CompilerError> where 'a: 'b {
 
   if let ASTNode::ExprIdentifier { name } = &left {
     if name == "async" {
       if tokens.peek_str() == "(" {
-        let mut arrow_fn = parse_arrow_function(tokens, symbol_table)?;
+        let mut arrow_fn = parse_arrow_function(tokens, sp)?;
         match &mut arrow_fn {
           ASTNode::ArrowFunctionDefinition { inner } => {
             inner.is_async = true;
@@ -1817,7 +1805,7 @@ fn parse_infix<'a, 'b>(
     // Function call or property access (indexing)
 
     // Get children
-    let inner = get_expression(tokens, 0, symbol_table)?;
+    let inner = get_expression(tokens, 0, sp)?;
     let group_end = INVERSE_GROUPINGS[opr.as_str()];
     tokens.skip(group_end)?; // Skip trailing group
 
@@ -1897,13 +1885,13 @@ fn parse_infix<'a, 'b>(
       params,
       Rest::new(),
       Type::Unknown,
-      symbol_table
+      sp
     )?);
   } else if opr == "?" {
     // Ternary (eg. `condition ? true : false`)
 
     // Get the first part, up until the `:`
-    let mut if_true = get_expression(tokens, *crate::operations::COLON_PRECEDENCE, symbol_table)?;
+    let mut if_true = get_expression(tokens, *crate::operations::COLON_PRECEDENCE, sp)?;
     while tokens.peek_str() != ":" {
       if tokens.is_done() {
         return Err(CompilerError::new(
@@ -1915,12 +1903,12 @@ fn parse_infix<'a, 'b>(
         if_true,
         tokens,
         *crate::operations::COLON_PRECEDENCE,
-        symbol_table
+        sp
       )?;
       tokens.ignore_whitespace();
     }
     tokens.skip_unchecked();
-    let if_false = get_expression(tokens, precedence, symbol_table)?;
+    let if_false = get_expression(tokens, precedence, sp)?;
 
     return Ok(ASTNode::ExprTernary {
       condition: Box::new(left),
@@ -1932,10 +1920,10 @@ fn parse_infix<'a, 'b>(
     let checkpoint = tokens.get_checkpoint();
 
     // Try parsing generics...
-    if let Ok(mut generics) = get_generics(tokens) {
+    if let Ok(mut generics) = get_generics(tokens, sp) {
       if tokens.peek_str() == "(" {
         tokens.ignore_checkpoint(checkpoint);
-        let mut fn_call = parse_infix(left, tokens, precedence, symbol_table)?;
+        let mut fn_call = parse_infix(left, tokens, precedence, sp)?;
         if let ASTNode::ExprFunctionCall { generics: inner_generics, .. } = &mut fn_call {
           inner_generics.append(&mut generics);
         }
@@ -1951,7 +1939,7 @@ fn parse_infix<'a, 'b>(
   Ok(ASTNode::InfixOpr {
     left: Box::new(left),
     opr,
-    right: Box::new(get_expression(tokens, precedence, symbol_table)?)
+    right: Box::new(get_expression(tokens, precedence, sp)?)
   })
 }
 
@@ -1977,20 +1965,20 @@ fn separate_commas(node: ASTNode) -> SmallVec<ASTNode> {
 /// if this function doesn't return successfully.
 fn parse_arrow_function(
   tokens: &mut TokenList,
-  symbol_table: &mut SymbolTable,
+  sp: &mut SourceProperties,
 ) -> Result<ASTNode, CompilerError> {
   tokens.skip("(")?;
-  let (params, spread) = get_multiple_destructurable_declarations(tokens, true, symbol_table)?;
+  let (params, spread) = get_multiple_destructurable_declarations(tokens, true, sp)?;
   tokens.skip(")")?;
   tokens.ignore_whitespace();
-  let return_type = try_get_type(tokens)?;
+  let return_type = try_get_type(tokens, sp)?;
   tokens.skip("=>")?;
   Ok(parse_arrow_function_after_arrow(
     tokens,
     params,
     spread,
     return_type.unwrap_or(Type::Unknown),
-    symbol_table
+    sp
   )?)
 }
 
@@ -2000,15 +1988,15 @@ fn parse_arrow_function_after_arrow(
   params: SmallVec<DestructurableDeclaration>,
   rest: Rest,
   return_type: Type,
-  symbol_table: &mut SymbolTable,
+  sp: &mut SourceProperties,
 ) -> Result<ASTNode, CompilerError> {
   tokens.ignore_whitespace();
   let is_expression = tokens.peek_str() != "{";
   let body = if is_expression {
-    get_expression(tokens, *crate::operations::ARROW_FN_PRECEDENCE, symbol_table)?
+    get_expression(tokens, *crate::operations::ARROW_FN_PRECEDENCE, sp)?
   } else {
     tokens.skip_unchecked(); // Skip "{"
-    get_block(tokens, symbol_table)?
+    get_block(tokens, sp)?
   };
 
   Ok(ASTNode::ArrowFunctionDefinition { inner: Box::new(ArrowFunctionDefinition {
@@ -2022,19 +2010,19 @@ fn parse_arrow_function_after_arrow(
 }
 
 /// Gets a single expression without symbol table tracking (for type parsing)
-pub fn get_expression_without_symbol_table<'a, 'b>(
-  tokens: &'b mut TokenList,
-  precedence: u8,
-) -> Result<ASTNode, CompilerError> where 'a: 'b {
-  let mut dummy_symbol_table = SymbolTable::new();
-  get_expression(tokens, precedence, &mut dummy_symbol_table)
-}
+// pub fn get_expression_without_sp<'a, 'b>(
+//   tokens: &'b mut TokenList,
+//   precedence: u8,
+// ) -> Result<ASTNode, CompilerError> where 'a: 'b {
+//   let mut dummy_sp = SymbolTable::new();
+//   get_expression(tokens, precedence, &mut dummy_sp)
+// }
 
 /// Gets a single expression
 pub fn get_expression<'a, 'b>(
   tokens: &'b mut TokenList,
   precedence: u8,
-  symbol_table: &mut SymbolTable,
+  sp: &mut SourceProperties,
 ) -> Result<ASTNode, CompilerError> where 'a: 'b {
   tokens.ignore_whitespace();
 
@@ -2051,16 +2039,16 @@ pub fn get_expression<'a, 'b>(
       TokenType::Number => parse_number(tokens)?,
       TokenType::String => parse_string(tokens),
       TokenType::Regex => parse_regex(tokens),
-      TokenType::StringTemplateStart => parse_string_template(tokens, symbol_table)?,
+      TokenType::StringTemplateStart => parse_string_template(tokens, sp)?,
       TokenType::Symbol | TokenType::Identifier => {
         // Check for regex literal (starts with '/' and not division operator)
         if next.value == "class" {
           // `class` can be used inside an expression, but calling it a
           // prefix feels strange... I'm going to handle it here
-          get_class_expression(tokens, symbol_table)?
+          get_class_expression(tokens, sp)?
         } else if next.value == "function" {
           tokens.skip_unchecked(); // Skip "function"
-          let function = get_function_after_name(tokens, None, symbol_table)?;
+          let function = get_function_after_name(tokens, None, sp)?;
           ASTNode::FunctionDefinition { inner: Box::new(function) }
         } else {
           let binding_power = get_operator_binding_power(
@@ -2091,27 +2079,27 @@ pub fn get_expression<'a, 'b>(
               tokens.restore_checkpoint(checkpoint);
 
               if is_arrow_function {
-                parse_arrow_function(tokens, symbol_table)?
+                parse_arrow_function(tokens, sp)?
               } else {
-                parse_prefix(tokens, binding_power.1, symbol_table)?
+                parse_prefix(tokens, binding_power.1, sp)?
               }
             } else {
-              parse_prefix(tokens, binding_power.1, symbol_table)?
+              parse_prefix(tokens, binding_power.1, sp)?
             }
           } else if next.typ == TokenType::Identifier {
             // Could be a name...
-            parse_name(tokens, symbol_table)?
+            parse_name(tokens, sp)?
           } else if next.value == "<" {
             // Arrow function generic, or C-style type cast (eg. `<number>a`)
             let generics_token = tokens.peek().clone();
             tokens.skip_unchecked();
-            let generics = get_generics(tokens)?;
+            let generics = get_generics(tokens, sp)?;
 
             // Get next expression...
             let mut expr = get_expression(
               tokens,
               get_operator_binding_power(ExprType::Prefx, "<>").unwrap().0,
-              symbol_table
+              sp
             )?;
             match &mut expr {
               ASTNode::ArrowFunctionDefinition { inner } => {
@@ -2162,7 +2150,7 @@ pub fn get_expression<'a, 'b>(
     // `as` statements get special treatment
     if next.value == "as" {
       tokens.skip_unchecked();
-      let cast_type = get_type(tokens)?;
+      let cast_type = get_type(tokens, sp)?;
       left = ASTNode::ExprAs {
         value: Box::new(left),
         cast_type: Box::new(cast_type)
@@ -2199,7 +2187,7 @@ pub fn get_expression<'a, 'b>(
       }
       left = ASTNode::TemplateLiteralTag {
         callee: Box::new(left),
-        argument: Box::new(parse_string_template(tokens, symbol_table)?)
+        argument: Box::new(parse_string_template(tokens, sp)?)
       };
       continue;
     }
@@ -2219,7 +2207,7 @@ pub fn get_expression<'a, 'b>(
     };
 
     // It's infix
-    left = parse_infix(left, tokens, binding_power.1, symbol_table)?;
+    left = parse_infix(left, tokens, binding_power.1, sp)?;
   }
 
   Ok(left)
