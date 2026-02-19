@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::collections::hash_map::DefaultHasher;
 use std::fmt::{Display, Debug};
 use std::hash::{Hash, Hasher};
@@ -12,8 +13,17 @@ use crate::tokenizer::{Token, TokenList, TokenType};
 
 #[derive(Copy, Clone)]
 pub union CustomDouble {
-  value: f64,
-  bits: u64
+  pub value: f64,
+  pub bits: u64,
+}
+impl CustomDouble {
+  pub fn from_str(value: &str) -> Result<Self, ()> {
+    if let Ok(value) = value.parse() {
+      Ok(CustomDouble { value })
+    } else {
+      Err(())
+    }
+  }
 }
 impl std::ops::Neg for CustomDouble {
   type Output = CustomDouble;
@@ -80,6 +90,8 @@ pub enum Type {
   Boolean,
   BooleanLiteral(bool),
 
+  RegExp,
+
   Unknown,
 
   /// Refers to both `void` and `undefined` type, as they're equal
@@ -88,7 +100,7 @@ pub enum Type {
   /// A union (eg. `string | number`)
   Union(SmallVec<Type>),
   
-  /// A selection (eg. `string & number`)
+  /// An intersection (eg. `{ a: string } & { b: number }` => `{ a: string, b: number }`)
   Intersection(SmallVec<Type>),
 
   /// Custom types
@@ -98,6 +110,7 @@ pub enum Type {
   WithArgs(Box<Type>, SmallVec<Type>),
 
   /// Tuples (eg. `[string, number]`)
+  /// Stored as (type, has_spread)
   Tuple { inner_types: SmallVec<(Type, bool)> },
 
   /// Array type (eg. `number[]`)
@@ -178,6 +191,40 @@ pub enum Type {
 }
 
 impl Type {
+  /// Checks if a type matches another. Order matters!
+  /// e.g. `123` matches `number`, but not the other way around.
+  pub fn matches(
+    specific_type: &Type,
+    broad_type: &Type,
+  ) -> bool {
+    use Type::*;
+    if specific_type == broad_type { return true; }
+    match (specific_type, broad_type) {
+      (Any, _) | (_, Any) => true,
+      (NumberLiteral(..), Number) => true,
+      (StringLiteral(..), String) => true,
+      (BooleanLiteral(..), Boolean) => true,
+      (Union(many_specific), broad_union @ Union(..)) => {
+        for s in many_specific {
+          if !Type::matches(s, broad_union) {
+            return false
+          }
+        }
+        true
+      },
+      (one, Union(many)) => {
+        for m in many {
+          if Type::matches(one, m) {
+            return true
+          }
+        }
+        false
+      },
+      
+      _ => false,
+    }
+  }
+
   /// Joins this type with another in a union `|` (combining mutably)
   pub fn union(&mut self, other: Type) {
     if let Type::Union(types) = other {
@@ -217,6 +264,31 @@ impl Type {
           *self = new_union;
         }
       }
+    }
+  }
+
+  pub fn union_from(types: &SmallVec<Type>) -> Type {
+    let mut set = HashSet::new();
+    for t in types {
+      set.insert(t.clone());
+    }
+    Type::Union(set.iter().collect())
+  }
+
+  /// Removes a type from a union, if it exists
+  pub fn remove(&mut self, t: Type) {
+    match self {
+      Type::Union(types) => {
+        let mut new_arr = SmallVec::with_capacity(types.len() - 1);
+
+        for e in types.iter() {
+          if *e != t {
+            new_arr.push(e.clone());
+          }
+        }
+        *types = new_arr;
+      }
+      _ => {}
     }
   }
 
