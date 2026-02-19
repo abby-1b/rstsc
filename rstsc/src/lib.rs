@@ -13,6 +13,7 @@ pub mod symbol_table;
 // pub mod scope_tracking;
 // pub mod type_checking;
 // pub mod minify;
+pub mod type_infer;
 pub mod obfuscate;
 pub mod emit;
 
