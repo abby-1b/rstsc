@@ -8,12 +8,18 @@ use crate::ast_common::{Modifier, ModifierList, VariableDefType};
 use crate::declaration::{ComputableDeclarationName, DestructurableDeclaration, DestructurePattern};
 use crate::small_vec::SmallVec;
 
-/// Configuration for the obfuscation process
+/// Configuration for the obfuscation/minification process
 pub struct ObfuscationConfig {
   pub seed: u64,
+
+  /// Enables variable renaming. Might not work in all contexts.
   pub enable_renaming: bool,
-  pub enable_structural: bool,
+
+  /// Randomly replaces literals with equivalents
+  /// e.g. `123` => `100+23`
   pub enable_literals: bool,
+
+  /// Inserts dead code into the output code. Might have a performance impact!
   pub enable_dead_code: bool,
 }
 
@@ -22,9 +28,8 @@ impl Default for ObfuscationConfig {
     Self {
       seed: 0xDEAD_BEEF,
       enable_renaming: true,
-      enable_structural: true,
       enable_literals: true,
-      enable_dead_code: true,
+      enable_dead_code: false,
     }
   }
 }
@@ -141,12 +146,10 @@ impl CodeObfuscator {
   }
 
   fn transform_node(&mut self, node: &mut ASTNode) {
-    // Pass 1 & 2: Identifier/Function/Class Renaming
     if self.config.enable_renaming {
       self.apply_renaming(node);
     }
 
-    // Pass 4: Literal and Expression Obfuscation
     if self.config.enable_literals {
       self.transform_literals(node);
     }
@@ -156,8 +159,7 @@ impl CodeObfuscator {
       ASTNode::Block { nodes } => {
         // Enter new block scope
         self.scope_stack.push(HashSet::new());
-        // Pass 3: Structural Modifications (Dead Code Insertion)
-        if self.config.enable_dead_code && self.config.enable_structural {
+        if self.config.enable_dead_code {
           self.inject_dead_code(nodes);
         }
         for child in nodes.iter_mut() {
