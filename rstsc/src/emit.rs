@@ -422,6 +422,7 @@ fn emit_single(
 
       // Body
       emit_single(&arrow_fn.body, emitter);
+      emitter.out("", true);
     }
     ASTNode::ClassDefinition { inner } => {
       emitter.out(&inner.modifiers.emit(true), false);
@@ -630,10 +631,19 @@ fn emit_single(
         "," => (false, true),
         _ => (true, true)
       };
+      let needs_spaces = match opr.as_str() {
+        "in" => true,
+        "instanceof" => true,
+        _ => false
+      };
       emit_single(&*left, emitter);
-      if can_have_spaces.0 { emitter.out_diff(" ", "", false); }
+      if needs_spaces || (can_have_spaces.0 && !emitter.is_compact) {
+        emitter.out(" ", false);
+      }
       emitter.out(&opr, false);
-      if can_have_spaces.1 { emitter.out_diff(" ", "", false); }
+      if needs_spaces || (can_have_spaces.1 && !emitter.is_compact) {
+        emitter.out(" ", false);
+      }
       emit_single(&*right, emitter);
     }
     ASTNode::PostfixOpr { expr, opr } => {

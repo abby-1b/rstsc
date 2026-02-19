@@ -247,6 +247,12 @@ pub enum ASTNode {
   EnumDeclaration { inner: Box<EnumDeclaration> },
   InterfaceDeclaration { inner: Box<InterfaceDeclaration> },
 
+  /// `declare namespace X { ... }`
+  DeclareNamespace {
+    name: String,
+    types: Vec<ASTNode>,
+  },
+
   /// Used in situations like `[ 1, 2, ]` where there's an empty expression
   Empty
 }
@@ -295,6 +301,7 @@ impl ASTNode {
       ASTNode::ExprTypeAssertion { .. } => "ExprTypeAssertion",
       ASTNode::EnumDeclaration { .. } => "EnumDeclaration",
       ASTNode::InterfaceDeclaration { .. } => "InterfaceDeclaration",
+      ASTNode::DeclareNamespace { .. } => "DeclareNamespace",
       ASTNode::Empty { .. } => "Empty",
     }.to_string()
   }
