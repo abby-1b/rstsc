@@ -53,15 +53,16 @@ Tasks:
 Tasks:
 - [x] Add TSC project test snippets
 - [x] Module import removal (unused import handling and emission)
+- [x] Declarations (removal)
 - [ ] Variable scope tracking
-- [ ] Declarations
+- [ ] An exposed way to get AST nodes as an object for analysis outside of RSTSC
 - [ ] Source map generation
-- [ ] Full ASI
 
 ### Phase 3: Test Coverage & Efficiency
 
 Tasks:
 - Complete test coverage for everything
+- Declarations (full parsing)
 - Optimize compiler performance for speed and resource efficiency
   - Make strings within the project reference the source file instead of allocating separately
   - When the file isn't loaded, make a string pool that the AST can reference
