@@ -84,13 +84,13 @@ impl<T> SmallVec<T> {
       let new_cap = if self.capacity == 0 { 1 } else { self.capacity.saturating_mul(2) };
       unsafe { self.allocate(new_cap) }
     }
-    unsafe { self.memory.add(self.len()).write(value); }
+    unsafe { self.memory.as_ptr().add(self.len()).write(value); }
     self.length += 1;
   }
   pub fn pop(&mut self) -> Option<T> {
     if self.length == 0 { return None }
     self.length -= 1;
-    Some(unsafe { self.memory.add(self.len()).read() })
+    Some(unsafe { self.memory.as_ptr().add(self.len()).read() })
   }
 
   pub fn append(&mut self, other: &mut Self) {
@@ -104,9 +104,9 @@ impl<T> SmallVec<T> {
 
     // Copy elements from `other` to the end of `self`
     unsafe {
-      other.memory.copy_to_nonoverlapping(
+      other.memory.as_ptr().copy_to_nonoverlapping(
         // Elements are placed at index `self.len`
-        self.memory.add(self.len()),
+        self.memory.as_ptr().add(self.len()),
         other.len()
       );
     }
@@ -123,8 +123,8 @@ impl<T> SmallVec<T> {
       // New buffer needed
       unsafe {
         let new_memory = Self::get_new_memory(needed_len);
-        self.memory.copy_to_nonoverlapping(
-          new_memory.add(other.len()),
+        self.memory.as_ptr().copy_to_nonoverlapping(
+          new_memory.as_ptr().add(other.len()),
           self.len()
         );
         self.drop_inner_buffer();
@@ -134,8 +134,8 @@ impl<T> SmallVec<T> {
     } else {
       // Move elements within the existing buffer (potentially overlapping)
       unsafe {
-        self.memory.copy_to(
-          self.memory.add(other.len()),
+        self.memory.as_ptr().copy_to(
+          self.memory.as_ptr().add(other.len()),
           self.len()
         );
       }
@@ -184,6 +184,14 @@ impl<T> SmallVec<T> {
   unsafe fn drop_inner_buffer(&mut self) {
     let old_layout = Layout::array::<T>(self.capacity as usize).unwrap();
     std::alloc::dealloc(self.memory.as_ptr() as *mut u8, old_layout);
+  }
+
+  /// Checks if this vector has a given element
+  pub fn has(&self, el: T) -> bool where T: PartialEq {
+    for e in self {
+      if *e == el { return true; }
+    }
+    false
   }
 }
 
@@ -274,7 +282,7 @@ impl<T> Index<Range<usize>> for SmallVec<T> {
     }
     unsafe {
       std::slice::from_raw_parts(
-        self.memory.add(index.start).as_ptr(),
+        self.memory.as_ptr().add(index.start),
         index.end - index.start
       )
     }
@@ -303,7 +311,7 @@ impl<T> Index<RangeFrom<usize>> for SmallVec<T> {
     }
     unsafe {
       std::slice::from_raw_parts(
-        self.memory.add(index.start).as_ptr(),
+        self.memory.as_ptr().add(index.start),
         self.len() - index.start
       )
     }
@@ -384,6 +392,25 @@ impl<T> FromIterator<T> for SmallVec<T> {
   }
 }
 
+impl<'a, T: Clone> FromIterator<&'a T> for SmallVec<T> {
+  fn from_iter<I: IntoIterator<Item = &'a T>>(iter: I) -> Self {
+    let iter = iter.into_iter();
+    let (lower, upper) = iter.size_hint();
+
+    let mut vec = if let Some(upper) = upper {
+      SmallVec::with_capacity(upper)
+    } else {
+      SmallVec::with_capacity(lower)
+    };
+
+    for item in iter {
+      vec.push(item.clone());
+    }
+
+    vec
+  }
+}
+
 pub struct Iter<'a, T> {
   vec: &'a SmallVec<T>,
   index: usize,
@@ -394,7 +421,7 @@ impl<'a, T> Iterator for Iter<'a, T> {
 
   fn next(&mut self) -> Option<Self::Item> {
     if self.index < self.vec.len() {
-      let item = unsafe { &*self.vec.memory.add(self.index).as_ptr() };
+      let item = unsafe { &*self.vec.memory.as_ptr().add(self.index) };
       self.index += 1;
       Some(item)
     } else {
@@ -413,7 +440,7 @@ impl<'a, T> Iterator for IterMut<'a, T> {
 
   fn next(&mut self) -> Option<Self::Item> {
     if self.index < self.vec.len() {
-      let item = unsafe { &mut *self.vec.memory.add(self.index).as_ptr() };
+      let item = unsafe { &mut *self.vec.memory.as_ptr().add(self.index) };
       self.index += 1;
       Some(item)
     } else {
@@ -453,7 +480,7 @@ impl<T> Iterator for IntoIter<T> {
 
   fn next(&mut self) -> Option<Self::Item> {
     if self.index < self.vec.len() {
-      let item = unsafe { std::ptr::read(self.vec.memory.add(self.index).as_ptr()) };
+      let item = unsafe { std::ptr::read(self.vec.memory.as_ptr().add(self.index)) };
       self.index += 1;
       Some(item)
     } else {
@@ -473,3 +500,5 @@ impl<T> Drop for IntoIter<T> {
     self.vec.length = 0;
   }
 }
+
+
