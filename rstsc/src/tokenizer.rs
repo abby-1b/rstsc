@@ -260,6 +260,14 @@ impl<'a> TokenList<'a> {
     self.on_token += 1;
   }
 
+  #[inline]
+  pub fn skip_with_whitespace(&mut self, token: &str) -> Result<(), CompilerError> {
+    self.ignore_whitespace();
+    self.skip(token)?;
+    self.ignore_whitespace();
+    Ok(())
+  }
+
   /// Consumes tokens until a non-whitespace token is found
   pub fn ignore_whitespace(&mut self) {
     while !self.is_done() {
