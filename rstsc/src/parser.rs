@@ -1,11 +1,25 @@
 use phf::{phf_map, phf_set};
 use crate::{
   ast::{
-    ASTNode, ArrowFunctionDefinition, ClassDefinition, ClassMember, EnumDeclaration, FunctionDefinition, GetterSetter, ImportDefinition, IndividualImport, InterfaceDeclaration, ObjectProperty, TryCatchFinally
-  }, ast_common::{
-    ACCESSIBILITY_MODIFIERS, MODIFIERS, Modifier, ModifierList, VariableDefType
-  }, declaration::{ComputableDeclarationName, Declaration, DeclarationComputable, DeclarationTyped, DestructurableDeclaration, DestructurePattern}, error_type::CompilerError, operations::{ARROW_FN_PRECEDENCE, COMMA_PRECEDENCE, ExprType, TEMPLATE_LITERAL_TAG_PRECEDENCE, get_operator_binding_power}, rest::Rest, small_vec::SmallVec, symbol_table::{self, Symbol, SymbolOrigin, SymbolTable}, tokenizer::{Token, TokenList, TokenType}, types::{
-    ObjectSquareBracketReturn, Type, get_comma_separated_types_until, get_generics, get_optional_generics, get_type, parse_object_square_bracket, try_get_type
+    ASTNode, ArrowFunctionDefinition, ClassDefinition, ClassMember,
+    EnumDeclaration, FunctionDefinition, GetterSetter, ImportDefinition,
+    IndividualImport, InterfaceDeclaration, ObjectProperty, TryCatchFinally
+  },
+  ast_common::{ACCESSIBILITY_MODIFIERS, MODIFIERS, Modifier, ModifierList, VariableDefType},
+  declaration::{
+    ComputableDeclarationName, Declaration, DeclarationComputable,
+    DeclarationTyped, DestructurableDeclaration, DestructurePattern
+  },
+  error_type::CompilerError,
+  operations::{ARROW_FN_PRECEDENCE, COMMA_PRECEDENCE, ExprType, TEMPLATE_LITERAL_TAG_PRECEDENCE, get_operator_binding_power},
+  rest::Rest, small_vec::SmallVec,
+  symbol_table::{Symbol, SymbolOrigin, SymbolTable},
+  tokenizer::{Token, TokenList, TokenType},
+  type_infer::infer_types_with_symbol_table,
+  types::{
+    ObjectSquareBracketReturn, Type, get_comma_separated_types_until,
+    get_generics, get_optional_generics, get_type, parse_object_square_bracket,
+    try_get_type
   }
 };
 
@@ -39,7 +53,10 @@ pub static DISALLOWED_VARIABLE_NAMES: phf::Set<&'static str> = phf_set! {
 };
 
 /// Parses a single block. Consumes the ending token, but not the starting token.
-pub fn get_block(tokens: &mut TokenList, symbol_table: &mut SymbolTable) -> Result<ASTNode, CompilerError> {
+pub fn get_block(
+  tokens: &mut TokenList,
+  symbol_table: &mut SymbolTable
+) -> Result<ASTNode, CompilerError> {
   let mut nodes = SmallVec::new();
 
   // Go through the tokens list
@@ -65,14 +82,14 @@ pub fn get_block(tokens: &mut TokenList, symbol_table: &mut SymbolTable) -> Resu
 /// Gets a single statement, until it reaches either a `;` or a group end
 /// (eg. `)]}`). Only consumes semicolons, not group ends. If a group start is
 /// reached (eg. `([{`), calls the corresponding function for said group.
-/// Gets a single statement, until it reaches either a `;` or a group end
-/// (eg. `)]}`). Only consumes semicolons, not group ends. If a group start is
-/// reached (eg. `([{`), calls the corresponding function for said group.
 fn get_single_statement<'a, 'b>(
   tokens: &'b mut TokenList,
   symbol_table: &mut SymbolTable
 ) -> Result<ASTNode, CompilerError> where 'a: 'b {
   tokens.ignore_whitespace();
+  if tokens.is_done() {
+    return Ok(ASTNode::Empty);
+  }
   
   let ret = match tokens.peek_str() {
     "{" => handle_block(tokens, symbol_table)?.unwrap(),
@@ -88,6 +105,7 @@ fn get_single_statement<'a, 'b>(
     "enum" => handle_enum(tokens, false, symbol_table)?.unwrap(),
     "interface" => handle_interface(tokens, symbol_table)?.unwrap(),
     "try" => handle_try_catch(tokens, symbol_table)?.unwrap(),
+    "declare" => handle_declare(tokens, symbol_table)?.unwrap(),
     _ => handle_expression(tokens, symbol_table)?,
   };
 
@@ -165,7 +183,15 @@ fn get_declaration<'a, 'b>(
   let (typ, value) = get_declaration_after_name(tokens, symbol_table)?;
   
   // Create symbol for this declaration
-  let symbol = Symbol::new(name.clone(), SymbolOrigin::Variable);
+  let symbol = Symbol::new(
+    name.clone(),
+    SymbolOrigin::Variable,
+    if let Some(value) = &value {
+      infer_types_with_symbol_table(&value, symbol_table)
+    } else {
+      Type::Unknown
+    }
+  );
   symbol_table.add_symbol(symbol)?;
   
   Ok(Declaration::new(name, typ, value))
@@ -217,7 +243,15 @@ fn get_destructurable_declaration<'a, 'b>(
   
   // Create symbol for identifier patterns
   if let DestructurePattern::Identifier { name: identifier_name } = &name {
-    let symbol = Symbol::new(identifier_name.clone(), SymbolOrigin::Variable);
+    let symbol = Symbol::new(
+      identifier_name.clone(),
+      SymbolOrigin::Variable,
+      if let Some(init) = &initializer {
+        infer_types_with_symbol_table(init, symbol_table)
+      } else {
+        Type::Unknown
+      }
+    );
     symbol_table.add_symbol(symbol)?;
   }
   
@@ -227,30 +261,6 @@ fn get_destructurable_declaration<'a, 'b>(
     } else { name },
     typ
   })
-}
-
-/// Gets multiple named declarations, with or without values.
-/// Stops when it encounters a semicolon or closing parenthesis
-/// 
-/// Examples (in square brackets):
-/// 
-/// `let [a: number = 123, b: string];`
-/// 
-/// `function some([a: number, b: string = '123']) { ... }`
-fn get_multiple_declarations<'a, 'b>(
-  tokens: &'b mut TokenList,
-  allow_rest: bool,
-  symbol_table: &mut SymbolTable,
-) -> Result<(SmallVec<Declaration>, Rest), CompilerError> where 'a: 'b {
-  tokens.ignore_whitespace();
-  let mut declarations = SmallVec::new();
-  let mut rest = Rest::new();
-  while ![ ";", ")" ].contains(&tokens.peek_str()) {
-    rest.try_set(tokens, allow_rest)?;
-    declarations.push(get_declaration(tokens, symbol_table)?);
-    if !tokens.ignore_commas() { break }
-  }
-  Ok((declarations, rest))
 }
 
 fn get_multiple_destructurable_declarations<'a, 'b>(
@@ -446,10 +456,7 @@ fn handle_control_flow(
       // Get condition
       tokens.skip("(")?;
       let condition = get_expression(tokens, 0, symbol_table)?;
-      tokens.ignore_whitespace();
-      tokens.skip(")")?;
-
-      tokens.ignore_whitespace();
+      tokens.skip_with_whitespace(")")?;
       
       // Get body
       let body = get_single_statement(tokens, symbol_table)?;
@@ -482,10 +489,7 @@ fn handle_control_flow(
       // Get condition
       tokens.skip("(")?;
       let condition = get_expression(tokens, 0, symbol_table)?;
-      tokens.ignore_whitespace();
-      tokens.skip(")")?;
-
-      tokens.ignore_whitespace();
+      tokens.skip_with_whitespace(")")?;
       tokens.skip("{")?;
 
       let mut cases = SmallVec::new();
@@ -496,9 +500,7 @@ fn handle_control_flow(
         if tokens.peek_str() == "case" {
           tokens.skip_unchecked();
           let case_condition = get_expression(tokens, 0, symbol_table)?;
-          tokens.ignore_whitespace();
-          tokens.skip(":")?;
-          tokens.ignore_whitespace();
+          tokens.skip_with_whitespace(":")?;
           let mut case_body = SmallVec::new();
           while !tokens.is_done() && ![ "case", "default", "}" ].contains(&tokens.peek_str()) {
             case_body.push(get_single_statement(tokens, symbol_table)?);
@@ -645,12 +647,14 @@ fn handle_import(
   // Wildcard imports `import * as Identifier from '...'`
   let wildcard = if tokens.peek_str() == "*" {
     tokens.skip_unchecked();
-    tokens.ignore_whitespace();
-    tokens.skip("as")?;
-    tokens.ignore_whitespace();
+    tokens.skip_with_whitespace("as")?;
     has_distinction += 1;
     let name = tokens.consume_type(TokenType::Identifier)?.value.to_owned();
-    symbol_table.add_symbol(Symbol::new(name.clone(), SymbolOrigin::Import))?;
+    symbol_table.add_symbol(Symbol::new(
+      name.clone(),
+      SymbolOrigin::Import,
+      Type::Unknown
+    ))?;
     Some(name)
   } else {
     None
@@ -672,7 +676,11 @@ fn handle_import(
       tokens.ignore_whitespace();
       let _ = tokens.try_skip_and_ignore_whitespace(",");
       let final_name = alias.clone().unwrap_or(name.clone());
-      symbol_table.add_symbol(Symbol::new(final_name, SymbolOrigin::Import))?;
+      symbol_table.add_symbol(Symbol::new(
+        final_name,
+        SymbolOrigin::Import,
+        Type::Unknown
+      ))?;
       individual.push(IndividualImport { name, alias });
     }
     tokens.skip("}")?;
@@ -953,9 +961,6 @@ fn get_class_expression<'a, 'b>(
     // Get the name (might be a property or a method, we don't know yet)
 
     if tokens.peek_str() == "[" {
-      // Key-value map!;
-      // TODO: make this accept more than single-token computed properties
-      // TODO: fix computed properties
       let init_token = tokens.peek().clone();
       match parse_object_square_bracket(tokens)? {
         ObjectSquareBracketReturn::KVMap(kv_map) => {
@@ -1249,7 +1254,7 @@ fn fetch_modifier_list(tokens: &mut TokenList) -> ModifierList {
 
 fn handle_type_declaration(
   tokens: &mut TokenList,
-  symbol_table: &mut SymbolTable,
+  _symbol_table: &mut SymbolTable,
 ) -> Result<Option<ASTNode>, CompilerError> {
   if tokens.peek_str() != "type" {
     return Ok(None);
@@ -1506,9 +1511,7 @@ fn handle_try_catch(
       let capture_catch = tokens.consume_type(TokenType::Identifier)?.value.to_owned();
       tokens.ignore_whitespace();
       let capture_catch_type = try_get_type(tokens)?;
-      tokens.ignore_whitespace();
-      tokens.skip(")")?;
-      tokens.ignore_whitespace();
+      tokens.skip_with_whitespace(")")?;
       (Some(capture_catch), capture_catch_type)
     } else {
       (None, None)
@@ -1556,6 +1559,26 @@ fn handle_try_catch(
       block_finally
     })
   }));
+}
+
+fn handle_declare(
+  tokens: &mut TokenList,
+  symbol_table: &mut SymbolTable,
+) -> Result<Option<ASTNode>, CompilerError> {
+  if tokens.peek_str() != "declare" {
+    return Ok(None);
+  }
+  tokens.skip_unchecked();
+  tokens.ignore_whitespace();
+
+  // TODO: return proper declarations instead of ignoring!
+  while tokens.peek_str() != "{" {
+    tokens.skip_unchecked();
+  }
+  tokens.skip_unchecked();
+  let _discarded_block = get_block(tokens, symbol_table);
+
+  Ok(Some(ASTNode::Empty))
 }
 
 /// Handles expressions. Basically a soft wrapper around `get_expression`
@@ -1649,11 +1672,6 @@ fn parse_name(
   tokens: &mut TokenList,
   symbol_table: &mut SymbolTable,
 ) -> Result<ASTNode, CompilerError> {
-  if tokens.peek_str() == "function" {
-    // Handle inline functions
-    return Ok(handle_function_declaration(tokens, symbol_table)?.unwrap());
-  }
-
   let token = tokens.consume();
   match token.value {
     "true" => { Ok(ASTNode::ExprBoolLiteral { value: true }) }
@@ -1846,7 +1864,7 @@ fn parse_infix<'a, 'b>(
               typ: Type::Unknown
             },
             ASTNode::InfixOpr {
-              left, opr, right
+              left, opr, ..
             } if opr == "=" && matches!(*left, ASTNode::ExprIdentifier { .. }) => match *left {
               ASTNode::ExprIdentifier { name } => DestructurableDeclaration {
                 name: DestructurePattern::Identifier { name },
@@ -1874,7 +1892,13 @@ fn parse_infix<'a, 'b>(
       }
     };
 
-    return Ok(parse_arrow_function_after_arrow(tokens, params, Rest::new(), Type::Unknown, symbol_table)?);
+    return Ok(parse_arrow_function_after_arrow(
+      tokens,
+      params,
+      Rest::new(),
+      Type::Unknown,
+      symbol_table
+    )?);
   } else if opr == "?" {
     // Ternary (eg. `condition ? true : false`)
 
@@ -2084,7 +2108,11 @@ pub fn get_expression<'a, 'b>(
             let generics = get_generics(tokens)?;
 
             // Get next expression...
-            let mut expr = get_expression(tokens, get_operator_binding_power(ExprType::Prefx, "<>").unwrap().0, symbol_table)?;
+            let mut expr = get_expression(
+              tokens,
+              get_operator_binding_power(ExprType::Prefx, "<>").unwrap().0,
+              symbol_table
+            )?;
             match &mut expr {
               ASTNode::ArrowFunctionDefinition { inner } => {
                 inner.generics = generics;
