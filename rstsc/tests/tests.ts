@@ -1079,3 +1079,10 @@ function test8(): number {
         return 4;
     }
 }
+
+class Test1 {
+    data = { foo: '' };
+    ['this'] = '';
+    a() { return this; }
+    b() { return this.this; }
+}

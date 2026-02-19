@@ -2,10 +2,12 @@
 
 use std::time::{Duration, Instant};
 
+use rstsc::source_properties::SourceProperties;
 // use rstsc::minify::minify_ast;
 use rstsc::tokenizer::TokenList;
 use rstsc::parser::get_block;
 use rstsc::emit::emit_code;
+use rstsc::symbol_table::SymbolTable;
 
 const SOURCE_TEST: &str = include_str!("./speed.ts");
 
@@ -16,7 +18,8 @@ fn main() {
     let now = Instant::now();
     let mut tokens = TokenList::from(SOURCE_TEST);
 
-    let ast = get_block(&mut tokens);
+    let mut source_properties = SourceProperties::new();
+    let ast = get_block(&mut tokens, &mut source_properties);
     if ast.is_err() {
       ast.err().unwrap().throw(&tokens);
       return;
@@ -27,7 +30,7 @@ fn main() {
     // minify_ast(&mut ast);
     // dbg!(&ast);
 
-    let _ = emit_code(ast, false);
+    let _ = emit_code(ast, &source_properties, false);
     // println!("{}", out);
 
     let elapsed = now.elapsed();

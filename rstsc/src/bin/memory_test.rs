@@ -2,8 +2,10 @@ use std::alloc;
 use cap::Cap;
 
 use rstsc::ast::ASTNode;
+use rstsc::source_properties::SourceProperties;
 use rstsc::tokenizer::TokenList;
 use rstsc::parser::get_block;
+use rstsc::symbol_table::SymbolTable;
 
 #[global_allocator]
 static ALLOCATOR: Cap<alloc::System> = Cap::new(alloc::System, usize::MAX);
@@ -36,7 +38,8 @@ fn do_ast() -> Result<ASTNode, ()> {
   // Generate the AST
   let mut tokens = TokenList::from(SOURCE_TEST);
 
-  let ast = get_block(&mut tokens);
+  let mut source_properties = SourceProperties::new();
+  let ast = get_block(&mut tokens, &mut source_properties);
 
   if ast.is_err() {
     ast.err().unwrap().throw(&tokens);

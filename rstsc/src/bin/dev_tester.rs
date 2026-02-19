@@ -1,3 +1,6 @@
+use rstsc::source_properties::SourceProperties;
+use rstsc::{obfuscate, source_properties};
+// use rstsc::import_excluding;
 /// This file is used for less rigorous testing during development.
 
 // use rstsc::ft;
@@ -6,9 +9,12 @@ use rstsc::tokenizer::TokenList;
 use rstsc::parser::get_block;
 use rstsc::emit::emit_code;
 
-const SOURCE_TEST: &str = include_str!("./tstcalc.ts");
+const SOURCE_TEST: &str = include_str!("./test.ts");
 
 fn main() {
+
+  let v: Vec<i32> = Vec::new();
+  let sl: &[i32] = v.as_ref();
 
   let mut tokens = TokenList::from(SOURCE_TEST);
 
@@ -21,20 +27,25 @@ fn main() {
   //   }
   // }
 
-  let ast = get_block(&mut tokens);
-  if ast.is_err() {
-    ast.err().unwrap().throw(&tokens);
+  let mut source_properties = SourceProperties::new();
+  let ast = get_block(&mut tokens, &mut source_properties);
+  if let Err(err) = ast {
+    err.throw(&tokens);
     return;
   }
 
-  let ast = ast.unwrap();
+  let mut ast = ast.unwrap();
+
+  // let mut obf = obfuscate::CodeObfuscator::new(obfuscate::ObfuscationConfig::default());
+  // obf.obfuscate(&mut ast);
 
   // minify_ast(&mut ast);
   dbg!(&ast);
 
-  // let ft_ast = ft::ASTNode::from(&ast);
-  // dbg!(ft_ast);
+  // dbg!(&symbol_table);
 
-  let out = emit_code(ast, false);
+  // let scopes = get_scopes();
+
+  let out = emit_code(ast, &source_properties, false);
   println!("{}", out);
 }

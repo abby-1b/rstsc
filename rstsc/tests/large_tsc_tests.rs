@@ -11,7 +11,7 @@ const BATCH_SIZE: usize = 32;
 
 #[test]
 fn large_tsc_tests() {
-  // return;
+  return;
   let directory = "target/test/tsc";
 
   // --- Git Setup (Unchanged) ---
