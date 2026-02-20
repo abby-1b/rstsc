@@ -145,19 +145,38 @@ impl<'a> TokenList<'a> {
       char_iter: {
         let mut c = CustomCharIterator {
           inner_iter: source.chars(),
-          queue: [None, None]
+          char_idx: 0,
+          queue: [None, None],
+          newline_indices: Vec::new(),
         };
         c.skip();
         c.skip();
         c
-      }
+      },
     }
+  }
+
+  /// Gets the line index of a character index (in O(log_2(n)) time)
+  pub fn get_line_index(&self, char_index: u32) -> u32 {
+    let newline_indices = &self.char_iter.newline_indices;
+    if newline_indices.is_empty() || char_index < newline_indices[0] {
+      return 0;
+    }
+    if char_index >= newline_indices[newline_indices.len() - 1] {
+      return newline_indices[newline_indices.len() - 1];
+    }
+
+    // Find the first index where the element is > char_index
+    let idx = newline_indices.binary_search_by(|&x| {
+      if x <= char_index { std::cmp::Ordering::Less } else { std::cmp::Ordering::Greater }
+    }).unwrap_or_else(|i| i);
+
+    newline_indices[idx - 1]
   }
 
   /// Checks if the token list is over
   pub fn is_done(&self) -> bool {
     if self.next_tokens.len() == 0 { return false }
-    // println!("Checking is done {} - {}", self.find_index, self.source.len());
     let last_token_idx = self.next_tokens.len().saturating_sub(1);
     if self.on_token < last_token_idx { return false }
     if
@@ -372,17 +391,16 @@ impl<'a> TokenList<'a> {
       } else if curr_char.is_numeric() || (curr_char == '.' && self.char_iter.peek_far().is_some_and(|x| x.is_numeric())) {
         // Numbers
         enum Ending {
-          FALSE,
-          EXPECT_SIGN,
-          EXPECT_NUMBER,
-          EXPECT
+          False,
+          ExpectSign,
+          ExpectNumber,
         }
-        let mut is_exponent: Ending = Ending::FALSE;
+        let mut is_exponent: Ending = Ending::False;
         let mut token_len = 0;
         loop {
           if let Some(c) = self.char_iter.peek() {
             match is_exponent {
-              Ending::FALSE => {
+              Ending::False => {
                 if c.is_numeric() || c == '_' {
                   token_len += c.len_utf8();
                   self.char_iter.skip();
@@ -390,7 +408,7 @@ impl<'a> TokenList<'a> {
                   token_len += c.len_utf8();
                   self.char_iter.skip();
                 } else if c == 'e' || c == 'E' {
-                  is_exponent = Ending::EXPECT_SIGN;
+                  is_exponent = Ending::ExpectSign;
                   token_len += c.len_utf8();
                   self.char_iter.skip();
                 } else if c == 'n' {
@@ -401,18 +419,18 @@ impl<'a> TokenList<'a> {
                   break;
                 }
               },
-              Ending::EXPECT_SIGN => {
+              Ending::ExpectSign => {
                 if c == '+' || c == '-' {
-                  is_exponent = Ending::EXPECT_NUMBER;
+                  is_exponent = Ending::ExpectNumber;
                   token_len += c.len_utf8();
                   self.char_iter.skip();
                 } else if c.is_numeric() {
-                  is_exponent = Ending::EXPECT_NUMBER;
+                  is_exponent = Ending::ExpectNumber;
                 } else {
                   break;
                 }
               },
-              Ending::EXPECT_NUMBER => {
+              Ending::ExpectNumber => {
                 if c.is_numeric() || c == '_' {
                   token_len += c.len_utf8();
                   self.char_iter.skip();
@@ -420,7 +438,6 @@ impl<'a> TokenList<'a> {
                   break;
                 }
               },
-              Ending::EXPECT => unreachable!(),
             }
           } else {
             break;
@@ -630,7 +647,9 @@ impl<'a> TokenList<'a> {
 #[derive(Clone)]
 struct CustomCharIterator<'a> {
   inner_iter: Chars<'a>,
-  queue: [Option<char>; 2]
+  char_idx: u32,
+  queue: [Option<char>; 2],
+  pub newline_indices: Vec<u32>,
 }
 
 impl<'a> CustomCharIterator<'a> {
@@ -652,7 +671,12 @@ impl<'a> CustomCharIterator<'a> {
 
   #[inline]
   pub fn skip(&mut self) {
-    (self.queue[0], self.queue[1]) = (self.queue[1], self.inner_iter.next());
+    let next = self.inner_iter.next();
+    if next.is_some_and(|c| c == '\n') {
+      self.newline_indices.push(self.char_idx);
+    }
+    self.char_idx += 1;
+    (self.queue[0], self.queue[1]) = (self.queue[1], next);
   }
 
   pub fn consume_all<F>(&mut self, consume_fn: F) -> usize where F: Fn(char) -> bool {
@@ -665,26 +689,3 @@ impl<'a> CustomCharIterator<'a> {
     byte_count
   }
 }
-
-/*
-fn print_last_three(tokens: &TokenList) {
-  let start = tokens.next_tokens.len().saturating_sub(3);
-  for i in start..tokens.next_tokens.len() {
-    if i < tokens.next_tokens.len() {
-      println!(" Token(\"{}\")", tokens.next_tokens[i].value);
-    }
-  }
-  println!();
-}
-
-fn print_all_tokens(tokens: &TokenList) {
-  for i in 0..tokens.next_tokens.len() {
-    if tokens.on_token == i {
-      print!(" >\"{}\"<", str::escape_debug(tokens.next_tokens[i].value));
-    } else {
-      print!(" \"{}\"", str::escape_debug(tokens.next_tokens[i].value));
-    }
-  }
-  println!();
-}
-*/
