@@ -290,14 +290,14 @@ fn emit_single(
       // Body
       emit_single(body, emitter);
     }
-    ASTNode::StatementSwitch { condition, cases, default } => {
+    ASTNode::StatementSwitch { inner } => {
       emitter.out_diff("switch (", "switch(", false);
-      emit_single(condition, emitter);
+      emit_single(&inner.condition, emitter);
       emitter.out_diff(") {", "){", false);
       emitter.endline();
       emitter.indent();
 
-      for (case_cond, case_body) in cases.iter() {
+      for (case_cond, case_body) in inner.cases.iter() {
         if emitter.is_compact && node_potentially_starts_with_symbol(case_cond) {
           emitter.out("case", false);
         } else {
@@ -314,7 +314,7 @@ fn emit_single(
         emitter.unindent();
       }
 
-      if let Some(default_body) = default {
+      if let Some(default_body) = &inner.default {
         emitter.out_diff("default: ", "default:", false);
         emitter.endline();
         emitter.indent();
@@ -553,16 +553,16 @@ fn emit_single(
     ASTNode::ExprStrLiteral { string } => {
       emitter.out(&string, true);
     }
-    ASTNode::ExprRegexLiteral { pattern, flags } => {
+    ASTNode::ExprRegexLiteral { inner } => {
       emitter.out("/", false);
-      emitter.out(&pattern, false);
+      emitter.out(&inner.pattern, false);
       emitter.out("/", false);
-      emitter.out(&flags, true);
+      emitter.out(&inner.flags, true);
     }
-    ASTNode::ExprTemplateLiteral { head, parts } => {
+    ASTNode::ExprTemplateLiteral { inner } => {
       emitter.out("`", false);
-      emitter.out(head, false);
-      for (expr, literal_part) in parts {
+      emitter.out(&inner.head, false);
+      for (expr, literal_part) in &inner.parts {
         emitter.out("${", false);
         emit_single(expr, emitter);
         emitter.out("}", false);
@@ -582,10 +582,10 @@ fn emit_single(
         "!0",
       ][offset as usize], true);
     }
-    ASTNode::ExprFunctionCall { callee, generics: _, arguments } => {
-      emit_single(&*callee, emitter);
+    ASTNode::ExprFunctionCall { inner } => {
+      emit_single(&*inner.callee, emitter);
       emitter.out("(", false);
-      emitter.emit_vec(arguments.as_ref(), |argument, emitter| {
+      emitter.emit_vec(inner.arguments.as_ref(), |argument, emitter| {
         emit_single(argument, emitter);
         true
       }, ", ", ",");
@@ -621,7 +621,7 @@ fn emit_single(
 
       emit_single(&*expr, emitter);
     }
-    ASTNode::InfixOpr { left, opr, right } => {
+    ASTNode::InfixOpr { left_right, opr } => {
       let can_have_spaces = match opr.as_str() {
         "." => (false, false),
         "?." => (false, false),
@@ -633,7 +633,7 @@ fn emit_single(
         "instanceof" => true,
         _ => false
       };
-      emit_single(&*left, emitter);
+      emit_single(&left_right.0, emitter);
       if needs_spaces || (can_have_spaces.0 && !emitter.is_compact) {
         emitter.out(" ", false);
       }
@@ -641,7 +641,7 @@ fn emit_single(
       if needs_spaces || (can_have_spaces.1 && !emitter.is_compact) {
         emitter.out(" ", false);
       }
-      emit_single(&*right, emitter);
+      emit_single(&left_right.1, emitter);
     }
     ASTNode::PostfixOpr { expr, opr } => {
       emit_single(&*expr, emitter);
@@ -881,7 +881,7 @@ fn node_potentially_starts_with_symbol(node: &ASTNode) -> bool {
     ASTNode::Block { .. } => true,
 
     ASTNode::PrefixOpr { opr, .. } => !opr.chars().next().unwrap().is_alphanumeric(),
-    ASTNode::InfixOpr { left, .. } => node_potentially_starts_with_symbol(left),
+    ASTNode::InfixOpr { left_right, .. } => node_potentially_starts_with_symbol(&left_right.0),
     ASTNode::PostfixOpr { expr, .. } => node_potentially_starts_with_symbol(expr),
     ASTNode::Parenthesis { .. } => true,
 

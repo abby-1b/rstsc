@@ -209,15 +209,15 @@ impl CodeObfuscator {
         self.transform_node(body);
         self.pop_scope();
       }
-      ASTNode::StatementSwitch { condition, cases, default } => {
-        self.transform_node(condition);
-        for case in cases.iter_mut() {
+      ASTNode::StatementSwitch { inner } => {
+        self.transform_node(&mut inner.condition);
+        for case in inner.cases.iter_mut() {
           self.transform_node(&mut case.0);
           for part in case.1.iter_mut() {
             self.transform_node(part);
           }
         }
-        if let Some(parts) = default {
+        if let Some(parts) = &mut inner.default {
           for part in parts.iter_mut() {
             self.transform_node(part);
           }
@@ -233,9 +233,9 @@ impl CodeObfuscator {
           self.transform_destructure_pattern(&mut def.name);
         }
       }
-      ASTNode::InfixOpr { left, right, .. } => {
-        self.transform_node(left);
-        self.transform_node(right);
+      ASTNode::InfixOpr { left_right, .. } => {
+        self.transform_node(&mut left_right.0);
+        self.transform_node(&mut left_right.1);
       }
       ASTNode::PrefixOpr { expr, .. } => {
         self.transform_node(expr);
@@ -245,14 +245,14 @@ impl CodeObfuscator {
           self.transform_node(n);
         }
       }
-      ASTNode::ExprFunctionCall { callee, arguments, .. } => {
-        self.transform_node(callee);
-        for arg in arguments.iter_mut() {
+      ASTNode::ExprFunctionCall { inner } => {
+        self.transform_node(&mut inner.callee);
+        for arg in inner.arguments.iter_mut() {
           self.transform_node(arg);
         }
       }
-      ASTNode::ExprTemplateLiteral { parts, .. } => {
-        for part in parts.iter_mut() {
+      ASTNode::ExprTemplateLiteral { inner } => {
+        for part in inner.parts.iter_mut() {
           self.transform_node(&mut part.0);
         }
       }
@@ -540,9 +540,11 @@ impl CodeObfuscator {
               nodes: {
                 let mut v = SmallVec::new();
                 v.push(ASTNode::InfixOpr {
-                  left: Box::new(ASTNode::ExprNumLiteral { number: target.to_string() }),
+                  left_right: Box::new((
+                    ASTNode::ExprNumLiteral { number: target.to_string() },
+                    ASTNode::ExprNumLiteral { number: offset.to_string() }
+                  )),
                   opr: "-".to_string(),
-                  right: Box::new(ASTNode::ExprNumLiteral { number: offset.to_string() }),
                 });
                 v
               }
@@ -568,9 +570,11 @@ impl CodeObfuscator {
           let quote = part1.chars().next().unwrap().to_string();
 
           Some(ASTNode::InfixOpr {
-            left: Box::new(ASTNode::ExprStrLiteral { string: part1.to_string() + &quote }),
+            left_right: Box::new((
+              ASTNode::ExprStrLiteral { string: part1.to_string() + &quote },
+              ASTNode::ExprStrLiteral { string: quote.to_string() + part2 }
+            )),
             opr: "+".to_string(),
-            right: Box::new(ASTNode::ExprStrLiteral { string: quote.to_string() + part2 }),
           })
         } else {
           None
@@ -702,27 +706,35 @@ impl CodeObfuscator {
     if value {
       match self.rng.range(0, 4) {
         0 => ASTNode::InfixOpr {
-          left: Box::new(ASTNode::ExprNumLiteral { number: self.rng.range(0, 6).to_string() }),
+          left_right: Box::new((
+            ASTNode::ExprNumLiteral { number: self.rng.range(0, 6).to_string() },
+            ASTNode::ExprNumLiteral { number: self.rng.range(5, 10).to_string() }
+          )),
           opr: "<".to_owned(),
-          right: Box::new(ASTNode::ExprNumLiteral { number: self.rng.range(5, 10).to_string() }),
         },
         1 => ASTNode::InfixOpr {
-          left: Box::new(ASTNode::ExprNumLiteral { number: self.rng.range(5, 10).to_string() }),
+          left_right: Box::new((
+            ASTNode::ExprNumLiteral { number: self.rng.range(5, 10).to_string() },
+            ASTNode::ExprNumLiteral { number: self.rng.range(0, 6).to_string() }
+          )),
           opr: ">".to_owned(),
-          right: Box::new(ASTNode::ExprNumLiteral { number: self.rng.range(0, 6).to_string() }),
         },
         2 => {
           let shift_amount = self.rng.range(1, 7);
           ASTNode::InfixOpr {
-            left: Box::new(ASTNode::ExprNumLiteral { number: (1 << shift_amount).to_string() }),
+            left_right: Box::new((
+              ASTNode::ExprNumLiteral { number: (1 << shift_amount).to_string() },
+              ASTNode::ExprNumLiteral { number: (shift_amount).to_string() }
+            )),
             opr: ">>".to_owned(),
-            right: Box::new(ASTNode::ExprNumLiteral { number: (shift_amount).to_string() }),
           }
         },
         3 => ASTNode::InfixOpr {
-          left: Box::new(ASTNode::Array { nodes: SmallVec::new() }),
+          left_right: Box::new((
+            ASTNode::Array { nodes: SmallVec::new() },
+            ASTNode::Array { nodes: SmallVec::new() }
+          )),
           opr: "+".to_owned(),
-          right: Box::new(ASTNode::Array { nodes: SmallVec::new() }),
         },
         4 => ASTNode::ExprStrLiteral { string: "''".to_owned() },
         5 => ASTNode::ExprStrLiteral { string: "''".to_owned() },
@@ -731,24 +743,32 @@ impl CodeObfuscator {
     } else {
       match self.rng.range(0, 4) {
         0 => ASTNode::InfixOpr {
-          left: Box::new(ASTNode::ExprNumLiteral { number: self.rng.range(0, 6).to_string() }),
+          left_right: Box::new((
+            ASTNode::ExprNumLiteral { number: self.rng.range(0, 6).to_string() },
+            ASTNode::ExprNumLiteral { number: self.rng.range(5, 10).to_string() }
+          )),
           opr: ">".to_owned(),
-          right: Box::new(ASTNode::ExprNumLiteral { number: self.rng.range(5, 10).to_string() }),
         },
         1 => ASTNode::InfixOpr {
-          left: Box::new(ASTNode::ExprNumLiteral { number: self.rng.range(5, 10).to_string() }),
+          left_right: Box::new((
+            ASTNode::ExprNumLiteral { number: self.rng.range(5, 10).to_string() },
+            ASTNode::ExprNumLiteral { number: self.rng.range(0, 6).to_string() }
+          )),
           opr: "<".to_owned(),
-          right: Box::new(ASTNode::ExprNumLiteral { number: self.rng.range(0, 6).to_string() }),
         },
         2 => ASTNode::InfixOpr {
-          left: Box::new(ASTNode::ExprNumLiteral { number: self.rng.range(0, 10).to_string() }),
+          left_right: Box::new((
+            ASTNode::ExprNumLiteral { number: self.rng.range(0, 10).to_string() },
+            ASTNode::ExprNumLiteral { number: self.rng.range(3, 10).to_string() }
+          )),
           opr: ">>".to_owned(),
-          right: Box::new(ASTNode::ExprNumLiteral { number: self.rng.range(3, 10).to_string() }),
         },
         3 => ASTNode::InfixOpr {
-          left: Box::new(ASTNode::Array { nodes: SmallVec::new() }),
+          left_right: Box::new((
+            ASTNode::Array { nodes: SmallVec::new() },
+            ASTNode::Array { nodes: SmallVec::new() }
+          )),
           opr: "+".to_owned(),
-          right: Box::new(ASTNode::Array { nodes: SmallVec::new() }),
         },
         4 => ASTNode::ExprStrLiteral { string: "''".to_owned() },
         5 => ASTNode::ExprStrLiteral { string: "''".to_owned() },

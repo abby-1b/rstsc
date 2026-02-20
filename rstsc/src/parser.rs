@@ -1,9 +1,7 @@
 use phf::{phf_map, phf_set};
 use crate::{
   ast::{
-    ASTNode, ArrowFunctionDefinition, ClassDefinition, ClassMember,
-    EnumDeclaration, FunctionDefinition, GetterSetter, ImportDefinition,
-    IndividualImport, InterfaceDeclaration, ObjectProperty, TryCatchFinally
+    ASTNode, ArrowFunctionDefinition, ClassDefinition, ClassMember, EnumDeclaration, ExprFunctionCall, ExprRegexLiteral, ExprTemplateLiteral, FunctionDefinition, GetterSetter, ImportDefinition, IndividualImport, InterfaceDeclaration, ObjectProperty, Switch, TryCatchFinally
   }, ast_common::{ACCESSIBILITY_MODIFIERS, MODIFIERS, Modifier, ModifierList, VariableDefType}, declaration::{
     ComputableDeclarationName, Declaration, DeclarationComputable,
     DeclarationTyped, DestructurableDeclaration, DestructurePattern
@@ -524,11 +522,9 @@ fn handle_control_flow(
 
       tokens.skip_unchecked(); // Skip "}"
 
-      ASTNode::StatementSwitch {
-        condition: Box::new(condition),
-        cases,
-        default
-      }
+      ASTNode::StatementSwitch { inner: Box::new(Switch {
+        condition, cases, default
+      }) }
     }
     other => { panic!("Control flow not implemented: {}", other); }
   }))
@@ -837,13 +833,17 @@ fn get_constructor_after_name<'a, 'b>(
         DeclarationComputable::from(&declaration), modifiers
       ));
       set_properties.push(ASTNode::InfixOpr {
-        left: Box::new(ASTNode::InfixOpr {
-          left: Box::new(ASTNode::ExprIdentifier { name: "this".to_owned() }),
-          opr: ".".to_owned(),
-          right: Box::new(ASTNode::ExprIdentifier { name: declaration.name().clone() })
-        }),
+        left_right: Box::new((
+          ASTNode::InfixOpr {
+            left_right: Box::new((
+              ASTNode::ExprIdentifier { name: "this".to_owned() },
+              ASTNode::ExprIdentifier { name: declaration.name().clone() }
+            )),
+            opr: ".".to_owned(),
+          },
+          ASTNode::ExprIdentifier { name: declaration.name().clone() }
+        )),
         opr: "=".to_owned(),
-        right: Box::new(ASTNode::ExprIdentifier { name: declaration.name().clone() })
       })
     } else {
       params.push(get_destructurable_declaration(tokens, sp)?);
@@ -1641,7 +1641,7 @@ fn parse_string_template(
     }
   }
 
-  Ok(ASTNode::ExprTemplateLiteral { head, parts })
+  Ok(ASTNode::ExprTemplateLiteral { inner: Box::new(ExprTemplateLiteral { head, parts }) })
 }
 
 fn parse_regex(tokens: &mut TokenList) -> ASTNode {
@@ -1650,10 +1650,10 @@ fn parse_regex(tokens: &mut TokenList) -> ASTNode {
   let (pattern, flags) = val[1..].split_once('/')
     .unwrap_or((&val[1..], ""));
 
-  ASTNode::ExprRegexLiteral { 
+  ASTNode::ExprRegexLiteral { inner: Box::new(ExprRegexLiteral {
     pattern: pattern.to_string(), 
     flags: flags.to_string() 
-  }
+  }) }
 }
 
 fn parse_name(
@@ -1818,9 +1818,11 @@ fn parse_infix<'a, 'b>(
           }
         }
         return Ok(ASTNode::ExprFunctionCall {
-          callee: Box::new(left),
-          generics: SmallVec::new(),
-          arguments: separate_commas(inner)
+          inner: Box::new(ExprFunctionCall {
+            callee: Box::new(left),
+            generics: SmallVec::new(),
+            arguments: separate_commas(inner)
+          })
         })
       },
       "[" => return Ok(ASTNode::ExprIndexing {
@@ -1852,8 +1854,8 @@ fn parse_infix<'a, 'b>(
               typ: Type::Unknown
             },
             ASTNode::InfixOpr {
-              left, opr, ..
-            } if opr == "=" && matches!(*left, ASTNode::ExprIdentifier { .. }) => match *left {
+              left_right, opr, ..
+            } if opr == "=" && matches!(left_right.0, ASTNode::ExprIdentifier { .. }) => match left_right.0 {
               ASTNode::ExprIdentifier { name } => DestructurableDeclaration {
                 name: DestructurePattern::Identifier { name },
                 typ: Type::Unknown
@@ -1924,8 +1926,8 @@ fn parse_infix<'a, 'b>(
       if tokens.peek_str() == "(" {
         tokens.ignore_checkpoint(checkpoint);
         let mut fn_call = parse_infix(left, tokens, precedence, sp)?;
-        if let ASTNode::ExprFunctionCall { generics: inner_generics, .. } = &mut fn_call {
-          inner_generics.append(&mut generics);
+        if let ASTNode::ExprFunctionCall { inner } = &mut fn_call {
+          inner.generics.append(&mut generics);
         }
         return Ok(fn_call)
       }
@@ -1937,9 +1939,11 @@ fn parse_infix<'a, 'b>(
 
   // Normal infix
   Ok(ASTNode::InfixOpr {
-    left: Box::new(left),
+    left_right: Box::new((
+      left,
+      get_expression(tokens, precedence, sp)?
+    )),
     opr,
-    right: Box::new(get_expression(tokens, precedence, sp)?)
   })
 }
 
@@ -1947,11 +1951,11 @@ fn parse_infix<'a, 'b>(
 fn separate_commas(node: ASTNode) -> SmallVec<ASTNode> {
   match node {
     // Separate infix operations (but only if the operation is ",")
-    ASTNode::InfixOpr { left, ref opr, right } if opr == "," => {
+    ASTNode::InfixOpr { left_right, ref opr } if opr == "," => {
       // The size of the output vec is calculated from the sum
       // of both sides, so there's no wasted capacity.
-      let mut nodes = separate_commas(*left);
-      nodes.append(&mut separate_commas(*right));
+      let mut nodes = separate_commas(left_right.0);
+      nodes.append(&mut separate_commas(left_right.1));
       nodes
     }
 

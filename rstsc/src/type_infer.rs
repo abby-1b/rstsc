@@ -163,9 +163,9 @@ pub fn infer_types(
       r
     },
 
-    InfixOpr { left, opr, right } => {
-      let l = infer_types(left, sp);
-      let r = infer_types(right, sp);
+    InfixOpr { left_right, opr } => {
+      let l = infer_types(&left_right.0, sp);
+      let r = infer_types(&left_right.1, sp);
       let res = infix_result(opr.as_str(), l, r);
       res
     },

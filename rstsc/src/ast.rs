@@ -131,6 +131,38 @@ pub struct EnumDeclaration {
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
+pub struct Switch {
+  pub condition: ASTNode,
+  pub cases: SmallVec<(ASTNode, SmallVec<ASTNode>)>,
+  pub default: Option<SmallVec<ASTNode>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub struct NamespaceDeclaration {
+  name: String,
+  types: SmallVec<ASTNode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub struct ExprTemplateLiteral {
+  pub head: String,
+  pub parts: SmallVec<(ASTNode, String)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub struct ExprFunctionCall {
+  pub callee: Box<ASTNode>,
+  pub generics: SmallVec<Type>,
+  pub arguments: SmallVec<ASTNode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub struct ExprRegexLiteral {
+  pub pattern: String,
+  pub flags: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub enum ASTNode {
   /// A block of code
   Block { nodes: SmallVec<ASTNode> },
@@ -174,11 +206,7 @@ pub enum ASTNode {
     body: Box<ASTNode>
   },
 
-  StatementSwitch {
-    condition: Box<ASTNode>,
-    cases: SmallVec<(ASTNode, SmallVec<ASTNode>)>,
-    default: Option<SmallVec<ASTNode>>
-  },
+  StatementSwitch { inner: Box<Switch> },
 
   StatementReturn { value: Option<Box<ASTNode>> },
   StatementBreak { value: Option<Box<ASTNode>> },
@@ -203,15 +231,11 @@ pub enum ASTNode {
   ExprIdentifier { name: String },
   ExprNumLiteral { number: String },
   ExprStrLiteral { string: String },
-  ExprRegexLiteral { pattern: String, flags: String },
-  ExprTemplateLiteral { head: String, parts: SmallVec<(ASTNode, String)> },
+  ExprRegexLiteral { inner: Box<ExprRegexLiteral> },
+  ExprTemplateLiteral { inner: Box<ExprTemplateLiteral> },
   ExprBoolLiteral { value: bool },
 
-  ExprFunctionCall {
-    callee: Box<ASTNode>,
-    generics: SmallVec<Type>,
-    arguments: SmallVec<ASTNode>,
-  },
+  ExprFunctionCall { inner: Box<ExprFunctionCall> },
   TemplateLiteralTag {
     callee: Box<ASTNode>,
     argument: Box<ASTNode>,
@@ -226,7 +250,7 @@ pub enum ASTNode {
   },
 
   PrefixOpr { opr: String, expr: Box<ASTNode> },
-  InfixOpr { left: Box<ASTNode>, opr: String, right: Box<ASTNode> },
+  InfixOpr { left_right: Box<(ASTNode, ASTNode)>, opr: String },
   PostfixOpr { expr: Box<ASTNode>, opr: String },
   NonNullAssertion { expr: Box<ASTNode> },
 
@@ -248,10 +272,7 @@ pub enum ASTNode {
   InterfaceDeclaration { inner: Box<InterfaceDeclaration> },
 
   /// `declare namespace X { ... }`
-  DeclareNamespace {
-    name: String,
-    types: Vec<ASTNode>,
-  },
+  DeclareNamespace { inner: Box<NamespaceDeclaration> },
 
   /// Used in situations like `[ 1, 2, ]` where there's an empty expression
   Empty
