@@ -1,7 +1,7 @@
 use phf::{phf_map, phf_set};
 use crate::{
   ast::{
-    ASTNode, ArrowFunctionDefinition, ClassDefinition, ClassMember, EnumDeclaration, ExprFunctionCall, ExprRegexLiteral, ExprTemplateLiteral, FunctionDefinition, GetterSetter, ImportDefinition, IndividualImport, InterfaceDeclaration, ObjectProperty, Switch, TryCatchFinally
+    ASTIndex, ASTNode, ArrowFunctionDefinition, ClassDefinition, ClassMember, EnumDeclaration, ExprFunctionCall, ExprRegexLiteral, ExprTemplateLiteral, FunctionDefinition, GetterSetter, ImportDefinition, IndividualImport, InterfaceDeclaration, ObjectProperty, Switch, TryCatchFinally
   }, ast_common::{ACCESSIBILITY_MODIFIERS, MODIFIERS, Modifier, ModifierList, VariableDefType}, declaration::{
     ComputableDeclarationName, Declaration, DeclarationComputable,
     DeclarationTyped, DestructurableDeclaration, DestructurePattern
@@ -45,7 +45,8 @@ pub static DISALLOWED_VARIABLE_NAMES: phf::Set<&'static str> = phf_set! {
 pub fn get_block(
   tokens: &mut TokenList,
   sp: &mut SourceProperties
-) -> Result<ASTNode, CompilerError> {
+) -> Result<ASTIndex, CompilerError> {
+  let arena_idx = sp.arena.add(ASTNode::Empty);
   let mut nodes = SmallVec::new();
 
   // Go through the tokens list
@@ -58,14 +59,13 @@ pub fn get_block(
   }
 
   // Remove trailing empty
-  if let Some(node) = nodes.last() {
-    if matches!(node, ASTNode::Empty) {
-      nodes.pop();
-    }
+  if nodes.last().is_some_and(|i| *sp.arena.get(*i) == ASTNode::Empty) {
+    nodes.pop();
   }
 
   // Return the program node
-  Ok(ASTNode::Block { nodes })
+  sp.arena.set(arena_idx, ASTNode::Block { nodes });
+  Ok(arena_idx)
 }
 
 /// Gets a single statement, until it reaches either a `;` or a group end
@@ -74,12 +74,12 @@ pub fn get_block(
 fn get_single_statement<'a, 'b>(
   tokens: &'b mut TokenList,
   sp: &mut SourceProperties
-) -> Result<ASTNode, CompilerError> where 'a: 'b {
+) -> Result<ASTIndex, CompilerError> where 'a: 'b {
   tokens.ignore_whitespace();
   if tokens.is_done() {
-    return Ok(ASTNode::Empty);
+    return Ok(sp.arena.add(ASTNode::Empty));
   }
-  
+
   let ret = match tokens.peek_str() {
     "{" => handle_block(tokens, sp)?.unwrap(),
     "var" | "let" | "const" => handle_var(tokens, sp)?.unwrap(),
@@ -110,7 +110,7 @@ fn get_single_statement<'a, 'b>(
 fn handle_block(
   tokens: &mut TokenList,
   sp: &mut SourceProperties
-) -> Result<Option<ASTNode>, CompilerError> {
+) -> Result<Option<ASTIndex>, CompilerError> {
   if tokens.peek_str() != "{" {
     return Ok(None);
   }
@@ -122,7 +122,7 @@ fn handle_block(
 fn handle_var<'a, 'b>(
   tokens: &'b mut TokenList,
   sp: &mut SourceProperties
-) -> Result<Option<ASTNode>, CompilerError> where 'a: 'b {
+) -> Result<Option<ASTIndex>, CompilerError> where 'a: 'b {
   if !VARIABLE_DECLARATIONS.contains(&tokens.peek_str()) {
     return Ok(None);
   }
@@ -137,11 +137,11 @@ fn handle_var<'a, 'b>(
   // Get the variable definitions
   let (defs, _) = get_multiple_destructurable_declarations(tokens, false, sp)?;
 
-  Ok(Some(ASTNode::VariableDeclaration {
+  Ok(Some(sp.arena.add(ASTNode::VariableDeclaration {
     modifiers: ModifierList::new(),
     def_type,
     defs
-  }))
+  })))
 }
 
 fn get_variable_def_type<'b>(
@@ -176,7 +176,7 @@ fn get_declaration<'a, 'b>(
     name.clone(),
     SymbolOrigin::Variable,
     if let Some(value) = &value {
-      infer_types(&value, sp)
+      infer_types(*value, sp)
     } else {
       Type::Unknown
     }
@@ -189,7 +189,7 @@ fn get_declaration<'a, 'b>(
 fn get_declaration_after_name<'a, 'b>(
   tokens: &'b mut TokenList,
   sp: &mut SourceProperties,
-) -> Result<(Type, Option<ASTNode>), CompilerError> where 'a: 'b {
+) -> Result<(Type, Option<ASTIndex>), CompilerError> where 'a: 'b {
   let typ = if tokens.try_skip_and_ignore_whitespace("?") {
     if tokens.peek_str() != ":" {
       return Err(CompilerError::new(
@@ -215,7 +215,13 @@ fn get_declaration_after_name<'a, 'b>(
   tokens.ignore_whitespace();
   let value = if tokens.peek_str() == "=" {
     tokens.skip_unchecked();
-    Some(get_expression(tokens, *crate::operations::COMMA_PRECEDENCE, sp)?)
+    Some(
+      get_expression(
+        tokens,
+        *crate::operations::COMMA_PRECEDENCE,
+        sp
+      )?
+    )
   } else {
     None
   };
@@ -236,7 +242,7 @@ fn get_destructurable_declaration<'a, 'b>(
       identifier_name.clone(),
       SymbolOrigin::Variable,
       if let Some(init) = &initializer {
-        infer_types(init, sp)
+        infer_types(*init, sp)
       } else {
         Type::Unknown
       }
@@ -431,7 +437,7 @@ fn try_parse_destructure_pattern_initializer(
 fn handle_control_flow(
   tokens: &mut TokenList,
   sp: &mut SourceProperties,
-) -> Result<Option<ASTNode>, CompilerError> {
+) -> Result<Option<ASTIndex>, CompilerError> {
   const CONTROL_FLOW: &[&str] = &[ "if", "while", "for", "switch" ];
   if !CONTROL_FLOW.contains(&tokens.peek_str()) {
     return Ok(None);
@@ -457,20 +463,13 @@ fn handle_control_flow(
 
         let alternate = if tokens.peek_str() == "else" {
           tokens.skip_unchecked();
-          Some(Box::new(get_single_statement(tokens, sp)?))
+          Some(get_single_statement(tokens, sp)?)
         } else {
           None
         };
-        ASTNode::StatementIf {
-          condition: Box::new(condition),
-          body: Box::new(body),
-          alternate
-        }
+        sp.arena.add(ASTNode::StatementIf { condition, body, alternate })
       } else {
-        ASTNode::StatementWhile {
-          condition: Box::new(condition),
-          body: Box::new(body)
-        }
+        sp.arena.add(ASTNode::StatementWhile { condition, body })
       }
     },
     "for" => handle_for_loop(tokens, sp)?,
@@ -522,9 +521,9 @@ fn handle_control_flow(
 
       tokens.skip_unchecked(); // Skip "}"
 
-      ASTNode::StatementSwitch { inner: Box::new(Switch {
+      sp.arena.add(ASTNode::StatementSwitch { inner: Box::new(Switch {
         condition, cases, default
-      }) }
+      }) })
     }
     other => { panic!("Control flow not implemented: {}", other); }
   }))
@@ -533,58 +532,45 @@ fn handle_control_flow(
 fn handle_for_loop(
   tokens: &mut TokenList,
   sp: &mut SourceProperties,
-) -> Result<ASTNode, CompilerError> {
+) -> Result<ASTIndex, CompilerError> {
   tokens.skip("(")?;
   tokens.ignore_whitespace();
   let init = if tokens.peek_str() == ";" {
-    ASTNode::Empty
+    sp.arena.add(ASTNode::Empty)
   } else if VARIABLE_DECLARATIONS.contains(&tokens.peek_str()) {
     let def_typ = get_variable_def_type(tokens)?;
     let defs = get_multiple_destructurable_declarations(tokens, false, sp)?.0;
-    ASTNode::VariableDeclaration {
+    sp.arena.add(ASTNode::VariableDeclaration {
       modifiers: ModifierList::new(),
       def_type: def_typ,
       defs
-    }
+    })
   } else {
     get_expression(tokens, 0, sp)?
   };
-    tokens.ignore_whitespace();
-    Ok(if tokens.try_skip_and_ignore_whitespace(";") {
+  tokens.ignore_whitespace();
+  Ok(if tokens.try_skip_and_ignore_whitespace(";") {
     let condition = get_single_statement(tokens, sp)?;
     let update = get_single_statement(tokens, sp)?;
 
     tokens.skip(")")?;
     let body = get_single_statement(tokens, sp)?;
 
-    ASTNode::StatementFor {
-      init: Box::new(init),
-      condition: Box::new(condition),
-      update: Box::new(update),
-      body: Box::new(body)
-    }
+    sp.arena.add(ASTNode::StatementFor { init, condition, update, body })
   } else if tokens.try_skip_and_ignore_whitespace("of") {
     let expression = get_expression(tokens, 0, sp)?;
 
     tokens.skip(")")?;
     let body = get_single_statement(tokens, sp)?;
 
-    ASTNode::StatementForOf {
-      init: Box::new(init),
-      expression: Box::new(expression),
-      body: Box::new(body)
-    }
+    sp.arena.add(ASTNode::StatementForOf { init, expression, body })
   } else if tokens.try_skip_and_ignore_whitespace("in") {
     let expression = get_expression(tokens, 0, sp)?;
     
     tokens.skip(")")?;
     let body = get_single_statement(tokens, sp)?;
 
-    ASTNode::StatementForIn {
-      init: Box::new(init),
-      expression: Box::new(expression),
-      body: Box::new(body)
-    }
+    sp.arena.add(ASTNode::StatementForIn { init, expression, body })
   } else {
     return Err(CompilerError::new(
       "Expected `;`, `of`, or `in` in for loop".to_owned(),
@@ -595,7 +581,7 @@ fn handle_for_loop(
 
 // fn get_for_header(
 //   tokens: &mut TokenList
-// ) -> Result<Option<ASTNode>, CompilerError> {
+// ) -> Result<Option<ASTIndex>, CompilerError> {
   
 // }
 
@@ -603,7 +589,7 @@ fn handle_for_loop(
 fn handle_import(
   tokens: &mut TokenList,
   sp: &mut SourceProperties,
-) -> Result<Option<ASTNode>, CompilerError> {
+) -> Result<Option<ASTIndex>, CompilerError> {
   if tokens.peek_str() != "import" {
     return Ok(None);
   }
@@ -687,7 +673,7 @@ fn handle_import(
   }
   let source = tokens.consume_type(TokenType::String)?.value.to_owned();
 
-  Ok(Some(ASTNode::StatementImport { inner: Box::new(if let Some(default_alias) = default_alias {
+  Ok(Some(sp.arena.add(ASTNode::StatementImport { inner: Box::new(if let Some(default_alias) = default_alias {
     ImportDefinition::DefaultAliased { source, alias: default_alias }
   } else if let Some(wildcard) = wildcard {
     ImportDefinition::AllAsAlias { source, alias: wildcard }
@@ -695,14 +681,14 @@ fn handle_import(
     ImportDefinition::Individual { source, parts: individual }
   } else {
     ImportDefinition::SourceOnly { source }
-  }) }))
+  }) })))
 }
 
 /// Handles `return`, `break`, `continue`, and `throw`
 fn handle_other_statements(
   tokens: &mut TokenList,
   sp: &mut SourceProperties,
-) -> Result<Option<ASTNode>, CompilerError> {
+) -> Result<Option<ASTIndex>, CompilerError> {
   const STATEMENT_NAMES: &[&str] = &[
     "return",
     "break",
@@ -717,16 +703,16 @@ fn handle_other_statements(
   tokens.ignore_whitespace();
 
   let value = if tokens.peek_str() != ";" {
-    Some(Box::new(get_expression(tokens, 0, sp)?))
+    Some(get_expression(tokens, 0, sp)?)
   } else {
     None
   };
 
   Ok(Some(match statement_type.as_str() {
-    "return" => ASTNode::StatementReturn { value },
-    "break" => ASTNode::StatementBreak { value },
-    "continue" => ASTNode::StatementContinue { value },
-    "throw" => ASTNode::StatementThrow { value },
+    "return" => sp.arena.add(ASTNode::StatementReturn { value }),
+    "break" => sp.arena.add(ASTNode::StatementBreak { value }),
+    "continue" => sp.arena.add(ASTNode::StatementContinue { value }),
+    "throw" => sp.arena.add(ASTNode::StatementThrow { value }),
     other => { panic!("Statement not implemented: {}", other); }
   }))
 }
@@ -734,7 +720,7 @@ fn handle_other_statements(
 fn handle_function_declaration<'a, 'b>(
   tokens: &'b mut TokenList,
   sp: &mut SourceProperties,
-) -> Result<Option<ASTNode>, CompilerError> where 'a: 'b {
+) -> Result<Option<ASTIndex>, CompilerError> where 'a: 'b {
   if tokens.peek_str() != "function" {
     return Ok(None);
   }
@@ -751,9 +737,10 @@ fn handle_function_declaration<'a, 'b>(
     None
   };
 
-  Ok(Some(ASTNode::FunctionDefinition {
-    inner: Box::new(get_function_after_name(tokens, name, sp)?)
-  }))
+  let func = get_function_after_name(tokens, name, sp)?;
+  Ok(Some(sp.arena.add(ASTNode::FunctionDefinition {
+    inner: Box::new(func)
+  })))
 }
 
 /// Gets a function once the name has been consumed.
@@ -818,7 +805,7 @@ fn get_constructor_after_name<'a, 'b>(
   
   // Get parameters
   let mut params: SmallVec<DestructurableDeclaration> = SmallVec::new();
-  let mut set_properties: SmallVec<ASTNode> = SmallVec::new();
+  let mut set_properties: SmallVec<ASTIndex> = SmallVec::new();
   let mut rest = Rest::new();
   tokens.skip("(")?;
   while tokens.peek_str() != ")" {
@@ -832,19 +819,19 @@ fn get_constructor_after_name<'a, 'b>(
       members.push(ClassMember::Property(
         DeclarationComputable::from(&declaration), modifiers
       ));
-      set_properties.push(ASTNode::InfixOpr {
-        left_right: Box::new((
-          ASTNode::InfixOpr {
-            left_right: Box::new((
-              ASTNode::ExprIdentifier { name: "this".to_owned() },
-              ASTNode::ExprIdentifier { name: declaration.name().clone() }
-            )),
-            opr: ".".to_owned(),
-          },
-          ASTNode::ExprIdentifier { name: declaration.name().clone() }
-        )),
+      let this_node = sp.arena.add(ASTNode::ExprIdentifier { name: "this".to_owned() });
+      let decl_node = sp.arena.add(ASTNode::ExprIdentifier { name: declaration.name().clone() });
+      let left_right = (
+        sp.arena.add(ASTNode::InfixOpr {
+          left_right: (this_node, decl_node),
+          opr: ".".to_owned(),
+        }),
+        sp.arena.add(ASTNode::ExprIdentifier { name: declaration.name().clone() }),
+      );
+      set_properties.push(sp.arena.add(ASTNode::InfixOpr {
+        left_right,
         opr: "=".to_owned(),
-      })
+      }))
     } else {
       params.push(get_destructurable_declaration(tokens, sp)?);
     }
@@ -866,8 +853,8 @@ fn get_constructor_after_name<'a, 'b>(
     None
   } else {
     tokens.skip("{")?;
-    let mut body = get_block(tokens, sp)?;
-    match &mut body {
+    let body = get_block(tokens, sp)?;
+    match sp.arena.get_mut(body) {
       ASTNode::Block { nodes } => {
         nodes.append_front(&mut set_properties);
         Some(body)
@@ -895,7 +882,7 @@ fn get_constructor_after_name<'a, 'b>(
 fn handle_class_declaration<'a, 'b>(
   tokens: &'b mut TokenList,
   sp: &mut SourceProperties,
-) -> Result<Option<ASTNode>, CompilerError> where 'a: 'b {
+) -> Result<Option<ASTIndex>, CompilerError> where 'a: 'b {
   if tokens.peek_str() != "class" {
     return Ok(None);
   }
@@ -905,7 +892,7 @@ fn handle_class_declaration<'a, 'b>(
 fn get_class_expression<'a, 'b>(
   tokens: &'b mut TokenList,
   sp: &mut SourceProperties,
-) -> Result<ASTNode, CompilerError> where 'a: 'b {
+) -> Result<ASTIndex, CompilerError> where 'a: 'b {
   tokens.skip_unchecked(); // Skip "class"
   tokens.ignore_whitespace();
 
@@ -1075,7 +1062,7 @@ fn get_class_expression<'a, 'b>(
   }
   tokens.skip("}")?; // Skip body "}"
 
-  Ok(ASTNode::ClassDefinition { inner: Box::new(ClassDefinition {
+  Ok(sp.arena.add(ASTNode::ClassDefinition { inner: Box::new(ClassDefinition {
     modifiers: ModifierList::new(),
     name,
     generics,
@@ -1083,7 +1070,7 @@ fn get_class_expression<'a, 'b>(
     implements,
     kv_maps,
     members
-  }) })
+  }) }))
 }
 
 struct TypedHeader {
@@ -1140,7 +1127,7 @@ fn get_typed_header(
 fn handle_modifiers(
   tokens: &mut TokenList,
   sp: &mut SourceProperties,
-) -> Result<Option<ASTNode>, CompilerError> {
+) -> Result<Option<ASTIndex>, CompilerError> {
   if !MODIFIERS.contains(&tokens.peek_str()) {
     return Ok(None);
   }
@@ -1199,14 +1186,14 @@ fn handle_modifiers(
 
     tokens.skip("}")?;
 
-    Ok(Some(ASTNode::StatementExport { 
+    Ok(Some(sp.arena.add(ASTNode::StatementExport { 
       inner: Box::new(crate::ast::ExportDeclaration { specifiers }) 
-    }))
+    })))
   } else {
     // Get the node that goes after the modifiers
-    let mut node_after_modifiers = get_single_statement(tokens, sp)?;
+    let node_after_modifiers = get_single_statement(tokens, sp)?;
 
-    node_after_modifiers.apply_modifiers(modifiers)?;
+    sp.arena.get_mut(node_after_modifiers).apply_modifiers(modifiers)?;
     Ok(Some(node_after_modifiers))
   }
 
@@ -1243,7 +1230,7 @@ fn fetch_modifier_list(tokens: &mut TokenList) -> ModifierList {
 fn handle_type_declaration(
   tokens: &mut TokenList,
   sp: &mut SourceProperties,
-) -> Result<Option<ASTNode>, CompilerError> {
+) -> Result<Option<ASTIndex>, CompilerError> {
   if tokens.peek_str() != "type" {
     return Ok(None);
   }
@@ -1274,20 +1261,20 @@ fn handle_type_declaration(
   // Get the second type
   let equals_typ = get_type(tokens, sp)?;
 
-  Ok(Some(ASTNode::InterfaceDeclaration { inner: Box::new(InterfaceDeclaration {
+  Ok(Some(sp.arena.add(ASTNode::InterfaceDeclaration { inner: Box::new(InterfaceDeclaration {
     modifiers: ModifierList::new(),
     name,
     generics,
     extends,
     equals_type: equals_typ
-  }) }))
+  }) })))
 }
 
 fn handle_enum(
   tokens: &mut TokenList,
   is_const: bool,
   sp: &mut SourceProperties
-) -> Result<Option<ASTNode>, CompilerError> {
+) -> Result<Option<ASTIndex>, CompilerError> {
   if tokens.peek_str() != "enum" {
     return Ok(None)
   }
@@ -1308,7 +1295,7 @@ fn handle_enum(
   tokens.skip("{")?;
 
   let mut counter: u32 = 0;
-  let mut members: SmallVec<(String, ASTNode)> = SmallVec::new();
+  let mut members: SmallVec<(String, ASTIndex)> = SmallVec::new();
 
   while !tokens.is_done() {
     tokens.ignore_whitespace();
@@ -1333,7 +1320,7 @@ fn handle_enum(
     } else {
       let number = counter.to_string();
       counter += 1;
-      ASTNode::ExprNumLiteral { number }
+      sp.arena.add(ASTNode::ExprNumLiteral { number })
     };
     members.push((name, value));
 
@@ -1343,18 +1330,18 @@ fn handle_enum(
 
   tokens.skip("}")?;
 
-  Ok(Some(ASTNode::EnumDeclaration { inner: Box::new(EnumDeclaration {
+  Ok(Some(sp.arena.add(ASTNode::EnumDeclaration { inner: Box::new(EnumDeclaration {
     modifiers: ModifierList::new(),
     name,
     members,
     is_const,
-  }) }))
+  }) })))
 }
 
 fn handle_interface(
   tokens: &mut TokenList,
   sp: &mut SourceProperties,
-) -> Result<Option<ASTNode>, CompilerError> {
+) -> Result<Option<ASTIndex>, CompilerError> {
   if tokens.peek_str() != "interface" {
     return Ok(None);
   }
@@ -1451,7 +1438,7 @@ fn handle_interface(
   let mut equals_type = Type::Intersection(SmallVec::new());
   if function_types.inner_count() != 0 { equals_type.intersection(function_types); }
   if named_dict.inner_count() != 0 { equals_type.intersection(named_dict); }
-  Ok(Some(ASTNode::InterfaceDeclaration { inner: Box::new(InterfaceDeclaration {
+  Ok(Some(sp.arena.add(ASTNode::InterfaceDeclaration { inner: Box::new(InterfaceDeclaration {
     modifiers: ModifierList::new(),
     name,
     generics,
@@ -1466,13 +1453,13 @@ fn handle_interface(
     } else {
       equals_type
     }
-  }) }))
+  }) })))
 }
 
 fn handle_try_catch(
   tokens: &mut TokenList,
   sp: &mut SourceProperties,
-) -> Result<Option<ASTNode>, CompilerError> {
+) -> Result<Option<ASTIndex>, CompilerError> {
   if tokens.peek_str() != "try" {
     return Ok(None);
   }
@@ -1538,7 +1525,7 @@ fn handle_try_catch(
     ))
   }
 
-  return Ok(Some(ASTNode::StatementTryCatchFinally {
+  return Ok(Some(sp.arena.add(ASTNode::StatementTryCatchFinally {
     inner: Box::new(TryCatchFinally {
       block_try,
       capture_catch,
@@ -1546,13 +1533,13 @@ fn handle_try_catch(
       block_catch,
       block_finally
     })
-  }));
+  })));
 }
 
 fn handle_declare(
   tokens: &mut TokenList,
   sp: &mut SourceProperties,
-) -> Result<Option<ASTNode>, CompilerError> {
+) -> Result<Option<ASTIndex>, CompilerError> {
   if tokens.peek_str() != "declare" {
     return Ok(None);
   }
@@ -1566,18 +1553,21 @@ fn handle_declare(
   tokens.skip_unchecked();
   let _discarded_block = get_block(tokens, sp);
 
-  Ok(Some(ASTNode::Empty))
+  Ok(Some(sp.arena.add(ASTNode::Empty)))
 }
 
 /// Handles expressions. Basically a soft wrapper around `get_expression`
 fn handle_expression(
   tokens: &mut TokenList,
   sp: &mut SourceProperties,
-) -> Result<ASTNode, CompilerError> {
+) -> Result<ASTIndex, CompilerError> {
   get_expression(tokens, 0, sp)
 }
 
-fn parse_number(tokens: &mut TokenList) -> Result<ASTNode, CompilerError> {
+fn parse_number(
+  tokens: &mut TokenList,
+  sp: &mut SourceProperties,
+) -> Result<ASTIndex, CompilerError> {
   let mut number = tokens.consume().value.to_owned();
   let p = tokens.peek();
   if p.typ == TokenType::Identifier {
@@ -1593,24 +1583,27 @@ fn parse_number(tokens: &mut TokenList) -> Result<ASTNode, CompilerError> {
     }
     tokens.skip_unchecked();
   }
-  Ok(ASTNode::ExprNumLiteral { number })
+  Ok(sp.arena.add(ASTNode::ExprNumLiteral { number }))
 }
 
-fn parse_string(tokens: &mut TokenList) -> ASTNode {
-  ASTNode::ExprStrLiteral {
+fn parse_string(
+  tokens: &mut TokenList,
+  sp: &mut SourceProperties,
+) -> ASTIndex {
+  sp.arena.add(ASTNode::ExprStrLiteral {
     string: tokens.consume().value.to_string()
-  }
+  })
 }
 
 fn parse_string_template(
   tokens: &mut TokenList,
   sp: &mut SourceProperties,
-) -> Result<ASTNode, CompilerError> {
+) -> Result<ASTIndex, CompilerError> {
   let head_token = tokens.consume();
   if head_token.typ == TokenType::String {
-    return Ok(ASTNode::ExprStrLiteral {
+    return Ok(sp.arena.add(ASTNode::ExprStrLiteral {
       string: head_token.value.to_string()
-    });
+    }));
   }
 
   let head = head_token.value[1..head_token.value.len() - 2].to_owned();
@@ -1641,33 +1634,38 @@ fn parse_string_template(
     }
   }
 
-  Ok(ASTNode::ExprTemplateLiteral { inner: Box::new(ExprTemplateLiteral { head, parts }) })
+  Ok(sp.arena.add(ASTNode::ExprTemplateLiteral {
+    inner: Box::new(ExprTemplateLiteral { head, parts })
+  }))
 }
 
-fn parse_regex(tokens: &mut TokenList) -> ASTNode {
+fn parse_regex(
+  tokens: &mut TokenList,
+  sp: &mut SourceProperties,
+) -> ASTIndex {
   let val = tokens.consume().value;
 
   let (pattern, flags) = val[1..].split_once('/')
     .unwrap_or((&val[1..], ""));
 
-  ASTNode::ExprRegexLiteral { inner: Box::new(ExprRegexLiteral {
+  sp.arena.add(ASTNode::ExprRegexLiteral { inner: Box::new(ExprRegexLiteral {
     pattern: pattern.to_string(), 
     flags: flags.to_string() 
-  }) }
+  }) })
 }
 
 fn parse_name(
   tokens: &mut TokenList,
   sp: &mut SourceProperties,
-) -> Result<ASTNode, CompilerError> {
+) -> Result<ASTIndex, CompilerError> {
   let token = tokens.consume();
   match token.value {
-    "true" => { Ok(ASTNode::ExprBoolLiteral { value: true }) }
-    "false" => { Ok(ASTNode::ExprBoolLiteral { value: false }) }
+    "true" => { Ok(sp.arena.add(ASTNode::ExprBoolLiteral { value: true })) }
+    "false" => { Ok(sp.arena.add(ASTNode::ExprBoolLiteral { value: false })) }
     name => {
       // Mark symbol as used (not in type context)
       sp.st.mark_used(&token, tokens)?;
-      Ok(ASTNode::ExprIdentifier { name: name.to_string() }) 
+      Ok(sp.arena.add(ASTNode::ExprIdentifier { name: name.to_string() }))
     }
   }
 }
@@ -1676,13 +1674,13 @@ fn parse_prefix(
   tokens: &mut TokenList,
   precedence: u8,
   sp: &mut SourceProperties,
-) -> Result<ASTNode, CompilerError> {
+) -> Result<ASTIndex, CompilerError> {
   let prefix_start = tokens.consume().value.to_string();
 
   let is_grouping = [ "(", "[" ].contains(&prefix_start.as_str());
   if is_grouping {
     // Groupings get special treatment!
-    let nodes = separate_commas(get_expression(tokens, 0, sp)?);
+    let nodes = separate_commas(get_expression(tokens, 0, sp)?, sp);
     let ret = match prefix_start.as_str() {
       "(" => ASTNode::Parenthesis { nodes },
       "[" => ASTNode::Array { nodes },
@@ -1692,7 +1690,7 @@ fn parse_prefix(
     };
     let group_end = INVERSE_GROUPINGS[prefix_start.as_str()];
     tokens.skip(group_end)?; // Skip grouping close ")" or "]"
-    Ok(ret)
+    Ok(sp.arena.add(ret))
   } else if prefix_start == "{" {
     // Dicts get even more special treatment!
     let mut properties = SmallVec::new();
@@ -1712,13 +1710,13 @@ fn parse_prefix(
         // Identifier, String, Number, or computed key
         let (computed, key) = match (&key_token.typ, key_token.value) {
           (TokenType::Identifier, _) => {
-            (false, ASTNode::ExprIdentifier { name: tokens.consume().value.to_string() })
+            (false, sp.arena.add(ASTNode::ExprIdentifier { name: tokens.consume().value.to_string() }))
           },
           (TokenType::String, _) => {
-            (false, ASTNode::ExprStrLiteral { string: tokens.consume().value.to_string() })
+            (false, sp.arena.add(ASTNode::ExprStrLiteral { string: tokens.consume().value.to_string() }))
           },
           (TokenType::Number, _) => {
-            (false, ASTNode::ExprNumLiteral { number: tokens.consume().value.to_string() })
+            (false, sp.arena.add(ASTNode::ExprNumLiteral { number: tokens.consume().value.to_string() }))
           }
           (TokenType::Symbol, "[") => {
             // Computed key
@@ -1740,7 +1738,7 @@ fn parse_prefix(
   
         // Skip ":"
         tokens.ignore_whitespace();
-        if let ASTNode::ExprIdentifier { name } = &key {
+        if let ASTNode::ExprIdentifier { name } = sp.arena.get(key) {
           if tokens.peek_str() != ":" {
             properties.push(ObjectProperty::Shorthand { key: name.clone() });
             tokens.ignore_commas();
@@ -1766,35 +1764,33 @@ fn parse_prefix(
     }
     tokens.skip("}")?;
 
-    Ok(ASTNode::Dict { properties })
+    Ok(sp.arena.add(ASTNode::Dict { properties }))
   } else {
-    Ok(ASTNode::PrefixOpr {
-      opr: prefix_start,
-      expr: Box::new(get_expression(tokens, precedence, sp)?)
-    })
+    let expr = get_expression(tokens, precedence, sp)?;
+    Ok(sp.arena.add(ASTNode::PrefixOpr {
+      opr: prefix_start, expr
+    }))
   }
 }
 
 /// Parses an infix operator. Ran when the current token is known to be infix.
 fn parse_infix<'a, 'b>(
-  left: ASTNode,
+  left: ASTIndex,
   tokens: &'b mut TokenList,
   precedence: u8,
   sp: &mut SourceProperties,
-) -> Result<ASTNode, CompilerError> where 'a: 'b {
+) -> Result<ASTIndex, CompilerError> where 'a: 'b {
 
-  if let ASTNode::ExprIdentifier { name } = &left {
-    if name == "async" {
-      if tokens.peek_str() == "(" {
-        let mut arrow_fn = parse_arrow_function(tokens, sp)?;
-        match &mut arrow_fn {
-          ASTNode::ArrowFunctionDefinition { inner } => {
-            inner.is_async = true;
-          }
-          _ => unreachable!()
+  if let ASTNode::ExprIdentifier { name } = sp.arena.get(left) {
+    if name == "async" && tokens.peek_str() == "(" {
+      let arrow_fn = parse_arrow_function(tokens, sp)?;
+      match sp.arena.get_mut(arrow_fn) {
+        ASTNode::ArrowFunctionDefinition { inner } => {
+          inner.is_async = true;
         }
-        return Ok(arrow_fn);
+        _ => unreachable!()
       }
+      return Ok(arrow_fn);
     }
   }
 
@@ -1811,24 +1807,27 @@ fn parse_infix<'a, 'b>(
 
     match opr.as_str() {
       "(" => {
-        if let ASTNode::ExprIdentifier { name } = &left {
+        if let ASTNode::ExprIdentifier { name } = sp.arena.get(left) {
           if name == "import" {
             // Dynamic import
-            return Ok(ASTNode::ExpressionImport { value: Box::new(inner) });
+            return Ok(sp.arena.add(ASTNode::ExpressionImport {
+              value: inner
+            }));
           }
         }
-        return Ok(ASTNode::ExprFunctionCall {
+        let arguments = separate_commas(inner, sp);
+        return Ok(sp.arena.add(ASTNode::ExprFunctionCall {
           inner: Box::new(ExprFunctionCall {
-            callee: Box::new(left),
+            callee: left,
             generics: SmallVec::new(),
-            arguments: separate_commas(inner)
+            arguments
           })
-        })
+        }))
       },
-      "[" => return Ok(ASTNode::ExprIndexing {
-        callee: Box::new(left),
-        property: Box::new(inner)
-      }),
+      "[" => return Ok(sp.arena.add(ASTNode::ExprIndexing {
+        callee: left,
+        property: inner
+      })),
       other => { panic!("Grouping not implemented: {}", other); }
     };
   } else if opr == "=>" {
@@ -1838,26 +1837,26 @@ fn parse_infix<'a, 'b>(
 
     // This avoids re-parsing stuff that can be salvaged!
 
-    let params = match left {
+    let params = match sp.arena.get(left) {
       ASTNode::ExprIdentifier { name } => {
         SmallVec::with_element(DestructurableDeclaration {
-          name: DestructurePattern::Identifier { name },
+          name: DestructurePattern::Identifier { name: name.clone() },
           typ: Type::Unknown
         })
       }
       ASTNode::Parenthesis { nodes } => {
         let mut params = SmallVec::new();
         for n in nodes {
-          params.push(match n {
+          params.push(match sp.arena.get(*n) {
             ASTNode::ExprIdentifier { name } => DestructurableDeclaration {
-              name: DestructurePattern::Identifier { name },
+              name: DestructurePattern::Identifier { name: name.clone() },
               typ: Type::Unknown
             },
             ASTNode::InfixOpr {
               left_right, opr, ..
-            } if opr == "=" && matches!(left_right.0, ASTNode::ExprIdentifier { .. }) => match left_right.0 {
+            } if opr == "=" && matches!(sp.arena.get(left_right.0), ASTNode::ExprIdentifier { .. }) => match sp.arena.get(left_right.0) {
               ASTNode::ExprIdentifier { name } => DestructurableDeclaration {
-                name: DestructurePattern::Identifier { name },
+                name: DestructurePattern::Identifier { name: name.clone() },
                 typ: Type::Unknown
               },
               _ => unreachable!()
@@ -1912,11 +1911,10 @@ fn parse_infix<'a, 'b>(
     tokens.skip_unchecked();
     let if_false = get_expression(tokens, precedence, sp)?;
 
-    return Ok(ASTNode::ExprTernary {
-      condition: Box::new(left),
-      if_true: Box::new(if_true),
-      if_false: Box::new(if_false)
-    });
+    return Ok(sp.arena.add(ASTNode::ExprTernary {
+      condition: left,
+      if_true, if_false,
+    }));
   } else if opr == "<" {
     // An inline "<" could potentially be a generic argument!
     let checkpoint = tokens.get_checkpoint();
@@ -1925,8 +1923,8 @@ fn parse_infix<'a, 'b>(
     if let Ok(mut generics) = get_generics(tokens, sp) {
       if tokens.peek_str() == "(" {
         tokens.ignore_checkpoint(checkpoint);
-        let mut fn_call = parse_infix(left, tokens, precedence, sp)?;
-        if let ASTNode::ExprFunctionCall { inner } = &mut fn_call {
+        let fn_call = parse_infix(left, tokens, precedence, sp)?;
+        if let ASTNode::ExprFunctionCall { inner } = sp.arena.get_mut(fn_call) {
           inner.generics.append(&mut generics);
         }
         return Ok(fn_call)
@@ -1938,30 +1936,33 @@ fn parse_infix<'a, 'b>(
   }
 
   // Normal infix
-  Ok(ASTNode::InfixOpr {
-    left_right: Box::new((
-      left,
-      get_expression(tokens, precedence, sp)?
-    )),
+  let right = get_expression(tokens, precedence, sp)?;
+  Ok(sp.arena.add(ASTNode::InfixOpr {
+    left_right: (left, right),
     opr,
-  })
+  }))
 }
 
 /// Turns a tree containing commas into a vector with the nodes they separated
-fn separate_commas(node: ASTNode) -> SmallVec<ASTNode> {
-  match node {
+fn separate_commas(
+  node: ASTIndex,
+  sp: &mut SourceProperties,
+) -> SmallVec<ASTIndex> {
+  let left_right: (ASTIndex, ASTIndex) = match sp.arena.get_mut(node) {
     // Separate infix operations (but only if the operation is ",")
     ASTNode::InfixOpr { left_right, ref opr } if opr == "," => {
       // The size of the output vec is calculated from the sum
       // of both sides, so there's no wasted capacity.
-      let mut nodes = separate_commas(left_right.0);
-      nodes.append(&mut separate_commas(left_right.1));
-      nodes
+      *left_right
     }
 
     // Otherwise, return the node, as it's between commas
-    _ => SmallVec::with_element(node)
-  }
+    _ => { return SmallVec::with_element(node); }
+  };
+
+  let mut nodes = separate_commas(left_right.0, sp);
+  nodes.append(&mut separate_commas(left_right.1, sp));
+  nodes
 }
 
 /// Tries parsing an arrow function, returning CompilerError if none is present.
@@ -1970,7 +1971,7 @@ fn separate_commas(node: ASTNode) -> SmallVec<ASTNode> {
 fn parse_arrow_function(
   tokens: &mut TokenList,
   sp: &mut SourceProperties,
-) -> Result<ASTNode, CompilerError> {
+) -> Result<ASTIndex, CompilerError> {
   tokens.skip("(")?;
   let (params, spread) = get_multiple_destructurable_declarations(tokens, true, sp)?;
   tokens.skip(")")?;
@@ -1993,7 +1994,7 @@ fn parse_arrow_function_after_arrow(
   rest: Rest,
   return_type: Type,
   sp: &mut SourceProperties,
-) -> Result<ASTNode, CompilerError> {
+) -> Result<ASTIndex, CompilerError> {
   tokens.ignore_whitespace();
   let is_expression = tokens.peek_str() != "{";
   let body = if is_expression {
@@ -2003,21 +2004,21 @@ fn parse_arrow_function_after_arrow(
     get_block(tokens, sp)?
   };
 
-  Ok(ASTNode::ArrowFunctionDefinition { inner: Box::new(ArrowFunctionDefinition {
+  Ok(sp.arena.add(ASTNode::ArrowFunctionDefinition { inner: Box::new(ArrowFunctionDefinition {
     is_async: false,
     generics: SmallVec::new(),
     params,
     rest,
     return_type,
     body
-  }) })
+  }) }))
 }
 
 /// Gets a single expression without symbol table tracking (for type parsing)
 // pub fn get_expression_without_sp<'a, 'b>(
 //   tokens: &'b mut TokenList,
 //   precedence: u8,
-// ) -> Result<ASTNode, CompilerError> where 'a: 'b {
+// ) -> Result<ASTIndex, CompilerError> where 'a: 'b {
 //   let mut dummy_sp = SymbolTable::new();
 //   get_expression(tokens, precedence, &mut dummy_sp)
 // }
@@ -2027,7 +2028,7 @@ pub fn get_expression<'a, 'b>(
   tokens: &'b mut TokenList,
   precedence: u8,
   sp: &mut SourceProperties,
-) -> Result<ASTNode, CompilerError> where 'a: 'b {
+) -> Result<ASTIndex, CompilerError> where 'a: 'b {
   tokens.ignore_whitespace();
 
   // Get left (or sometimes only) side (which can be the prexfix!)
@@ -2036,13 +2037,13 @@ pub fn get_expression<'a, 'b>(
 
     if [ ")", "]", "}", ",", ";" ].contains(&next.value) || next.typ == TokenType::EndOfFile {
       // End it here!
-      return Ok(ASTNode::Empty);
+      return Ok(sp.arena.add(ASTNode::Empty));
     }
 
     match next.typ {
-      TokenType::Number => parse_number(tokens)?,
-      TokenType::String => parse_string(tokens),
-      TokenType::Regex => parse_regex(tokens),
+      TokenType::Number => parse_number(tokens, sp)?,
+      TokenType::String => parse_string(tokens, sp),
+      TokenType::Regex => parse_regex(tokens, sp),
       TokenType::StringTemplateStart => parse_string_template(tokens, sp)?,
       TokenType::Symbol | TokenType::Identifier => {
         // Check for regex literal (starts with '/' and not division operator)
@@ -2053,7 +2054,7 @@ pub fn get_expression<'a, 'b>(
         } else if next.value == "function" {
           tokens.skip_unchecked(); // Skip "function"
           let function = get_function_after_name(tokens, None, sp)?;
-          ASTNode::FunctionDefinition { inner: Box::new(function) }
+          sp.arena.add(ASTNode::FunctionDefinition { inner: Box::new(function) })
         } else {
           let binding_power = get_operator_binding_power(
             ExprType::Prefx,
@@ -2105,7 +2106,7 @@ pub fn get_expression<'a, 'b>(
               get_operator_binding_power(ExprType::Prefx, "<>").unwrap().0,
               sp
             )?;
-            match &mut expr {
+            match sp.arena.get_mut(expr) {
               ASTNode::ArrowFunctionDefinition { inner } => {
                 inner.generics = generics;
               },
@@ -2116,9 +2117,9 @@ pub fn get_expression<'a, 'b>(
                     generics_token, tokens
                   ));
                 }
-                expr = ASTNode::ExprTypeAssertion {
-                  cast_type: Box::new(generics[0].clone()), value: Box::new(expr)
-                }
+                expr = sp.arena.add(ASTNode::ExprTypeAssertion {
+                  cast_type: Box::new(generics[0].clone()), value: expr
+                });
               }
             }
 
@@ -2155,10 +2156,10 @@ pub fn get_expression<'a, 'b>(
     if next.value == "as" {
       tokens.skip_unchecked();
       let cast_type = get_type(tokens, sp)?;
-      left = ASTNode::ExprAs {
-        value: Box::new(left),
+      left = sp.arena.add(ASTNode::ExprAs {
+        value: left,
         cast_type: Box::new(cast_type)
-      };
+      });
       continue;
     }
 
@@ -2173,13 +2174,13 @@ pub fn get_expression<'a, 'b>(
       left = if tokens.peek_str() == "!" {
         // Non-null assertion
         tokens.skip_unchecked(); // Skip "!"
-        ASTNode::NonNullAssertion { expr: Box::new(left) }
+        sp.arena.add(ASTNode::NonNullAssertion { expr: left })
       } else {
         // Any other postfix operator
-        ASTNode::PostfixOpr {
-          expr: Box::new(left),
+        sp.arena.add(ASTNode::PostfixOpr {
+          expr: left,
           opr: tokens.consume().value.to_string()
-        }
+        })
       };
       continue;
     }
@@ -2189,10 +2190,11 @@ pub fn get_expression<'a, 'b>(
       if *TEMPLATE_LITERAL_TAG_PRECEDENCE < precedence {
         break;
       }
-      left = ASTNode::TemplateLiteralTag {
-        callee: Box::new(left),
-        argument: Box::new(parse_string_template(tokens, sp)?)
-      };
+      let argument = parse_string_template(tokens, sp)?;
+      left = sp.arena.add(ASTNode::TemplateLiteralTag {
+        callee: left,
+        argument
+      });
       continue;
     }
 

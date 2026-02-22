@@ -98,12 +98,12 @@ fn step_combine(node: &mut ASTNode) {
     ASTNode::ExprStrLiteral { .. } => {}
     ASTNode::ExprBoolLiteral { .. } => {}
     ASTNode::ExprIdentifier { .. } => {}
-    ASTNode::ExprFunctionCall { callee, arguments } => {
+    ASTNode::ExprFunctionCall { inner } => {
       // Minify parts
-      step_combine(callee);
-      arguments.iter_mut().for_each(step_combine);
+      step_combine(&mut inner.callee);
+      inner.arguments.iter_mut().for_each(step_combine);
 
-      if let ASTNode::Parenthesis { nodes } = &**callee {
+      if let ASTNode::Parenthesis { nodes } = &*inner.callee {
         if nodes.len() == 1 {
           if let ASTNode::FunctionDefinition { inner: _ } = &nodes[0] {
             // TODO: minify parenthesis properly

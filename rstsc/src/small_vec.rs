@@ -1,4 +1,4 @@
-use std::{alloc::Layout, hash::Hash, mem, ops::{Index, IndexMut, Range, RangeFrom, RangeFull, RangeTo}, ptr::NonNull};
+use std::{alloc::Layout, hash::Hash, ops::{Index, IndexMut, Range, RangeFrom, RangeFull, RangeTo}, ptr::NonNull};
 use core::fmt::Debug;
 
 // Setting this to `u8` still makes the vec 16 bytes long due to alignment

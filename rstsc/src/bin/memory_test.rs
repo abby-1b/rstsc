@@ -1,11 +1,10 @@
 use std::alloc;
 use cap::Cap;
 
-use rstsc::ast::ASTNode;
+use rstsc::ast::ASTIndex;
 use rstsc::source_properties::SourceProperties;
 use rstsc::tokenizer::TokenList;
 use rstsc::parser::get_block;
-use rstsc::symbol_table::SymbolTable;
 
 #[global_allocator]
 static ALLOCATOR: Cap<alloc::System> = Cap::new(alloc::System, usize::MAX);
@@ -34,7 +33,7 @@ fn main() {
   println!("final: {} KiB", (allocated as f32 / 10.24).round() / 100.0);
 }
 
-fn do_ast() -> Result<ASTNode, ()> {
+fn do_ast() -> Result<(SourceProperties, ASTIndex), ()> {
   // Generate the AST
   let mut tokens = TokenList::from(SOURCE_TEST);
 
@@ -46,11 +45,5 @@ fn do_ast() -> Result<ASTNode, ()> {
     return Err(());
   }
 
-  Ok(ast.unwrap())
-}
-
-#[inline(never)]
-fn in_between(start_mem: usize) {
-  let total_allocated = ALLOCATOR.total_allocated() - start_mem;
-  println!("  in-between: {} KiB", (total_allocated as f32 / 10.24).round() / 100.0);
+  Ok((source_properties, ast.unwrap()))
 }

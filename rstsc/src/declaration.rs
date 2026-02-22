@@ -1,3 +1,4 @@
+use crate::ast::ASTIndex;
 use crate::small_vec::SmallVec;
 use crate::{ast::ASTNode, types::Type};
 use std::ptr::NonNull;
@@ -12,7 +13,7 @@ pub enum DestructurePattern {
   NumericProperty { value: String },
   StringProperty { value: String },
   Ignore,
-  WithInitializer { pattern: Box<DestructurePattern>, initializer: ASTNode }
+  WithInitializer { pattern: Box<DestructurePattern>, initializer: ASTIndex }
 }
 
 /// A declaration name that can be computed (ASTNode) or assigned (String)
@@ -29,7 +30,7 @@ pub enum DestructurePattern {
 /// at the cost of some unsafe code and complexity.
 pub struct ComputableDeclarationName(NonNull<()>);
 impl ComputableDeclarationName {
-  pub fn new_computed(value: ASTNode) -> ComputableDeclarationName {
+  pub fn new_computed(value: ASTIndex) -> ComputableDeclarationName {
     let boxed = Box::new(value);
     let ptr = NonNull::new(
       Box::into_raw(boxed) as *mut ()
@@ -53,14 +54,14 @@ impl ComputableDeclarationName {
     !self.is_computed()
   }
 
-  pub unsafe fn get_computed_unchecked(&self) -> &ASTNode {
-    &*(self.0.as_ptr() as *const ASTNode)
+  pub unsafe fn get_computed_unchecked(&self) -> ASTIndex {
+    *(self.0.as_ptr() as *const ASTIndex)
   }
   pub unsafe fn get_named_unchecked(&self) -> &String {
     &*((self.0.as_ptr() as usize & !1) as *const String)
   }
 
-  pub fn get_computed(&self) -> Option<&ASTNode> {
+  pub fn get_computed(&self) -> Option<ASTIndex> {
     if !self.is_computed() { return None }
     Some(unsafe { self.get_computed_unchecked() })
   }
@@ -73,9 +74,7 @@ impl ComputableDeclarationName {
 impl Drop for ComputableDeclarationName {
   fn drop(&mut self) {
     unsafe {
-      if self.is_computed() {
-        let _ = Box::from_raw(self.0.as_ptr() as *mut ASTNode);
-      } else {
+      if !self.is_computed() {
         let _ = Box::from_raw((self.0.as_ptr() as usize & !1) as *mut String);
       }
     }
@@ -86,7 +85,7 @@ impl Debug for ComputableDeclarationName {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     if self.is_computed() {
       f.debug_tuple("Computed")
-        .field(self.get_computed().unwrap())
+        .field(&self.get_computed().unwrap())
         .finish()
     } else {
       f.debug_tuple("Named")
@@ -99,7 +98,7 @@ impl Debug for ComputableDeclarationName {
 impl Clone for ComputableDeclarationName {
   fn clone(&self) -> Self {
     if self.is_computed() {
-      Self::new_computed((*self.get_computed().unwrap()).clone())
+      Self::new_computed(self.get_computed().unwrap())
     } else {
       Self::new_named((*self.get_named().unwrap()).clone())
     }
@@ -138,14 +137,14 @@ impl Hash for ComputableDeclarationName {
 pub struct Declaration {
   pub name: String,
   pub typ: Type,
-  pub value: Option<ASTNode>
+  pub value: Option<ASTIndex>
 }
 impl Declaration {
-  pub fn new(name: String, typ: Type, value: Option<ASTNode>) -> Declaration {
+  pub fn new(name: String, typ: Type, value: Option<ASTIndex>) -> Declaration {
     Declaration {
       name,
       typ,
-      value: value
+      value
     }
   }
   pub fn clear_value(&mut self) {
@@ -153,7 +152,7 @@ impl Declaration {
   }
   pub fn name(&self) -> &String { &self.name }
   pub fn typ(&self) -> &Type { &self.typ }
-  pub fn value(&self) -> &Option<ASTNode> { &self.value }
+  pub fn value(&self) -> Option<ASTIndex> { self.value }
 }
 
 /// Used for class declarations and dictionary values, which are computable
@@ -161,16 +160,16 @@ impl Declaration {
 pub struct DeclarationComputable {
   pub name: ComputableDeclarationName,
   pub typ: Type,
-  pub value: Option<ASTNode>
+  pub value: Option<ASTIndex>
 }
 impl DeclarationComputable {
-  pub fn computed(inner: ASTNode, typ: Type, value: Option<ASTNode>) -> DeclarationComputable {
+  pub fn computed(inner: ASTIndex, typ: Type, value: Option<ASTIndex>) -> DeclarationComputable {
     DeclarationComputable {
       name: ComputableDeclarationName::new_computed(inner),
       typ, value
     }
   }
-  pub fn named(name: String, typ: Type, value: Option<ASTNode>) -> DeclarationComputable {
+  pub fn named(name: String, typ: Type, value: Option<ASTIndex>) -> DeclarationComputable {
     DeclarationComputable {
       name: ComputableDeclarationName::new_named(name),
       typ, value
@@ -193,7 +192,7 @@ pub struct DeclarationTyped {
   typ: Box<Type>
 }
 impl DeclarationTyped {
-  pub fn computed(inner: ASTNode, typ: Type) -> DeclarationTyped {
+  pub fn computed(inner: ASTIndex, typ: Type) -> DeclarationTyped {
     DeclarationTyped {
       name: ComputableDeclarationName::new_computed(inner),
       typ: Box::new(typ)

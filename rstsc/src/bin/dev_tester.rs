@@ -1,5 +1,5 @@
 use rstsc::source_properties::SourceProperties;
-use rstsc::{obfuscate, source_properties};
+use rstsc::{source_properties};
 // use rstsc::import_excluding;
 /// This file is used for less rigorous testing during development.
 
@@ -9,12 +9,9 @@ use rstsc::tokenizer::TokenList;
 use rstsc::parser::get_block;
 use rstsc::emit::emit_code;
 
-const SOURCE_TEST: &str = include_str!("./test.ts");
+const SOURCE_TEST: &str = include_str!("./speed.ts");
 
 fn main() {
-
-  let v: Vec<i32> = Vec::new();
-  let sl: &[i32] = v.as_ref();
 
   let mut tokens = TokenList::from(SOURCE_TEST);
 
@@ -46,6 +43,9 @@ fn main() {
 
   // let scopes = get_scopes();
 
-  let out = emit_code(ast, &source_properties, false);
+  
+  let out = emit_code(ast, &mut source_properties, false);
   println!("{}", out);
+
+  println!("arena nodes: {:?}", source_properties.arena.nodes.len());
 }

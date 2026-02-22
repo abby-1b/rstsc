@@ -1,6 +1,6 @@
 
 use crate::{
-  ast::{ASTNode, ObjectProperty}, declaration::DeclarationTyped, small_vec::SmallVec, source_properties::SourceProperties, types::{CustomDouble, Type}
+  ast::{ASTIndex, ASTNode, ObjectProperty}, declaration::DeclarationTyped, small_vec::SmallVec, source_properties::SourceProperties, types::{CustomDouble, Type}
 };
 
 pub fn widen_type(typ: &Type) -> Type {
@@ -22,11 +22,11 @@ pub fn widen_type(typ: &Type) -> Type {
 // Helper rule functions
 
 fn recurse_all(
-  nodes: &SmallVec<ASTNode>,
+  nodes: &SmallVec<ASTIndex>,
   sp: &mut SourceProperties,
 ) {
   for node in nodes.iter() {
-    infer_types(node, sp);
+    infer_types(*node, sp);
   }
 }
 
@@ -118,12 +118,12 @@ fn index_result(arr: &Type, index: &Type) -> Type {
 // Main inference functions
 
 pub fn infer_types(
-  node: &ASTNode,
+  node: ASTIndex,
   sp: &mut SourceProperties,
 ) -> Type {
   use ASTNode::*;
 
-  match node {
+  match unsafe { &*(sp.arena.get(node) as *const ASTNode) } {
     Block { nodes } => {
       recurse_all(nodes, sp);
       Type::Void
@@ -143,13 +143,13 @@ pub fn infer_types(
     ExprBoolLiteral { value } => Type::BooleanLiteral(*value),
 
     ExprIndexing { callee, property } => index_result(
-      &infer_types(callee, sp),
-      &infer_types(property, sp),
+      &infer_types(*callee, sp),
+      &infer_types(*property, sp),
     ),
     ExprTernary { condition, if_true, if_false } => {
-      let cond_t = infer_types(condition, sp);
-      let a = infer_types(if_true, sp);
-      let b = infer_types(if_false, sp);
+      let cond_t = infer_types(*condition, sp);
+      let a = infer_types(*if_true, sp);
+      let b = infer_types(*if_false, sp);
       match cond_t {
         Type::BooleanLiteral(true) => a,
         Type::BooleanLiteral(false) => b,
@@ -158,20 +158,20 @@ pub fn infer_types(
     },
 
     PrefixOpr { opr, expr } => {
-      let t = infer_types(expr, sp);
+      let t = infer_types(*expr, sp);
       let r = prefix_result(opr.as_str(), t);
       r
     },
 
     InfixOpr { left_right, opr } => {
-      let l = infer_types(&left_right.0, sp);
-      let r = infer_types(&left_right.1, sp);
+      let l = infer_types(left_right.0, sp);
+      let r = infer_types(left_right.1, sp);
       let res = infix_result(opr.as_str(), l, r);
       res
     },
 
     PostfixOpr { expr, opr } => {
-      let t = infer_types(expr, sp);
+      let t = infer_types(*expr, sp);
       let r = postfix_result(opr.as_str(), t);
       r
     },
@@ -182,7 +182,7 @@ pub fn infer_types(
       } else {
         let mut last: Option<Type> = None;
         for n in nodes.iter() {
-          last = Some(infer_types(n, sp));
+          last = Some(infer_types(*n, sp));
         }
         last.unwrap()
       }
@@ -191,7 +191,7 @@ pub fn infer_types(
     Array { nodes } => {
       let mut types = SmallVec::new();
       for n in nodes {
-        types.push(infer_types(n, sp));
+        types.push(infer_types(*n, sp));
       }
       Type::union_from(&types)
     },
@@ -201,8 +201,8 @@ pub fn infer_types(
       for p in properties {
         match p {
           ObjectProperty::Property { computed, key, value } => {
-            let typ = infer_types(value, sp);
-            match (*computed, key) {
+            let typ = infer_types(*value, sp);
+            match (*computed, sp.arena.get(*key)) {
               (false, ExprIdentifier { name }) => parts.push(
                 DeclarationTyped::named(name.clone(), typ)
               ),
@@ -212,9 +212,9 @@ pub fn infer_types(
             }
           },
           ObjectProperty::Rest { argument } => {
-            let arg_type = infer_types(argument, sp);
+            let arg_type = infer_types(*argument, sp);
             match arg_type {
-              Type::Object { key_value: ref kv, parts: ref ps } => {
+              Type::Object { parts: ref ps, .. } => {
                 for part in ps.iter() {
                   parts.push(part.clone());
                 }
@@ -241,7 +241,7 @@ pub fn infer_types(
 
     StatementReturn { value } => {
       if let Some(e) = value {
-        infer_types(e, sp)
+        infer_types(*e, sp)
       } else {
         Type::Void
       }
@@ -253,24 +253,24 @@ pub fn infer_types(
 }
 
 fn infer_return_type(
-  body: &ASTNode,
+  body: ASTIndex,
   sp: &mut SourceProperties
 ) -> Type {
-  match body {
+  match unsafe { &*(sp.arena.get(body) as *const ASTNode) } {
     ASTNode::Block { nodes } => {
       // find returns. if none, void
       let mut acc: Option<Type> = None;
       for stmt in nodes.iter() {
-        match stmt {
+        match unsafe { &*(sp.arena.get(*stmt) as *const ASTNode) } {
           ASTNode::StatementReturn { value } => {
-            let t = if let Some(e) = value { infer_types(e, sp) } else { Type::Void };
+            let t = if let Some(e) = value { infer_types(*e, sp) } else { Type::Void };
             if let Some(prev) = acc.as_mut() { prev.union(t); } else { acc = Some(t); }
           },
           ASTNode::Block { .. } | ASTNode::ExprFunctionCall { .. } | ASTNode::InfixOpr { .. } | ASTNode::PrefixOpr { .. } | ASTNode::PostfixOpr { .. }=> {
             // still walk nested statements to widen/modify symbol table types
-            infer_types(stmt, sp);
+            infer_types(*stmt, sp);
           },
-          _ => { infer_types(stmt, sp); }
+          _ => { infer_types(*stmt, sp); }
         }
       }
       acc.unwrap_or(Type::Void)

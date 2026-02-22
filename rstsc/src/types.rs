@@ -3,7 +3,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::fmt::{Display, Debug};
 use std::hash::{Hash, Hasher};
 
-use crate::ast::ASTNode;
+use crate::ast::ASTIndex;
 use crate::declaration::{ComputableDeclarationName, DeclarationTyped};
 use crate::error_type::CompilerError;
 use crate::operations::{get_type_operator_binding_power, ExprType};
@@ -64,7 +64,7 @@ pub struct KeyValueMap {
 #[derive(Debug)]
 pub enum ObjectSquareBracketReturn {
   KVMap(KeyValueMap),
-  ComputedProp(ASTNode),
+  ComputedProp(ASTIndex),
   MappedType(Type)
 }
 

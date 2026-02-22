@@ -15,7 +15,7 @@ pub mod source_properties;
 // pub mod type_checking;
 // pub mod minify;
 pub mod type_infer;
-pub mod obfuscate;
+// pub mod obfuscate;
 pub mod emit;
 
 /// Compiles a string of TypeScript code
@@ -23,5 +23,5 @@ pub fn compile(code: &str, compact: bool) -> Result<String, error_type::Compiler
   let mut tokens = tokenizer::TokenList::from(code);
   let mut sp = source_properties::SourceProperties::new();
   let ast = parser::get_block(&mut tokens, &mut sp)?;
-  Ok(emit::emit_code(ast, &sp, compact))
+  Ok(emit::emit_code(ast, &mut sp, compact))
 }

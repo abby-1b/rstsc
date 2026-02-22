@@ -1,17 +1,24 @@
-use crate::{small_vec::SmallVec, symbol_table::SymbolTable};
+use crate::{ast::ASTArena, symbol_table::SymbolTable};
+
+// pub struct Mapping {
+//   idx: u32,
+//   len: u32,
+// }
 
 pub struct SourceProperties {
   pub st: SymbolTable,
-
-  /// Indices that nodes store when
-  pub source_map_char_indices: SmallVec<u32>,
+  pub arena: ASTArena,
+  // pub src_c_indices: Vec<Mapping>,
+  // pub gen_c_indices: Vec<Mapping>,
 }
 
 impl SourceProperties {
   pub fn new() -> Self {
     SourceProperties {
       st: SymbolTable::new(),
-      source_map_char_indices: SmallVec::new(),
+      arena: ASTArena::new(),
+      // src_c_indices: Vec::new(),
+      // gen_c_indices: Vec::new(),
     }
   }
 }
