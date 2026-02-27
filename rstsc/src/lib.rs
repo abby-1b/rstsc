@@ -20,8 +20,7 @@ pub mod emit;
 
 /// Compiles a string of TypeScript code
 pub fn compile(code: &str, compact: bool) -> Result<String, error_type::CompilerError> {
-  let mut tokens = tokenizer::TokenList::from(code);
-  let mut sp = source_properties::SourceProperties::new();
-  let ast = parser::get_block(&mut tokens, &mut sp)?;
+  let mut sp = source_properties::SourceProperties::new(code);
+  let ast = parser::get_block(&mut sp)?;
   Ok(emit::emit_code(ast, &mut sp, compact))
 }

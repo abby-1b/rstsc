@@ -1,4 +1,4 @@
-use crate::{error_type::CompilerError, tokenizer::{Token, TokenList}};
+use crate::{error_type::CompilerError, source_properties::SourceProperties, tokenizer::{Token, TokenList}};
 
 /// A thin boolean wrapper that handles rest parameters (and associated errors)
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -22,10 +22,10 @@ impl Rest {
   #[inline]
   pub fn set<'a, 'b>(
     &mut self,
-    token: Token<'a>,
-    tokens: &'b mut TokenList<'a>
+    token: Token,
+    sp: &'b mut SourceProperties<'a>
   ) -> Result<(), CompilerError> where 'a: 'b {
-    if self.0 { return Self::err(token, tokens); }
+    if self.0 { return Self::err(token, sp); }
     self.0 = true;
     Ok(())
   }
@@ -33,23 +33,23 @@ impl Rest {
   #[inline]
   pub fn try_set<'a, 'b>(
     &mut self,
-    tokens: &'b mut TokenList<'a>,
+    sp: &'b mut SourceProperties<'a>,
     allow: bool
   ) -> Result<(), CompilerError> where 'a: 'b {
-    if tokens.peek_str() == "..." {
-      if !allow { return Self::err(tokens.consume(), tokens); }
-      self.set(tokens.consume(), tokens)?;
+    if sp.tokens.peek_str() == "..." {
+      if !allow { return Self::err(sp.tokens.consume(), sp); }
+      self.set(sp.tokens.consume(), sp)?;
     }
     Ok(())
   }
 
   #[inline]
   fn err<'a, 'b>(
-    t: Token, tokens: &'b mut TokenList<'a>
+    token: Token, sp: &'b mut SourceProperties<'a>
   ) -> Result<(), CompilerError> where 'a: 'b {
     Err(CompilerError::new(
-      "Unexpected spread!".to_owned(),
-      t, tokens
+      token.value,
+      "Unexpected spread!".to_owned()
     ))
   }
 }

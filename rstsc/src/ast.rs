@@ -1,8 +1,13 @@
-use crate::{
-  ast_common::*, declaration::{DeclarationComputable, DestructurableDeclaration}, error_type::CompilerError, small_vec::SmallVec, rest::Rest, tokenizer::Token, types::{KeyValueMap, Type}
-};
 
-#[derive(Debug, Clone, PartialEq, Hash)]
+use crate::ast_common::*;
+use crate::declaration::{DeclarationComputable, DestructurableDeclaration};
+use crate::error_type::CompilerError;
+use crate::rest::Rest;
+use crate::small_vec::SmallVec;
+use crate::source_properties::SrcMapping;
+use crate::types::{KeyValueMap, Type};
+
+#[derive(Debug, Clone)]
 pub enum ObjectProperty {
   Property {
     computed: bool,
@@ -12,14 +17,14 @@ pub enum ObjectProperty {
   Rest {
     argument: ASTIndex
   },
-  Shorthand { key: String }
+  Shorthand { key: SrcMapping }
 }
 
-#[derive(Debug, Clone, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub struct FunctionDefinition {
   pub modifiers: ModifierList,
 
-  pub name: Option<String>,
+  pub name: Option<SrcMapping>,
 
   pub generics: SmallVec<Type>,
   pub params: SmallVec<DestructurableDeclaration>,
@@ -28,7 +33,7 @@ pub struct FunctionDefinition {
   pub body: Option<ASTIndex>
 }
 
-#[derive(Debug, Clone, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub struct ArrowFunctionDefinition {
   pub is_async: bool,
   pub generics: SmallVec<Type>,
@@ -38,7 +43,7 @@ pub struct ArrowFunctionDefinition {
   pub body: ASTIndex
 }
 
-#[derive(Debug, Clone, PartialEq, Hash)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum GetterSetter {
   None,
   Getter,
@@ -55,17 +60,17 @@ impl GetterSetter {
   }
 }
 
-#[derive(Debug, Clone, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub enum ClassMember {
   Property(DeclarationComputable, ModifierList),
   Method(FunctionDefinition, GetterSetter),
   StaticBlock(ASTIndex),
 }
 
-#[derive(Debug, Clone, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub struct ClassDefinition {
   pub modifiers: ModifierList,
-  pub name: Option<String>,
+  pub name: Option<SrcMapping>,
   pub generics: SmallVec<Type>,
   pub extends: Option<Type>,
   pub implements: SmallVec<Type>,
@@ -74,95 +79,95 @@ pub struct ClassDefinition {
   pub members: SmallVec<ClassMember>,
 }
 
-#[derive(Debug, Clone, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub struct TryCatchFinally {
   pub block_try: ASTIndex,
-  pub capture_catch: Option<String>,
+  pub capture_catch: Option<SrcMapping>,
   pub capture_catch_type: Option<Type>,
   pub block_catch: Option<ASTIndex>,
   pub block_finally: Option<ASTIndex>,
 }
 
-#[derive(Debug, Clone, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub struct IndividualImport {
-  pub name: String,
-  pub alias: Option<String>,
+  pub name: SrcMapping,
+  pub alias: Option<SrcMapping>,
 }
 
-#[derive(Debug, Clone, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub struct ExportSpecifier {
-  pub name: String,
-  pub alias: Option<String>,
+  pub name: SrcMapping,
+  pub alias: Option<SrcMapping>,
   pub is_type: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub struct ExportDeclaration {
   pub specifiers: SmallVec<ExportSpecifier>,
 }
 
-#[derive(Debug, Clone, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub enum ImportDefinition {
   /// Used in `import Defaults from '...'`
-  DefaultAliased { source: String, alias: String },
+  DefaultAliased { source: SrcMapping, alias: SrcMapping },
   /// Used in `import * as Alias from '...'`
-  AllAsAlias { source: String, alias: String },
+  AllAsAlias { source: SrcMapping, alias: SrcMapping },
   /// Used in `import { A, B, C } from '...'`
-  Individual { source: String, parts: SmallVec<IndividualImport> },
+  Individual { source: SrcMapping, parts: SmallVec<IndividualImport> },
   /// Used in `import '...'`
-  SourceOnly { source: String },
+  SourceOnly { source: SrcMapping },
 }
 
-#[derive(Debug, Clone, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub struct InterfaceDeclaration {
   pub modifiers: ModifierList,
-  pub name: String,
+  pub name: SrcMapping,
   pub generics: SmallVec<Type>,
   pub extends: SmallVec<Type>,
   pub equals_type: Type
 }
 
-#[derive(Debug, Clone, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub struct EnumDeclaration {
   pub modifiers: ModifierList,
-  pub name: String,
-  pub members: SmallVec<(String, ASTIndex)>,
+  pub name: SrcMapping,
+  pub members: SmallVec<(SrcMapping, ASTIndex)>,
   pub is_const: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub struct Switch {
   pub condition: ASTIndex,
   pub cases: SmallVec<(ASTIndex, SmallVec<ASTIndex>)>,
   pub default: Option<SmallVec<ASTIndex>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub struct NamespaceDeclaration {
-  name: String,
+  name: SrcMapping,
   types: SmallVec<ASTIndex>,
 }
 
-#[derive(Debug, Clone, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub struct ExprTemplateLiteral {
-  pub head: String,
-  pub parts: SmallVec<(ASTIndex, String)>,
+  pub head: SrcMapping,
+  pub parts: SmallVec<(ASTIndex, SrcMapping)>,
 }
 
-#[derive(Debug, Clone, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub struct ExprFunctionCall {
   pub callee: ASTIndex,
   pub generics: SmallVec<Type>,
   pub arguments: SmallVec<ASTIndex>,
 }
 
-#[derive(Debug, Clone, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub struct ExprRegexLiteral {
-  pub pattern: String,
-  pub flags: String,
+  pub pattern: SrcMapping,
+  pub flags: SrcMapping,
 }
 
-#[derive(Debug, Clone, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub enum ASTNode {
   /// A block of code
   Block { nodes: SmallVec<ASTIndex> },
@@ -228,9 +233,9 @@ pub enum ASTNode {
 
   // Expression parsing...
 
-  ExprIdentifier { name: String },
-  ExprNumLiteral { number: String },
-  ExprStrLiteral { string: String },
+  ExprIdentifier { name: SrcMapping },
+  ExprNumLiteral { number: SrcMapping },
+  ExprStrLiteral { string: SrcMapping },
   ExprRegexLiteral { inner: Box<ExprRegexLiteral> },
   ExprTemplateLiteral { inner: Box<ExprTemplateLiteral> },
   ExprBoolLiteral { value: bool },
@@ -246,9 +251,9 @@ pub enum ASTNode {
     if_false: ASTIndex,
   },
 
-  PrefixOpr { opr: String, expr: ASTIndex },
-  InfixOpr { left_right: (ASTIndex, ASTIndex), opr: String },
-  PostfixOpr { expr: ASTIndex, opr: String },
+  PrefixOpr { opr: SrcMapping, expr: ASTIndex },
+  InfixOpr { left_right: (ASTIndex, ASTIndex), opr: SrcMapping },
+  PostfixOpr { expr: ASTIndex, opr: SrcMapping },
   NonNullAssertion { expr: ASTIndex },
 
   // Type casting
@@ -352,31 +357,26 @@ impl ASTNode {
     }
     Ok(())
   }
-
-  pub fn as_token<'a>(&self) -> Token<'a> {
-    // TODO: convert this node into a single token
-    Token::from("")
-  }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ASTIndex(u32);
 pub struct ASTArena {
-  // This is a normal `Vec` because it's only stored once!
+  // This is a normal `Vec` because it's only stored once per source!
   // `Vec` is way better optimized than our `SmallVec` implementation,
   // so it's WELL worth the 8 bytes.
   pub nodes: Vec<ASTNode>,
+
+  pub src_mappings: Vec<SrcMapping>,
+  // pub gen_c_indices: Vec<SrcMapping>, 
 }
 impl ASTArena {
   pub fn new() -> Self {
     ASTArena {
       nodes: Vec::with_capacity(512),
+      src_mappings: Vec::new(),
     }
   }
-
-  // pub fn allocate_empty(&mut self) -> ASTIndex {
-  //   self.add(ASTNode::Empty)
-  // }
 
   pub fn add(&mut self, node: ASTNode) -> ASTIndex {
     let idx = self.nodes.len();
@@ -393,4 +393,10 @@ impl ASTArena {
   pub fn set(&mut self, idx: ASTIndex, node: ASTNode) {
     unsafe { *self.nodes.get_unchecked_mut(idx.0 as usize) = node; }
   }
+
+  pub fn get_node_src_range(&self, idx: ASTIndex) -> SrcMapping {
+    todo!("Implement node source range!")
+  }
 }
+
+

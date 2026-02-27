@@ -1,7 +1,9 @@
 
-use crate::{
-  ast::{ASTIndex, ASTNode, ObjectProperty}, declaration::DeclarationTyped, small_vec::SmallVec, source_properties::SourceProperties, types::{CustomDouble, Type}
-};
+use crate::ast::{ASTIndex, ASTNode, ObjectProperty};
+use crate::declaration::DeclarationTyped;
+use crate::small_vec::SmallVec;
+use crate::source_properties::SourceProperties;
+use crate::types::{CustomDouble, Type};
 
 pub fn widen_type(typ: &Type) -> Type {
   match typ {
@@ -123,21 +125,21 @@ pub fn infer_types(
 ) -> Type {
   use ASTNode::*;
 
-  match unsafe { &*(sp.arena.get(node) as *const ASTNode) } {
+  match unsafe { &*(sp.nodes.get(node) as *const ASTNode) } {
     Block { nodes } => {
       recurse_all(nodes, sp);
       Type::Void
     },
 
     ExprIdentifier { name } => {
-      if let Some(symbol) = sp.st.lookup(name) {
+      if let Some(symbol) = sp.st.lookup(sp.str_src(*name)) {
         symbol.typ.clone()
       } else {
         Type::Unknown
       }
     },
-    ExprNumLiteral { number } => Type::NumberLiteral(CustomDouble::from_str(&number).unwrap()),
-    ExprStrLiteral { string } => Type::StringLiteral(string.clone()),
+    ExprNumLiteral { number } => Type::NumberLiteral(CustomDouble::from_str(sp.str_src(*number)).unwrap()),
+    ExprStrLiteral { string } => Type::StringLiteral(sp.str_src(*string).to_owned()),
     ExprRegexLiteral { .. } => Type::RegExp,
     ExprTemplateLiteral { .. } => Type::String,
     ExprBoolLiteral { value } => Type::BooleanLiteral(*value),
@@ -159,20 +161,20 @@ pub fn infer_types(
 
     PrefixOpr { opr, expr } => {
       let t = infer_types(*expr, sp);
-      let r = prefix_result(opr.as_str(), t);
+      let r = prefix_result(sp.str_src(*opr), t);
       r
     },
 
     InfixOpr { left_right, opr } => {
       let l = infer_types(left_right.0, sp);
       let r = infer_types(left_right.1, sp);
-      let res = infix_result(opr.as_str(), l, r);
+      let res = infix_result(sp.str_src(*opr), l, r);
       res
     },
 
     PostfixOpr { expr, opr } => {
       let t = infer_types(*expr, sp);
-      let r = postfix_result(opr.as_str(), t);
+      let r = postfix_result(sp.str_src(*opr), t);
       r
     },
 
@@ -202,7 +204,7 @@ pub fn infer_types(
         match p {
           ObjectProperty::Property { computed, key, value } => {
             let typ = infer_types(*value, sp);
-            match (*computed, sp.arena.get(*key)) {
+            match (*computed, sp.nodes.get(*key)) {
               (false, ExprIdentifier { name }) => parts.push(
                 DeclarationTyped::named(name.clone(), typ)
               ),
@@ -227,7 +229,7 @@ pub fn infer_types(
           ObjectProperty::Shorthand { key } => {
             // Look up the variable in the symbol table; its type becomes the
             // property type (falls back to Unknown if the symbol isn't found)
-            let typ = if let Some(symbol) = sp.st.lookup(key) {
+            let typ = if let Some(symbol) = sp.st.lookup(sp.str_src(*key)) {
               symbol.typ.clone()
             } else {
               Type::Unknown
@@ -256,12 +258,12 @@ fn infer_return_type(
   body: ASTIndex,
   sp: &mut SourceProperties
 ) -> Type {
-  match unsafe { &*(sp.arena.get(body) as *const ASTNode) } {
+  match unsafe { &*(sp.nodes.get(body) as *const ASTNode) } {
     ASTNode::Block { nodes } => {
       // find returns. if none, void
       let mut acc: Option<Type> = None;
       for stmt in nodes.iter() {
-        match unsafe { &*(sp.arena.get(*stmt) as *const ASTNode) } {
+        match unsafe { &*(sp.nodes.get(*stmt) as *const ASTNode) } {
           ASTNode::StatementReturn { value } => {
             let t = if let Some(e) = value { infer_types(*e, sp) } else { Type::Void };
             if let Some(prev) = acc.as_mut() { prev.union(t); } else { acc = Some(t); }

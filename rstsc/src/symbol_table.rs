@@ -1,5 +1,9 @@
 use std::collections::HashMap;
-use crate::{error_type::CompilerError, tokenizer::{Token, TokenList}, types::Type};
+
+use crate::error_type::CompilerError;
+use crate::source_properties::SourceProperties;
+use crate::tokenizer::Token;
+use crate::types::Type;
 
 /// Represents the origin of a symbol in the code
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -27,9 +31,9 @@ pub struct Symbol {
 }
 
 impl Symbol {
-  pub fn new(name: String, origin: SymbolOrigin, typ: Type) -> Self {
+  pub fn new(name: &str, origin: SymbolOrigin, typ: Type) -> Self {
     Self {
-      name,
+      name: name.to_owned(),
       origin,
       typ,
       is_in_type: false,
@@ -114,11 +118,13 @@ impl SymbolTable {
   }
 
   /// Marks a symbol as used. Returns an error if the symbol wasn't found.
-  pub fn mark_used(&mut self, token: &Token, tokens: &mut TokenList) -> Result<(), CompilerError> {
-    if let Some(symbol) = self.lookup_mut(token.value) {
+  pub fn mark_used(&mut self, token: &Token, source: &str) -> Result<(), CompilerError> {
+    let value = SourceProperties::map_source(source, token.value);
+    if let Some(symbol) = self.lookup_mut(value) {
       symbol.is_used = true;
       Ok(())
     } else {
+      // TODO: put a warning here, that a token doesn't exist!
       // Err(CompilerError::new(
       //   format!("Symbol not found: {}", token.value),
       //   token.clone(),
@@ -128,11 +134,13 @@ impl SymbolTable {
     }
   }
   
-  pub fn mark_used_type(&mut self, token: &Token, tokens: &mut TokenList) -> Result<(), CompilerError> {
-    if let Some(symbol) = self.lookup_mut(token.value) {
+  pub fn mark_used_type(&mut self, token: Token, source: &str) -> Result<(), CompilerError> {
+    let value = SourceProperties::map_source(source, token.value);
+    if let Some(symbol) = self.lookup_mut(value) {
       symbol.is_in_type = true;
       Ok(())
     } else {
+      // TODO: put a warning here, that a token doesn't exist!
       // Err(CompilerError::new(
       //   format!("Symbol not found: {}", token.value),
       //   token.clone(),

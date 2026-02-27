@@ -54,6 +54,9 @@ Tasks:
 - [x] Add TSC project test snippets
 - [x] Module import removal (unused import handling and emission)
 - [x] Declarations (removal)
+- [x] AST strings reference the source file
+- [ ] TypeScript `namespace`s
+- [ ] Type strings reference the source file
 - [ ] Variable scope tracking
 - [ ] An exposed way to get AST nodes as an object for analysis outside of RSTSC
 - [ ] Source map generation

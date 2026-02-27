@@ -1,6 +1,8 @@
-use crate::{
-  ast::{ASTIndex, ASTNode, ClassMember, FunctionDefinition, ImportDefinition, ObjectProperty}, declaration::{DeclarationComputable, DestructurableDeclaration, DestructurePattern}, rest::Rest, source_properties::SourceProperties
-};
+
+use crate::ast::{ASTIndex, ASTNode, ClassMember, FunctionDefinition, ImportDefinition, ObjectProperty};
+use crate::declaration::{ComputableDeclarationName, DeclarationComputable, DestructurableDeclaration, DestructurePattern};
+use crate::rest::Rest;
+use crate::source_properties::SourceProperties;
 
 static NO_REST: Rest = Rest::new();
 
@@ -11,7 +13,7 @@ struct Emitter<'a> {
   is_mid_line: bool,
   indent_level: usize,
   curr_line: usize,
-  sp: &'a SourceProperties,
+  sp: &'a SourceProperties<'a>,
 }
 
 impl<'a> Emitter<'a> {
@@ -87,7 +89,7 @@ impl<'a> Emitter<'a> {
 }
 
 /// Emits code given an AST
-pub fn emit_code(ast: ASTIndex, sp: &SourceProperties, compact: bool) -> String {
+pub fn emit_code<'a>(ast: ASTIndex, sp: &'a SourceProperties<'a>, compact: bool) -> String {
   let mut emitter = Emitter {
     output: String::new(),
     is_compact: compact,
@@ -99,7 +101,7 @@ pub fn emit_code(ast: ASTIndex, sp: &SourceProperties, compact: bool) -> String 
   };
 
   // Handle the program `Block` node
-  let node = unsafe { &*(sp.arena.get(ast) as *const ASTNode) };
+  let node = unsafe { &*(sp.nodes.get(ast) as *const ASTNode) };
   if let ASTNode::Block { nodes } = node {
     for node in nodes.iter() {
       emit_single(*node, &mut emitter);
@@ -116,7 +118,7 @@ fn emit_single(
   ast: ASTIndex,
   emitter: &mut Emitter,
 ) {
-  match unsafe { &*(emitter.sp.arena.get(ast) as *const ASTNode) } {
+  match unsafe { &*(emitter.sp.nodes.get(ast) as *const ASTNode) } {
     ASTNode::Block { nodes } => {
       if nodes.is_empty() {
         emitter.out("{}", false);
@@ -157,43 +159,43 @@ fn emit_single(
       match &**inner {
         ImportDefinition::DefaultAliased { source, alias } => {
           emitter.out("import ", false);
-          emitter.out(&alias, false);
+          emitter.out(emitter.sp.str_src(*alias), false);
           emitter.out(" from ", true);
-          emitter.out(&source, true);
+          emitter.out(emitter.sp.str_src(*source), true);
         }
         ImportDefinition::AllAsAlias { source, alias } => {
           emitter.out("import ", false);
           emitter.out("* as ", false);
-          emitter.out(&alias, false);
+          emitter.out(emitter.sp.str_src(*alias), false);
           emitter.out(" from ", true);
-          emitter.out(&source, true);
+          emitter.out(emitter.sp.str_src(*source), true);
         }
         ImportDefinition::Individual { source, parts } => {
           let has_imports = parts.iter().any(|i| {
-            emitter.sp.st.lookup(&i.name).is_some_and(|s| s.is_used)
+            emitter.sp.st.lookup(emitter.sp.str_src(i.name)).is_some_and(|s| s.is_used)
           });
           if has_imports {
             emitter.out("import ", false);
             emitter.out_diff("{ ", "{", false);
             emitter.emit_vec(parts.as_ref(), |i, emitter| {
-              if emitter.sp.st.lookup(&i.name).is_some_and(|s| !s.is_used) {
+              if emitter.sp.st.lookup(emitter.sp.str_src(i.name)).is_some_and(|s| !s.is_used) {
                 return false;
               }
-              emitter.out(&i.name, false);
+              emitter.out(emitter.sp.str_src(i.name), false);
               if let Some(alias) = &i.alias {
                 emitter.out(" as ", false);
-                emitter.out(&alias, false);
+                emitter.out(emitter.sp.str_src(*alias), false);
               }
               true
             }, ", ", ",");
             emitter.out_diff(" }", "}", false);
             emitter.out_diff(" from ", "from", true);
-            emitter.out(&source, true);
+            emitter.out(emitter.sp.str_src(*source), true);
           }
         }
         ImportDefinition::SourceOnly { source } => {
           emitter.out("import ", false);
-          emitter.out(&source, true);
+          emitter.out(emitter.sp.str_src(*source), true);
         }
       }
     }
@@ -209,10 +211,10 @@ fn emit_single(
         if specifier.is_type {
           return false;
         }
-        emitter.out(&specifier.name, false);
+        emitter.out(emitter.sp.str_src(specifier.name), false);
         if let Some(alias) = &specifier.alias {
           emitter.out(" as ", false);
-          emitter.out(alias, false);
+          emitter.out(emitter.sp.str_src(*alias), false);
         }
         true
       }, ", ", ",");
@@ -369,7 +371,7 @@ fn emit_single(
         emitter.out_diff(" catch ", "catch", false);
         if let Some(capture) = &inner.capture_catch {
           emitter.out("(", false);
-          emitter.out(capture, false);
+          emitter.out(emitter.sp.str_src(*capture), false);
           emitter.out_diff(") ", ")", false);
         }
         emit_single(*block, emitter);
@@ -398,7 +400,7 @@ fn emit_single(
       let is_simple_param = match arrow_fn.params.as_ref() {
         [param] => match &param.name {
           DestructurePattern::Identifier { name } => {
-            emitter.out(name, false);
+            emitter.out(emitter.sp.str_src(*name), false);
             true
           },
           _ => false
@@ -426,7 +428,7 @@ fn emit_single(
       emitter.out(&inner.modifiers.emit(true), false);
       if let Some(name) = &inner.name {
         emitter.out("class ", false);
-        emitter.out(&name, false);
+        emitter.out(emitter.sp.str_src(*name), false);
       } else {
         emitter.out("class", false);
       }
@@ -441,7 +443,9 @@ fn emit_single(
       for member in inner.members.iter() {
         match member {
           ClassMember::Property(declaration, modifiers) => {
-            let is_skippable = declaration.name.is_named() && declaration.value.is_none();
+            let is_skippable =
+              matches!(declaration.name, ComputableDeclarationName::Named(..))
+              && declaration.value.is_none();
             if is_skippable && emitter.is_compact {
               continue;
             }
@@ -502,7 +506,7 @@ fn emit_single(
             emit_single(*value, emitter);
           }
           ObjectProperty::Shorthand { key } => {
-            emitter.out(key, false);
+            emitter.out(emitter.sp.str_src(*key), false);
           }
         }
         true
@@ -510,7 +514,8 @@ fn emit_single(
       emitter.out_diff(" }", "}", true);
     }
     ASTNode::ExprNumLiteral { number } => {
-      let mut out = number.to_owned();
+      let number_str = emitter.sp.str_src(*number);
+      let mut out = number_str.to_owned();
       if emitter.is_compact {
         let is_negative = if out.starts_with("-") {
           out = out[1..].to_owned();
@@ -524,13 +529,13 @@ fn emit_single(
           true
         } else { false };
 
-        if number.contains("0.") {
+        if number_str.contains("0.") {
           // Shorten leading zero before decimal
           out = out[1..].to_owned();
-        } else if number.starts_with("0b") {
+        } else if number_str.starts_with("0b") {
           // Convert binary to decimal
           out = convert_binary_str_to_decimal_str(&out[2..]);
-        } else if number.starts_with("0x") {
+        } else if number_str.starts_with("0x") {
           // Convert hexadecimal to decimal
           out = convert_hexadecimal_str_to_decimal_str(&out[2..]);
         }
@@ -552,27 +557,27 @@ fn emit_single(
       emitter.out(&out, true);
     }
     ASTNode::ExprStrLiteral { string } => {
-      emitter.out(&string, true);
+      emitter.out(emitter.sp.str_src(*string), true);
     }
     ASTNode::ExprRegexLiteral { inner } => {
       emitter.out("/", false);
-      emitter.out(&inner.pattern, false);
+      emitter.out(emitter.sp.str_src(inner.pattern), false);
       emitter.out("/", false);
-      emitter.out(&inner.flags, true);
+      emitter.out(emitter.sp.str_src(inner.flags), true);
     }
     ASTNode::ExprTemplateLiteral { inner } => {
       emitter.out("`", false);
-      emitter.out(&inner.head, false);
+      emitter.out(emitter.sp.str_src(inner.head), false);
       for (expr, literal_part) in &inner.parts {
         emitter.out("${", false);
         emit_single(*expr, emitter);
         emitter.out("}", false);
-        emitter.out(literal_part, false);
+        emitter.out(emitter.sp.str_src(*literal_part), false);
       }
       emitter.out("`", true);
     }
     ASTNode::ExprIdentifier { name } => {
-      emitter.out(&name, true);
+      emitter.out(emitter.sp.str_src(*name), true);
     }
     ASTNode::ExprBoolLiteral { value } => {
       let offset = *value as u8 + ((emitter.is_compact as u8) << 1);
@@ -610,11 +615,13 @@ fn emit_single(
       emit_single(*if_false, emitter);
     }
     ASTNode::PrefixOpr { opr, expr } => {
-      emitter.out(&opr, true);
+      emitter.out(emitter.sp.str_src(*opr), true);
 
       // Identifier operators (like `typeof` and `yield`) need a space!
       let first_char = unsafe {
-        *((&opr[0..1] as *const str) as *const u8)
+        let mut opr_first = *opr;
+        opr_first.len = 1;
+        *((emitter.sp.str_src(opr_first) as *const str) as *const u8)
       } as char;
       if first_char.is_ascii_alphabetic() {
         emitter.out(" ", false);
@@ -623,13 +630,14 @@ fn emit_single(
       emit_single(*expr, emitter);
     }
     ASTNode::InfixOpr { left_right, opr } => {
-      let can_have_spaces = match opr.as_str() {
+      let opr_str = emitter.sp.str_src(*opr);
+      let can_have_spaces = match opr_str {
         "." => (false, false),
         "?." => (false, false),
         "," => (false, true),
         _ => (true, true)
       };
-      let needs_spaces = match opr.as_str() {
+      let needs_spaces = match opr_str {
         "in" => true,
         "instanceof" => true,
         _ => false
@@ -638,7 +646,7 @@ fn emit_single(
       if needs_spaces || (can_have_spaces.0 && !emitter.is_compact) {
         emitter.out(" ", false);
       }
-      emitter.out(&opr, false);
+      emitter.out(opr_str, false);
       if needs_spaces || (can_have_spaces.1 && !emitter.is_compact) {
         emitter.out(" ", false);
       }
@@ -646,7 +654,7 @@ fn emit_single(
     }
     ASTNode::PostfixOpr { expr, opr } => {
       emit_single(*expr, emitter);
-      emitter.out(&opr, true);
+      emitter.out(emitter.sp.str_src(*opr), true);
     }
     ASTNode::NonNullAssertion { expr } => {
       emit_single(*expr, emitter);
@@ -656,34 +664,34 @@ fn emit_single(
     ASTNode::EnumDeclaration { inner } => {
       emitter.out(&inner.modifiers.emit(true), false);
       emitter.out("var ", false);
-      emitter.out(&inner.name, true);
+      emitter.out(emitter.sp.str_src(inner.name), true);
       emitter.endline();
 
       emitter.out("(function(", false);
-      emitter.out(&inner.name, false);
+      emitter.out(emitter.sp.str_src(inner.name), false);
       emitter.out("){", false);
       emitter.endline();
       emitter.indent();
 
       for (name, value) in &inner.members {
-        emitter.out(&inner.name, false);
+        emitter.out(emitter.sp.str_src(inner.name), false);
         emitter.out("[", false);
-        emitter.out(&inner.name, false);
+        emitter.out(emitter.sp.str_src(inner.name), false);
         emitter.out("[", false);
-        emitter.out(name, false);
+        emitter.out(emitter.sp.str_src(*name), false);
         emitter.out("]=", false);
         emit_single(*value, emitter);
         emitter.out("]=", false);
-        emitter.out(name, true);
+        emitter.out(emitter.sp.str_src(*name), true);
         emitter.endline();
       }
 
       emitter.endline();
       emitter.unindent();
       emitter.out("})(", false);
-      emitter.out(&inner.name, true);
+      emitter.out(emitter.sp.str_src(inner.name), true);
       emitter.out("||(", false);
-      emitter.out(&inner.name, true);
+      emitter.out(emitter.sp.str_src(inner.name), true);
       emitter.out("={}))", true);
     },
     ASTNode::InterfaceDeclaration { .. } => {},
@@ -715,18 +723,18 @@ fn emit_single_declaration_computable(
   declaration: &DeclarationComputable,
   emitter: &mut Emitter
 ) {
-  if declaration.name.is_named() {
-    emitter.out(
-      unsafe { &declaration.name.get_named_unchecked() },
-      true
-    );
-  } else {
-    emitter.out("[", false);
-    emit_single(
-      unsafe { declaration.name.get_computed_unchecked() },
-      emitter
-    );
-    emitter.out("]", false);
+  match declaration.name {
+    ComputableDeclarationName::Named(name) => {
+      emitter.out(
+        emitter.sp.str_src(name),
+        true
+      );
+    }
+    ComputableDeclarationName::Computed(node) => {
+      emitter.out("[", false);
+      emit_single(node, emitter);
+      emitter.out("]", false);
+    }
   }
   if let Some(value) = &declaration.value {
     emitter.out_diff(" = ", "=", false);
@@ -766,8 +774,11 @@ fn emit_destructure_pattern(
       emitter.out_diff("{ ", "{", false);
       emitter.emit_vec(properties.as_ref(), |(property, alias), emitter| {
         match (property, alias) {
-          (DestructurePattern::Identifier { name: a }, DestructurePattern::Identifier { name: b }) if a == b => {
-            emitter.out(a, true);
+          (
+            DestructurePattern::Identifier { name: a },
+            DestructurePattern::Identifier { name: b }
+          ) if emitter.sp.str_src(*a) == emitter.sp.str_src(*b) => {
+            emitter.out(emitter.sp.str_src(*a), true);
           },
           _ => {
             emit_destructure_pattern(property, emitter);
@@ -787,13 +798,13 @@ fn emit_destructure_pattern(
       emitter.out_diff(" }", "}", true);
     }
     DestructurePattern::Identifier { name } => {
-      emitter.out(name, true);
+      emitter.out(emitter.sp.str_src(*name), true);
     }
     DestructurePattern::NumericProperty { value } => {
-      emitter.out(value, false);
+      emitter.out(emitter.sp.str_src(*value), false);
     }
     DestructurePattern::StringProperty { value } => {
-      emitter.out(value, false);
+      emitter.out(emitter.sp.str_src(*value), false);
     }
     DestructurePattern::Ignore => {
       emitter.out("", true);
@@ -818,14 +829,14 @@ fn emit_function_definition(
     emitter.out(" ", false);
   }
   if let Some(name) = &function.name {
-    emitter.out(&name, false);
+    emitter.out(emitter.sp.str_src(*name), false);
   }
 
   // Params
   emitter.out("(", false);
   let fake_this = if function.params.len() > 0 {
     if let DestructurePattern::Identifier { name } = &function.params[0].name {
-      name == "this"
+      emitter.sp.str_src(*name) == "this"
     } else {
       false
     }
@@ -851,15 +862,15 @@ fn node_potentially_starts_with_symbol(
   node: ASTIndex,
   sp: &SourceProperties
 ) -> bool {
-  match unsafe { &*(sp.arena.get(node) as *const ASTNode) } {
-    ASTNode::ExprNumLiteral { number } => number.starts_with("."),
+  match unsafe { &*(sp.nodes.get(node) as *const ASTNode) } {
+    ASTNode::ExprNumLiteral { number } => sp.str_src(*number).starts_with("."),
     ASTNode::ExprStrLiteral { .. } => true,
     ASTNode::ExprTemplateLiteral { .. } => true,
     ASTNode::Array { .. } => true,
     ASTNode::Dict { .. } => true,
     ASTNode::Block { .. } => true,
 
-    ASTNode::PrefixOpr { opr, .. } => !opr.chars().next().unwrap().is_alphanumeric(),
+    ASTNode::PrefixOpr { opr, .. } => !sp.str_src(*opr).chars().next().unwrap().is_alphanumeric(),
     ASTNode::InfixOpr { left_right, .. } => node_potentially_starts_with_symbol(left_right.0, sp),
     ASTNode::PostfixOpr { expr, .. } => node_potentially_starts_with_symbol(*expr, sp),
     ASTNode::Parenthesis { .. } => true,

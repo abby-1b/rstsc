@@ -1,6 +1,6 @@
 use phf::phf_map;
 
-use crate::ast::ASTNode;
+use crate::{ast::ASTNode, source_properties::SourceProperties};
 
 
 #[derive(Debug, Clone, Copy)]
@@ -164,12 +164,15 @@ pub fn get_type_operator_binding_power(
   }
 }
 
-pub fn get_operator_binding_power_from_node(node: &ASTNode) -> Option<(u8, u8)> {
+pub fn get_operator_binding_power_from_node(
+  node: &ASTNode,
+  sp: &SourceProperties,
+) -> Option<(u8, u8)> {
   if let Some(opr_type) = ExprType::from(node) {
     get_operator_binding_power(opr_type, match node {
-      ASTNode::PrefixOpr { opr, .. } => opr,
-      ASTNode::InfixOpr { opr, .. } => opr,
-      ASTNode::PostfixOpr { opr, .. } => opr,
+      ASTNode::PrefixOpr { opr, .. } => sp.str_src(*opr),
+      ASTNode::InfixOpr { opr, .. } => sp.str_src(*opr),
+      ASTNode::PostfixOpr { opr, .. } => sp.str_src(*opr),
       _ => " "
     })
   } else {

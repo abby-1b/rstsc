@@ -1,13 +1,13 @@
 use std::{collections::VecDeque, str::Chars};
 
-use crate::{error_type::CompilerError, small_vec::SmallVec};
+use crate::{error_type::CompilerError, small_vec::SmallVec, source_properties::{SMSrc, SourceProperties, SrcMapping}};
 
 pub static TOKEN_QUEUE_SIZE: usize = 32;
 
 /// The `End of File` token, which indicates the file has ended
 pub static EOF_TOKEN: Token = Token {
+  value: SrcMapping::empty(),
   typ: TokenType::EndOfFile,
-  value: "",
 };
 
 fn should_chain(left: char, right: char) -> bool {
@@ -69,38 +69,39 @@ pub enum TokenType {
 }
 
 #[derive(Debug, Clone)]
-pub struct Token<'a> {
-  pub value: &'a str,
+pub struct Token {
+  pub value: SrcMapping,
   pub typ: TokenType,
 }
 
-impl<'a> Token<'a> {
+impl Token {
   /// Checks if this token is a whitespace token
   pub fn is_whitespace(&self) -> bool {
     matches!(self.typ, TokenType::Spacing | TokenType::LineTerminator)
   }
 
-  pub fn from(value: &'a str) -> Token<'a> {
-    Token {
-      typ: TokenType::Unknown,
-      value
-    }
+  pub fn from(value: &str) -> Token {
+    // Token {
+    //   value: 
+    //   typ: TokenType::Unknown,
+    // }
+    todo!("Token::from()")
   }
 }
 
 
 pub struct TokenList<'a> {
-  pub source: &'a str,
+  source: &'a str,
 
   /// The upcoming tokens, which can be peeked at or consumed
-  next_tokens: VecDeque<Token<'a>>,
+  next_tokens: VecDeque<Token>,
   on_token: usize,
 
   /// The number of active checkpoints
   checkpoints: u16,
 
   /// The index currently being read for finding a token
-  find_index: usize,
+  find_index: u32,
 
   /// The amount of curly bracket symbols we've entered
   /// (smart, doesn't count occurences in strings)
@@ -183,26 +184,27 @@ impl<'a> TokenList<'a> {
       self.on_token == last_token_idx &&
       self.next_tokens[self.on_token].typ == TokenType::EndOfFile
     { return true; }
-    self.find_index >= self.source.len() - 1
+    self.find_index >= self.source.len() as u32 - 1
   }
 
   /// Peeks at the next token without consuming it
   #[must_use]
-  pub fn peek<'b>(&mut self) -> &Token<'b> where 'a: 'b {
+  pub fn peek(&mut self) -> Token {
     if self.on_token >= self.next_tokens.len() {
       self.queue_token();
     }
-    &self.next_tokens[self.on_token]
+    self.next_tokens[self.on_token].clone()
   }
 
   #[must_use]
   pub fn peek_str(&mut self) -> &str {
-    self.peek().value
+    let m = self.peek().value;
+    SourceProperties::map_source(self.source, m)
   }
 
   /// Consumes the next token
   #[must_use]
-  pub fn consume<'b>(&mut self) -> Token<'b> where 'a: 'b {
+  pub fn consume(&mut self) -> Token {
     let ret = self.peek().clone();
     if ret.typ != TokenType::EndOfFile {
       self.on_token += 1;
@@ -211,16 +213,22 @@ impl<'a> TokenList<'a> {
   }
 
   #[must_use]
-  pub fn consume_type<'b>(&mut self, typ: TokenType) -> Result<Token<'b>, CompilerError> where 'a: 'b {
+  pub fn consume_str(&mut self) -> &str {
+    let m = self.consume().value;
+    SourceProperties::map_source(self.source, m)
+  }
+
+  #[must_use]
+  pub fn consume_type<'b>(&mut self, typ: TokenType) -> Result<Token, CompilerError> where 'a: 'b {
     let ret = self.consume();
     if ret.typ != typ {
       // println!("{}", std::backtrace::Backtrace::capture());
       Err(CompilerError::new(
+        ret.value,
         format!(
           "Expected {:?}, found {:?}",
           typ, ret.typ
         ),
-        ret, self
       ))
     } else {
       Ok(ret)
@@ -230,11 +238,30 @@ impl<'a> TokenList<'a> {
   /// Skips a single character in the currently-loaded token
   #[must_use]
   pub fn consume_single_character<'b>(&mut self) -> &'b str where 'a: 'b {
+    // // Get character
+    // let single_character = &self.next_tokens[self.on_token].value[0..1];
+
+    // // Skip character in source string
+    // self.next_tokens[self.on_token].value = &self.next_tokens[self.on_token].value[1..];
+
+    // if self.next_tokens[self.on_token].value.is_empty() {
+    //   // Ensure we aren't left with an empty string!
+    //   self.next_tokens.remove(self.on_token + 1);
+    // }
+
+    // // Return
+    // single_character
+
     // Get character
-    let single_character = &self.next_tokens[self.on_token].value[0..1];
+    let single_character = SrcMapping {
+      idx: self.next_tokens[self.on_token].value.idx,
+      len: 1,
+      from: self.next_tokens[self.on_token].value.from
+    };
 
     // Skip character in source string
-    self.next_tokens[self.on_token].value = &self.next_tokens[self.on_token].value[1..];
+    self.next_tokens[self.on_token].value.idx += 1;
+    self.next_tokens[self.on_token].value.len -= 1;
 
     if self.next_tokens[self.on_token].value.is_empty() {
       // Ensure we aren't left with an empty string!
@@ -242,7 +269,7 @@ impl<'a> TokenList<'a> {
     }
 
     // Return
-    single_character
+    SourceProperties::map_source(self.source, single_character)
   }
 
   #[must_use]
@@ -252,8 +279,8 @@ impl<'a> TokenList<'a> {
       Ok(())
     } else {
       Err(CompilerError::expected(
-        candidate,
-        self.peek().clone(), self
+        self.peek().value,
+        candidate
       ))
     }
   }
@@ -606,13 +633,13 @@ impl<'a> TokenList<'a> {
       );
     };
 
-    self.finish_token(out.0, out.1);
+    self.finish_token(out.0 as u32, out.1);
   }
 
-  fn finish_token(&mut self, len: usize, t: TokenType) {
+  fn finish_token(&mut self, len: u32, t: TokenType) {
     self.next_tokens.push_back(Token {
+      value: SrcMapping { idx: self.find_index, len, from: SMSrc::Source },
       typ: t,
-      value: &self.source[self.find_index..self.find_index + len]
     });
     self.find_index += len;
   }
@@ -629,7 +656,7 @@ impl<'a> TokenList<'a> {
         
         // If the last thing was a symbol, we need to check specific symbols
         TokenType::Symbol => {
-          match token.value {
+          match SourceProperties::map_source(self.source, token.value) {
             ")" | "]" | "}" => false, // e.g. "(a + b) / 2"
             _ => true // e.g. "x = /abc/", "return /abc/"
           }

@@ -1,0 +1,17 @@
+
+node arena:
+  memory total: 92.61 KiB
+  speed average:
+    - 1,615,145 loc/s
+    - 1,602,796 loc/s
+    - 1,602,164 loc/s
+
++ tokens in SourceProperties:
+  memory total:
+
+node + string arena:
+  memory total: 75.49 KiB
+  speed average:
+    - 1,624,782 loc/s
+    - 1,627,383 loc/s
+    - 1,633,134 loc/s

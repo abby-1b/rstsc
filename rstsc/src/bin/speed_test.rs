@@ -16,12 +16,11 @@ fn main() {
   let mut durations = Vec::with_capacity(tests);
   for _ in 0..tests {
     let now = Instant::now();
-    let mut tokens = TokenList::from(SOURCE_TEST);
 
-    let mut source_properties = SourceProperties::new();
-    let ast = get_block(&mut tokens, &mut source_properties);
+    let mut source_properties = SourceProperties::new(SOURCE_TEST);
+    let ast = get_block(&mut source_properties);
     if ast.is_err() {
-      ast.err().unwrap().throw(&tokens);
+      ast.err().unwrap().throw(&source_properties);
       return;
     }
 

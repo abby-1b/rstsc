@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::DefaultHasher;
 use std::fmt::{Display, Debug};
 use std::hash::{Hash, Hasher};
@@ -9,8 +9,8 @@ use crate::error_type::CompilerError;
 use crate::operations::{get_type_operator_binding_power, ExprType};
 use crate::parser;
 use crate::small_vec::SmallVec;
-use crate::source_properties::SourceProperties;
-use crate::tokenizer::{Token, TokenList, TokenType};
+use crate::source_properties::{SourceProperties, SrcMapping};
+use crate::tokenizer::{EOF_TOKEN, Token, TokenList, TokenType};
 
 #[derive(Copy, Clone)]
 pub union CustomDouble {
@@ -55,7 +55,7 @@ impl Hash for CustomDouble {
   }
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+#[derive(Debug, Clone)]
 pub struct KeyValueMap {
   key: Type,
   value: Type,
@@ -68,15 +68,15 @@ pub enum ObjectSquareBracketReturn {
   MappedType(Type)
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+#[derive(Debug, Clone)]
 pub struct TypeFunctionArgument {
   spread: bool,
   name: String,
   conditional: bool,
-  typ: Option<Type>
+  typ: Option<Type>,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+#[derive(Debug, Clone)]
 pub enum Type {
   // Primitives
   
@@ -238,16 +238,9 @@ impl Type {
 
     match self {
       Type::Union(types) => {
-        let mut hasher = DefaultHasher::new();
-
-        // Get this type's hash
-        other.hash(&mut hasher);
-        let new_hash = hasher.finish();
-
         let mut found_type = false;
         for t in types.iter() {
-          t.hash(&mut hasher);
-          if hasher.finish() == new_hash {
+          if *t == other {
             found_type = true;
             break;
           }
@@ -269,19 +262,19 @@ impl Type {
   }
 
   pub fn union_from(types: &SmallVec<Type>) -> Type {
-    let mut set = HashSet::new();
-    for t in types {
-      set.insert(t.clone());
+    let mut types_iter = types.iter();
+    let mut union = types_iter.next().unwrap().clone();
+    while let Some(t) = types_iter.next() {
+      union.union(t.clone());
     }
-    Type::Union(set.iter().collect())
+    union
   }
 
-  /// Removes a type from a union, if it exists
+  /// Removes a type from a union or intersection, if it exists
   pub fn remove(&mut self, t: Type) {
     match self {
-      Type::Union(types) => {
+      Type::Union(types) | Type::Intersection(types) => {
         let mut new_arr = SmallVec::with_capacity(types.len() - 1);
-
         for e in types.iter() {
           if *e != t {
             new_arr.push(e.clone());
@@ -304,17 +297,10 @@ impl Type {
     }
 
     match self {
-      Type::Intersection(types) => {
-        let mut hasher = DefaultHasher::new();
-
-        // Get this type's hash
-        other.hash(&mut hasher);
-        let new_hash = hasher.finish();
-
+      Type::Intersection(ref mut types) => {
         let mut found_type = false;
         for t in types.iter() {
-          t.hash(&mut hasher);
-          if hasher.finish() == new_hash {
+          if *t == other {
             found_type = true;
             break;
           }
@@ -364,9 +350,6 @@ impl Type {
       _ => { panic!("`get_single_name()` not implemented for {:?}", self) }
     }
   }
-}
-
-impl Type {
   pub fn inner_count(&self) -> usize {
     match self {
       Type::Union(inner) => inner.len(),
@@ -377,63 +360,113 @@ impl Type {
   }
 }
 
+impl PartialEq for Type {
+  fn eq(&self, other: &Self) -> bool {
+    use Type::*;
+    match (self, other) {
+      (Any, Any) => true,
+      (Number, Number) => true,
+      (NumberLiteral(a), NumberLiteral(b)) => a == b,
+      (String, String) => true,
+      (StringLiteral(a), StringLiteral(b)) => a == b,
+      (Boolean, Boolean) => true,
+      (BooleanLiteral(a), BooleanLiteral(b)) => a == b,
+      (RegExp, RegExp) => true,
+      (Unknown, Unknown) => true,
+      (Void, Void) => true,
+      (Union(a), Union(b)) => a == b,
+      (Intersection(a), Intersection(b)) => a == b,
+      (Custom(a), Custom(b)) => a == b,
+      (WithArgs(a1, a2), WithArgs(b1, b2)) => a1 == b1 && a2 == b2,
+      (Tuple { inner_types: a }, Tuple { inner_types: b }) => a == b,
+      (Array(a), Array(b)) => a == b,
+      (Mapped { key_name: akn, key_type: akt, value_type: avt }, Mapped { key_name: bkn, key_type: bkt, value_type: bvt }) => akn == bkn && akt == bkt && avt == bvt,
+      (Guard(an, at), Guard(bn, bt)) => an == bn && at == bt,
+      (ColonDeclaration { spread: aspr, name: an, typ: at, conditional: ac }, ColonDeclaration { spread: bspr, name: bn, typ: bt, conditional: bc }) => aspr == bspr && an == bn && at == bt && ac == bc,
+      (SpreadParameter { name: an }, SpreadParameter { name: bn }) => an == bn,
+      (Index { callee: ac, property: ap }, Index { callee: bc, property: bp }) => ac == bc && ap == bp,
+      (DirectAccess { callee: ac, property: ap }, DirectAccess { callee: bc, property: bp }) => ac == bc && ap == bp,
+      (TypeOf(a), TypeOf(b)) => a == b,
+      (KeyOf(a), KeyOf(b)) => a == b,
+      (Conditional { cnd_left: al, cnd_right: ar, if_true: at, if_false: af }, Conditional { cnd_left: bl, cnd_right: br, if_true: bt, if_false: bf }) => al == bl && ar == br && at == bt && af == bf,
+      (Extends(a1, a2), Extends(b1, b2)) => a1 == b1 && a2 == b2,
+      (Infer(a), Infer(b)) => a == b,
+      (Readonly(a), Readonly(b)) => a == b,
+      // _ if std::mem::discriminant(self) == std::mem::discriminant(other) => {
+      //   todo!("PartialEq not implemented for this Type variant: {:?}", self)
+      // }
+      // Otherwise, not equal
+      _ => false,
+    }
+  }
+}
+impl PartialEq<&Type> for Type {
+  fn eq(&self, other: &&Type) -> bool {
+    *self == **other
+  }
+}
+
+impl PartialEq<Type> for &Type {
+  fn eq(&self, other: &Type) -> bool {
+    **self == *other
+  }
+}
+impl Eq for Type {}
+
 /// Gets a type, regardless of whether it starts with `:` or not.
 /// If it *does* start with a `:`, that gets consumed and the type is returned.
 pub fn get_type(
-  tokens: &mut TokenList,
   sp: &mut SourceProperties,
 ) -> Result<Type, CompilerError> {
-  if tokens.peek_str() == ":" {
-    tokens.skip_unchecked();
+  if sp.tokens.peek_str() == ":" {
+    sp.tokens.skip_unchecked();
   }
-  get_expression(tokens, 0, sp)
+  get_expression(0, sp)
 }
 
 /// Gets a type only if the next token is `:`.
 /// Otherwise, returns None
 pub fn try_get_type(
-  tokens: &mut TokenList,
   sp: &mut SourceProperties,
 ) -> Result<Option<Type>, CompilerError> {
-  if tokens.peek_str() != ":" {
+  if sp.tokens.peek_str() != ":" {
     Ok(None)
   } else {
-    tokens.skip_unchecked(); // Skip ":"
-    Ok(Some(get_expression(tokens, 0, sp)?))
+    sp.tokens.skip_unchecked(); // Skip ":"
+    Ok(Some(get_expression(0, sp)?))
   }
 }
 
 fn parse_infix(
   mut left: Type,
-  tokens: &mut TokenList,
   precedence: u8,
   sp: &mut SourceProperties,
 ) -> Result<Type, CompilerError> {
-  let conditional = tokens.try_skip_and_ignore_whitespace("?");
-  let infix_opr = tokens.consume();
-  match infix_opr.value {
+  let conditional = sp.tokens.try_skip_and_ignore_whitespace("?");
+  let infix_opr = sp.tokens.consume();
+  match sp.str_src(infix_opr.value) {
     "|" => {
-      left.union(get_expression(tokens, precedence, sp)?);
+      left.union(get_expression(precedence, sp)?);
       Ok(left)
     }
     "&" => {
-      left.intersection(get_expression(tokens, precedence, sp)?);
+      left.intersection(get_expression(precedence, sp)?);
       Ok(left)
     }
     "is" => {
       // Type guard
-      tokens.skip_unchecked();
-      tokens.ignore_whitespace();
+      sp.tokens.skip_unchecked();
+      sp.tokens.ignore_whitespace();
       Ok(Type::Guard(
         // The left side of a type guard is a variable from the scope!
         left.get_single_name(),
-        Box::new(get_expression(tokens, precedence, sp)?)
+        Box::new(get_expression(precedence, sp)?)
       ))
     }
     ":" => {
-      tokens.skip_unchecked();
-      tokens.ignore_whitespace();
-      let typ = get_expression(tokens, precedence, sp)?;
+      sp.tokens.skip_unchecked();
+      sp.tokens.ignore_whitespace();
+      let typ = get_expression(precedence, sp)?;
       Ok(Type::ColonDeclaration {
         spread: false,
         name: left.get_single_name(),
@@ -444,18 +477,18 @@ fn parse_infix(
     "[" => {
       // Type indexing
       let mut arguments: SmallVec<Type> = SmallVec::new();
-      tokens.ignore_whitespace();
-      if tokens.peek_str() != "]" {
+      sp.tokens.ignore_whitespace();
+      if sp.tokens.peek_str() != "]" {
         loop {
-          tokens.ignore_whitespace();
-          arguments.push(get_expression(tokens, 0, sp)?);
-          if tokens.peek_str() != "," {
+          sp.tokens.ignore_whitespace();
+          arguments.push(get_expression(0, sp)?);
+          if sp.tokens.peek_str() != "," {
             break;
           }
-          tokens.skip_unchecked(); // Skip comma
+          sp.tokens.skip_unchecked(); // Skip comma
         }
       }
-      tokens.skip("]")?;
+      sp.tokens.skip("]")?;
 
       if arguments.is_empty() {
         // Normal array notation
@@ -467,26 +500,27 @@ fn parse_infix(
         })
       } else {
         Err(CompilerError::new(
+          infix_opr.value,
           format!(
             "Type indices need exactly one argument, found {}",
             arguments.len()
           ),
-          infix_opr, tokens
         ))
       }
     }
     "." => {
       // Direct type access
-      tokens.ignore_whitespace();
+      sp.tokens.ignore_whitespace();
+      let token = sp.tokens.consume_type(TokenType::Identifier)?.value;
       Ok(Type::DirectAccess {
         callee: Box::new(left),
         property: Box::new(Type::Custom(
-          tokens.consume_type(TokenType::Identifier)?.value.to_owned()
+          sp.str_src(token).to_owned()
         ))
       })
     }
     "<" => {
-      Ok(Type::WithArgs(Box::new(left), get_generics(tokens, sp)?))
+      Ok(Type::WithArgs(Box::new(left), get_generics(sp)?))
     }
     "extends" => {
       // This could be a normal `extends` (like generics), or a conditional
@@ -495,25 +529,25 @@ fn parse_infix(
       ).unwrap().0;
 
       // Get the next type
-      let right_type = get_expression(tokens, extends_precedence, sp)?;
+      let right_type = get_expression(extends_precedence, sp)?;
 
-      tokens.ignore_whitespace();
-      if tokens.peek_str() != "?" {
+      sp.tokens.ignore_whitespace();
+      if sp.tokens.peek_str() != "?" {
         // Not a conditional! Just a normal `extends`
         return Ok(Type::Extends(
           Box::new(left),
           Box::new(right_type)
         ));
       }
-      tokens.skip_unchecked(); // Skip "?"
+      sp.tokens.skip_unchecked(); // Skip "?"
 
-      let if_true = get_expression(tokens, extends_precedence, sp)?;
+      let if_true = get_expression(extends_precedence, sp)?;
 
       // Skip ":"
-      tokens.ignore_whitespace();
-      tokens.skip(":")?;
+      sp.tokens.ignore_whitespace();
+      sp.tokens.skip(":")?;
 
-      let if_false = get_expression(tokens, extends_precedence, sp)?;
+      let if_false = get_expression(extends_precedence, sp)?;
 
       Ok(Type::Conditional {
         cnd_left: Box::new(left),
@@ -524,20 +558,21 @@ fn parse_infix(
     }
     other => {
       Err(CompilerError::new(
+        infix_opr.value,
         format!(
           "Unexpected infix in type {:?}",
           other
         ),
-        infix_opr, tokens
       ))
     }
   }
 }
 
 fn parse_name(
-  tokens: &mut TokenList
+  sp: &mut SourceProperties
 ) -> Type {
-  match tokens.consume().value {
+  let token = sp.tokens.consume().value;
+  match sp.str_src(token) {
     "any" => Type::Any,
     "number" => Type::Number,
     "string" => Type::String,
@@ -551,7 +586,7 @@ fn parse_name(
 
 fn types_into_params(
   types: SmallVec<Type>,
-  tokens: &mut TokenList
+  sp: &mut SourceProperties,
 ) -> Result<SmallVec<TypeFunctionArgument>, CompilerError> {
   let mut params = SmallVec::with_capacity(types.len());
   for p in types.iter() {
@@ -584,11 +619,11 @@ fn types_into_params(
       }
       other => {
         return Err(CompilerError::new(
+          SrcMapping::empty(), // TODO: replace with real token...
           format!(
             "Expected type argument, found type {:?}",
             other
           ),
-          Token::from(""), tokens
         ))
       }
     });
@@ -597,30 +632,29 @@ fn types_into_params(
 }
 
 fn parse_prefix(
-  tokens: &mut TokenList,
   precedence: u8,
   sp: &mut SourceProperties,
 ) -> Result<Type, CompilerError> {
-  let prefix_opr = tokens.consume();
-  match prefix_opr.value {
+  let prefix_opr = sp.tokens.consume();
+  match sp.str_src(prefix_opr.value) {
     "{" => {
       // Curly brace types (Objects or Mapped types)
-      parse_curly_braces(tokens, sp)
+      parse_curly_braces(sp)
     }
     "[" => {
       // Tuple
       let mut inner_types = SmallVec::new();
-      tokens.ignore_commas();
+      sp.tokens.ignore_commas();
       loop {
-        let has_spread = tokens.peek_str() == "...";
-        if has_spread { tokens.skip_unchecked(); }
-        inner_types.push((get_expression(tokens, 0, sp)?, has_spread));
+        let has_spread = sp.tokens.peek_str() == "...";
+        if has_spread { sp.tokens.skip_unchecked(); }
+        inner_types.push((get_expression(0, sp)?, has_spread));
 
         // End on brackets
-        if tokens.peek_str() == "]" { break }
-        tokens.ignore_commas();
+        if sp.tokens.peek_str() == "]" { break }
+        sp.tokens.ignore_commas();
       }
-      tokens.skip("]")?;
+      sp.tokens.skip("]")?;
       Ok(Type::Tuple { inner_types })
     }
     "(" => {
@@ -628,38 +662,41 @@ fn parse_prefix(
       // This could be an arrow function, too
 
       let mut paren_contents = SmallVec::with_capacity(4);
-      tokens.ignore_commas();
+      sp.tokens.ignore_commas();
       loop {
-        tokens.ignore_whitespace();
-        if tokens.peek_str() == ")" { break }
+        sp.tokens.ignore_whitespace();
+        if sp.tokens.peek_str() == ")" { break }
 
-        paren_contents.push(get_type(tokens, sp)?);
-        if !tokens.ignore_commas() { break }
+        paren_contents.push(get_type(sp)?);
+        if !sp.tokens.ignore_commas() { break }
       }
-      tokens.skip_unchecked(); // Skip ")"
-      tokens.ignore_whitespace();
+      sp.tokens.skip_unchecked(); // Skip ")"
+      sp.tokens.ignore_whitespace();
 
-      if tokens.peek_str() != "=>" && tokens.peek_str() != ":" {
+      if sp.tokens.peek_str() != "=>" && sp.tokens.peek_str() != ":" {
         // Normal parenthesized type
         if paren_contents.is_empty() {
           // Empty parenthesis?
-          Err(CompilerError::expected("=>", tokens.consume(), tokens))
+          Err(CompilerError::expected(
+            sp.tokens.consume().value,
+            "=>"
+          ))
         } else if paren_contents.len() == 1 {
           // Remove the type from inside!
           Ok(paren_contents.pop().unwrap())
         } else {
           Ok(Type::Function {
             generics: SmallVec::new(),
-            params: types_into_params(paren_contents, tokens)?,
+            params: types_into_params(paren_contents, sp)?,
             return_type: Box::new(Type::Unknown),
             is_constructor: false
           })
         }
       } else {
         // Function
-        let params = types_into_params(paren_contents, tokens)?;
-        tokens.skip_unchecked();
-        let return_type = get_expression(tokens, precedence, sp)?;
+        let params = types_into_params(paren_contents, sp)?;
+        sp.tokens.skip_unchecked();
+        let return_type = get_expression(precedence, sp)?;
         Ok(Type::Function {
           generics: SmallVec::new(),
           params,
@@ -669,32 +706,32 @@ fn parse_prefix(
       }
     }
     "-" => {
-      let next_token = tokens.peek().clone();
-      let next_typ = get_expression(tokens, precedence, sp)?;
+      let next_token = sp.tokens.peek().clone();
+      let next_typ = get_expression(precedence, sp)?;
       match next_typ {
         Type::NumberLiteral(lit) => {
           Ok(Type::NumberLiteral(-lit))
         }
         other => {
           return Err(CompilerError::new(
+            next_token.value,
             format!("Expected number after \"-\", found {:?}", other),
-            next_token, tokens
           ));
         }
       }
     }
     "new" => {
       // Makes the proceeding function a constructor
-      let next_token = tokens.peek().clone();
-      let mut next_type = get_expression(tokens, precedence, sp)?;
+      let next_token = sp.tokens.peek().clone();
+      let mut next_type = get_expression(precedence, sp)?;
       match &mut next_type {
         Type::Function { is_constructor, .. } => {
           *is_constructor = true;
         }
         other => {
           return Err(CompilerError::new(
+            next_token.value,
             format!("`new` prefix expected \"Function\", found {:?}", other),
-            next_token, tokens
           ))
         }
       }
@@ -702,7 +739,7 @@ fn parse_prefix(
     }
     "..." => {
       // Spread for arguments
-      let mut param = get_expression(tokens, 0, sp)?;
+      let mut param = get_expression(0, sp)?;
       match &mut param {
         Type::ColonDeclaration { spread, .. } => {
           *spread = true;
@@ -713,29 +750,29 @@ fn parse_prefix(
         }
         _ => {
           Err(CompilerError::new(
+            SrcMapping::empty(), // TODO: replace with real token
             format!("Expected parameter after spread, found {:?}", param),
-            Token::from(""), tokens
           ))
         }
       }
     }
     "|" | "&" => {
       // Prefix symbols used as syntactic sugar are ignored
-      get_expression(tokens, precedence, sp)
+      get_expression(precedence, sp)
     }
     "<" => {
       // Start of function with generics
-      let mut generics = get_generics(tokens, sp)?;
-      let next_token = tokens.peek().clone();
-      let mut next_fn = get_expression(tokens, precedence, sp)?;
+      let mut generics = get_generics(sp)?;
+      let next_token = sp.tokens.peek().clone();
+      let mut next_fn = get_expression(precedence, sp)?;
       match &mut next_fn {
         Type::Function { generics: inner_generics, .. } => {
           inner_generics.append(&mut generics);
         }
         other => {
           return Err(CompilerError::new(
+            next_token.value,
             format!("Expected Function type, found {:?}", other),
-            next_token, tokens
           ))
         }
       }
@@ -743,66 +780,66 @@ fn parse_prefix(
     }
     "asserts" | "unique" | "abstract" => {
       // These types are ignored
-      get_expression(tokens, precedence, sp)
+      get_expression(precedence, sp)
     }
     "typeof" => {
-      Ok(Type::TypeOf(Box::new(get_expression(tokens, precedence, sp)?)))
+      Ok(Type::TypeOf(Box::new(get_expression(precedence, sp)?)))
     }
     "keyof" => {
-      Ok(Type::KeyOf(Box::new(get_expression(tokens, precedence, sp)?)))
+      Ok(Type::KeyOf(Box::new(get_expression(precedence, sp)?)))
     }
     "infer" => {
-      tokens.ignore_whitespace();
-      Ok(Type::Infer(tokens.consume().value.to_string()))
+      sp.tokens.ignore_whitespace();
+      let token = sp.tokens.consume().value;
+      Ok(Type::Infer(sp.str_src(token).to_owned()))
     }
     "readonly" => {
       Ok(Type::Readonly(
-        Box::new(get_expression(tokens, precedence, sp)?)
+        Box::new(get_expression(precedence, sp)?)
       ))
     }
     other => {
       Err(CompilerError::new(
+        prefix_opr.value,
         format!(
           "Type prefix operator not found: {:?}",
           other
         ),
-        prefix_opr, tokens
       ))
     }
   }
 }
 
 fn parse_curly_braces(
-  tokens: &mut TokenList,
   sp: &mut SourceProperties,
 ) -> Result<Type, CompilerError> {
   let mut obj_parts = SmallVec::new();
   let mut kv_maps = SmallVec::new();
   let mut mapped_type: Option<Type> = None;
 
-  tokens.ignore_commas();
+  sp.tokens.ignore_commas();
   loop {
-    tokens.ignore_whitespace();
-    if tokens.peek_str() == "}" {
-      tokens.skip_unchecked();
+    sp.tokens.ignore_whitespace();
+    if sp.tokens.peek_str() == "}" {
+      sp.tokens.skip_unchecked();
       break;
     }
     
-    let property = if tokens.peek_str() == "[" {
-      let osbr = parse_object_square_bracket(tokens, sp)?;
+    let property = if sp.tokens.peek_str() == "[" {
+      let osbr = parse_object_square_bracket(sp)?;
       match osbr {
         ObjectSquareBracketReturn::KVMap(kv_map) => {
           kv_maps.push(kv_map);
           continue;
         }
         ObjectSquareBracketReturn::ComputedProp(value) => {
-          ComputableDeclarationName::new_computed(value)
+          ComputableDeclarationName::Computed(value)
         }
         ObjectSquareBracketReturn::MappedType(typ) => {
           if mapped_type.is_some() {
             return Err(CompilerError::new(
+              sp.tokens.consume().value,
               "Can't have multiple mapped types in one object.".to_string(),
-              tokens.consume(), tokens
             ));
           }
           mapped_type = Some(typ.clone());
@@ -810,15 +847,14 @@ fn parse_curly_braces(
         }
       }
     } else {
-      ComputableDeclarationName::new_named(tokens.consume().value.to_string())
+      ComputableDeclarationName::Named(sp.tokens.consume().value)
     };
     
     // Get property type (fallback to `any`)
-    tokens.ignore_whitespace();
-    let property_type = if tokens.peek_str() == ":" {
-      tokens.skip_unchecked(); // Skip ":"
+    sp.tokens.ignore_whitespace();
+    let property_type = if sp.tokens.peek_str() == ":" {
+      sp.tokens.skip_unchecked(); // Skip ":"
       get_expression(
-        tokens,
         *crate::operations::COMMA_PRECEDENCE,
         sp
       )?
@@ -830,7 +866,7 @@ fn parse_curly_braces(
     obj_parts.push(DeclarationTyped::from_parts(property, property_type));
 
     // Ignore commas / exit
-    tokens.ignore_commas();
+    sp.tokens.ignore_commas();
   }
 
   if mapped_type .is_some() {
@@ -844,56 +880,55 @@ fn parse_curly_braces(
 }
 
 pub fn parse_object_square_bracket(
-  tokens: &mut TokenList,
   sp: &mut SourceProperties,
 ) -> Result<ObjectSquareBracketReturn, CompilerError> {
-  tokens.skip("[")?;
-  tokens.ignore_whitespace();
+  sp.tokens.skip("[")?;
+  sp.tokens.ignore_whitespace();
 
-  if tokens.peek().typ != TokenType::Identifier {
+  if sp.tokens.peek().typ != TokenType::Identifier {
     // Anything that isn't an identifier is a computed property
-    let computed = parser::get_expression(tokens, 0, sp)?;
-    tokens.skip("]")?;
+    let computed = parser::get_expression(0, sp)?;
+    sp.tokens.skip("]")?;
     return Ok(
       ObjectSquareBracketReturn::ComputedProp(computed)
     )
   }
 
-  let checkpoint = tokens.get_checkpoint();
+  let checkpoint = sp.tokens.get_checkpoint();
 
   // Although this is usually "key", it can be any identifier!
-  let key_token = tokens.consume();
-  tokens.ignore_whitespace();
+  let key_token = sp.tokens.consume();
+  sp.tokens.ignore_whitespace();
 
-  if tokens.peek_str() == "in" {
-    tokens.ignore_checkpoint(checkpoint);
-    return get_kvc_complex_key(key_token, tokens, sp);
+  if sp.tokens.peek_str() == "in" {
+    sp.tokens.ignore_checkpoint(checkpoint);
+    return get_kvc_complex_key(key_token, sp);
   }
 
-  tokens.ignore_whitespace();
-  if tokens.peek_str() != ":" {
+  sp.tokens.ignore_whitespace();
+  if sp.tokens.peek_str() != ":" {
     // It's computed!
-    tokens.restore_checkpoint(checkpoint);
-    let computed = parser::get_expression(tokens, 0, sp)?;
-    tokens.skip("]")?;
+    sp.tokens.restore_checkpoint(checkpoint);
+    let computed = parser::get_expression(0, sp)?;
+    sp.tokens.skip("]")?;
     return Ok(
       ObjectSquareBracketReturn::ComputedProp(computed)
     )
   } else {
-    tokens.ignore_checkpoint(checkpoint);
+    sp.tokens.ignore_checkpoint(checkpoint);
   }
-  tokens.skip(":")?;
+  sp.tokens.skip(":")?;
 
-  let key_type = get_expression(tokens, 0, sp)?;
+  let key_type = get_expression(0, sp)?;
 
-  tokens.ignore_whitespace();
-  tokens.skip("]")?;
+  sp.tokens.ignore_whitespace();
+  sp.tokens.skip("]")?;
 
-  tokens.ignore_whitespace();
-  let is_optional = tokens.try_skip_and_ignore_whitespace("?");
-  tokens.skip(":")?;
+  sp.tokens.ignore_whitespace();
+  let is_optional = sp.tokens.try_skip_and_ignore_whitespace("?");
+  sp.tokens.skip(":")?;
 
-  let mut value_type = get_expression(tokens, 0, sp)?;
+  let mut value_type = get_expression(0, sp)?;
   if is_optional {
     // Make value type also include `undefined`
     value_type.union(Type::Void);
@@ -906,19 +941,18 @@ pub fn parse_object_square_bracket(
 
 fn get_kvc_complex_key(
   key_token: Token,
-  tokens: &mut TokenList,
   sp: &mut SourceProperties,
 ) -> Result<ObjectSquareBracketReturn, CompilerError> {
-  let key_name = key_token.value.to_string();
-  tokens.skip("in")?;
-  tokens.ignore_whitespace();
-  let key_type = get_expression(tokens, 0, sp)?;
-  tokens.ignore_whitespace();
-  tokens.skip("]")?;
-  tokens.ignore_whitespace();
-  let is_optional = tokens.try_skip_and_ignore_whitespace("?");
-  tokens.skip(":")?;
-  let mut value_type = get_expression(tokens, 0, sp)?;
+  let key_name = sp.str_src(key_token.value).to_owned();
+  sp.tokens.skip("in")?;
+  sp.tokens.ignore_whitespace();
+  let key_type = get_expression(0, sp)?;
+  sp.tokens.ignore_whitespace();
+  sp.tokens.skip("]")?;
+  sp.tokens.ignore_whitespace();
+  let is_optional = sp.tokens.try_skip_and_ignore_whitespace("?");
+  sp.tokens.skip(":")?;
+  let mut value_type = get_expression(0, sp)?;
   if is_optional {
     // Make value type also include `undefined`
     value_type.union(Type::Void);
@@ -933,60 +967,61 @@ fn get_kvc_complex_key(
 }
 
 fn get_expression(
-  tokens: &mut TokenList,
   precedence: u8,
   sp: &mut SourceProperties,
 ) -> Result<Type, CompilerError> {
-  tokens.ignore_whitespace();
+  sp.tokens.ignore_whitespace();
 
   let mut left = {
-    let next = tokens.peek();
+    let next = sp.tokens.peek();
     // println!("Handling prefix {:?}", next);
 
-    if [ ")", "]", "}", ",", ";" ].contains(&next.value) {
+    if [ ")", "]", "}", ",", ";" ].contains(&sp.str_src(next.value)) {
       // End it here!
       return Ok(Type::Unknown);
     }
 
-    // let next = tokens.peek();
+    // let next = sp.tokens.peek();
     match &next.typ {
       TokenType::Number => {
-        let value: f64 = tokens.consume().value.parse().unwrap();
+        let token = sp.tokens.consume().value;
+        let value: f64 = sp.str_src(token).parse().unwrap();
         Type::NumberLiteral(CustomDouble {
           value
         })
       }
       TokenType::String => {
-        Type::StringLiteral(tokens.consume().value.to_string())
+        let token = sp.tokens.consume().value;
+        Type::StringLiteral(sp.str_src(token).to_owned())
       }
       TokenType::Identifier | TokenType::Symbol => {
         let binding_power = get_type_operator_binding_power(
           ExprType::Prefx,
-          next.value
+          sp.str_src(next.value)
         );
         if let Some(binding_power) = binding_power {
           // Prefix operators
-          parse_prefix(tokens, binding_power.1, sp)?
+          parse_prefix(binding_power.1, sp)?
         } else if next.typ == TokenType::Identifier {
           // Could be a name...
-          parse_name(tokens)
+          parse_name(sp)
         } else {
           return Err(CompilerError::new(
+            sp.tokens.consume().value,
             format!(
               "Prefix operator not found when fetching type: {:?}",
               next
             ),
-            tokens.consume(), tokens
           ))
         }
       }
       other => {
         return Err(CompilerError::new(
+          sp.tokens.consume().value,
           format!(
             "Unexpected token when parsing type: {:?}",
             other
           ),
-          tokens.consume(), tokens
         ));
       }
     }
@@ -994,8 +1029,8 @@ fn get_expression(
 
   loop {
     // Get the next token
-    tokens.ignore_whitespace();
-    let next = tokens.peek();
+    sp.tokens.ignore_whitespace();
+    let next = sp.tokens.peek();
     if next.typ == TokenType::EndOfFile { break; }
 
     // println!(
@@ -1005,7 +1040,7 @@ fn get_expression(
 
     // Handle infix
     let binding_power = if let Some(binding_power) = get_type_operator_binding_power(
-      ExprType::Infx, next.value
+      ExprType::Infx, sp.str_src(next.value)
     ) {
       if binding_power.0 < precedence {
         break;
@@ -1016,7 +1051,7 @@ fn get_expression(
       break;
     };
 
-    left = parse_infix(left, tokens, binding_power.1, sp)?;
+    left = parse_infix(left, binding_power.1, sp)?;
   }
 
   Ok(left)
@@ -1024,58 +1059,56 @@ fn get_expression(
 
 /// Gets types separated by commas
 pub fn get_comma_separated_types_until(
-  tokens: &mut TokenList,
   until_str: &[&str],
   sp: &mut SourceProperties,
 ) -> Result<SmallVec<Type>, CompilerError> {
   let mut types = SmallVec::new();
-  tokens.ignore_commas();
+  sp.tokens.ignore_commas();
   loop {
-    if until_str.contains(&tokens.peek_str()) {
+    if until_str.contains(&sp.tokens.peek_str()) {
       break
     }
-    types.push(get_type(tokens, sp)?);
-    if tokens.peek_str() == "=" {
+    types.push(get_type(sp)?);
+    if sp.tokens.peek_str() == "=" {
       // Type defaults are ignored! They're an artifact of TypeScript's
       // older type inference, which couldn't infer a lot of the more
       // complex types.
-      tokens.skip_unchecked();
-      get_type(tokens, sp)?;
+      sp.tokens.skip_unchecked();
+      get_type(sp)?;
     }
-    if !tokens.ignore_commas() { break }
+    if !sp.tokens.ignore_commas() { break }
   }
   Ok(types)
 }
 
 /// Gets generics if available, otherwise returns an empty vec
 pub fn get_optional_generics(
-  tokens: &mut TokenList,
   sp: &mut SourceProperties,
 ) -> Result<SmallVec<Type>, CompilerError> {
   // Get generics
-  if tokens.peek_str() != "<" { return Ok(SmallVec::new()); }
-  tokens.skip_unchecked(); // Skip "<"
-  get_generics(tokens, sp)
+  if sp.tokens.peek_str() != "<" { return Ok(SmallVec::new()); }
+  sp.tokens.skip_unchecked(); // Skip "<"
+  get_generics(sp)
 }
 
 /// Gets generics until it finds a ">", consuming it.
 /// Used after the first "<", as it will not consume it!
 pub fn get_generics(
-  tokens: &mut TokenList,
   sp: &mut SourceProperties,
 ) -> Result<SmallVec<Type>, CompilerError> {
   let generics = get_comma_separated_types_until(
-    tokens, &[ ">", ")", ";" ], sp
+    &[ ">", ")", ";" ], sp
   )?;
-  if !tokens.peek_str().starts_with(">") {
+  if !sp.tokens.peek_str().starts_with(">") {
     return Err(CompilerError::expected(
-      ">", tokens.consume(), tokens
+      sp.tokens.consume().value,
+      ">"
     ));
   }
-  if tokens.peek_str().len() > 1 {
-    let _ = tokens.consume_single_character();
+  if sp.tokens.peek_str().len() > 1 {
+    let _ = sp.tokens.consume_single_character();
   } else {
-    tokens.skip_unchecked(); // Skip ">"
+    sp.tokens.skip_unchecked(); // Skip ">"
   }
   Ok(generics)
 }

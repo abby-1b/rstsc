@@ -1,146 +1,36 @@
 use crate::ast::ASTIndex;
 use crate::small_vec::SmallVec;
-use crate::{ast::ASTNode, types::Type};
-use std::ptr::NonNull;
-use std::hash::Hash;
+use crate::source_properties::SrcMapping;
+use crate::types::Type;
 use core::fmt::Debug;
 
-#[derive(Debug, Clone, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub enum DestructurePattern {
   Array { elements: SmallVec<DestructurePattern>, spread: Option<Box<DestructurePattern>> },
   Object { properties: SmallVec<(DestructurePattern, DestructurePattern)>, spread: Option<Box<DestructurePattern>> },
-  Identifier { name: String },
-  NumericProperty { value: String },
-  StringProperty { value: String },
+  Identifier { name: SrcMapping },
+  NumericProperty { value: SrcMapping },
+  StringProperty { value: SrcMapping },
   Ignore,
   WithInitializer { pattern: Box<DestructurePattern>, initializer: ASTIndex }
 }
 
-/// A declaration name that can be computed (ASTNode) or assigned (String)
-/// 
-/// Stores a pointer to either a boxed ASTNode or a boxed String
-/// by using the lowest bit as a tag. Functionally equivalent to an enum:
-/// ```txt
-/// enum ComputableDeclarationName {
-///   Computed(ASTNode),
-///   Named(String)
-/// }
-/// ```
-/// but more memory efficient (one pointer instead of two),
-/// at the cost of some unsafe code and complexity.
-pub struct ComputableDeclarationName(NonNull<()>);
-impl ComputableDeclarationName {
-  pub fn new_computed(value: ASTIndex) -> ComputableDeclarationName {
-    let boxed = Box::new(value);
-    let ptr = NonNull::new(
-      Box::into_raw(boxed) as *mut ()
-    ).unwrap();
-    ComputableDeclarationName(ptr)
-  }
-  pub fn new_named(name: String) -> ComputableDeclarationName {
-    let boxed = Box::new(name);
-    let ptr = NonNull::new(
-      (Box::into_raw(boxed) as *mut () as usize | 1) as *mut ()
-    ).unwrap();
-    ComputableDeclarationName(ptr)
-  }
-  
-  #[inline]
-  pub fn is_computed(&self) -> bool {
-    self.0.as_ptr() as usize & 1 == 0
-  }
-  #[inline]
-  pub fn is_named(&self) -> bool {
-    !self.is_computed()
-  }
-
-  pub unsafe fn get_computed_unchecked(&self) -> ASTIndex {
-    *(self.0.as_ptr() as *const ASTIndex)
-  }
-  pub unsafe fn get_named_unchecked(&self) -> &String {
-    &*((self.0.as_ptr() as usize & !1) as *const String)
-  }
-
-  pub fn get_computed(&self) -> Option<ASTIndex> {
-    if !self.is_computed() { return None }
-    Some(unsafe { self.get_computed_unchecked() })
-  }
-  pub fn get_named(&self) -> Option<&String> {
-    if !self.is_named() { return None }
-    Some(unsafe { self.get_named_unchecked() })
-  }
-}
-
-impl Drop for ComputableDeclarationName {
-  fn drop(&mut self) {
-    unsafe {
-      if !self.is_computed() {
-        let _ = Box::from_raw((self.0.as_ptr() as usize & !1) as *mut String);
-      }
-    }
-  }
-}
-
-impl Debug for ComputableDeclarationName {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    if self.is_computed() {
-      f.debug_tuple("Computed")
-        .field(&self.get_computed().unwrap())
-        .finish()
-    } else {
-      f.debug_tuple("Named")
-        .field(self.get_named().unwrap())
-        .finish()
-    }
-  }
-}
-
-impl Clone for ComputableDeclarationName {
-  fn clone(&self) -> Self {
-    if self.is_computed() {
-      Self::new_computed(self.get_computed().unwrap())
-    } else {
-      Self::new_named((*self.get_named().unwrap()).clone())
-    }
-  }
-}
-
-impl PartialEq for ComputableDeclarationName {
-  fn eq(&self, other: &Self) -> bool {
-    let is_computed = self.is_computed();
-    if is_computed != other.is_computed() { return false }
-    if is_computed {
-      self.get_computed() == other.get_computed()
-    } else {
-      self.get_named() == other.get_named()
-    }
-  }
-}
-impl Eq for ComputableDeclarationName {}
-
-impl Hash for ComputableDeclarationName {
-  #[inline]
-  fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-    if self.is_computed() {
-      true.hash(state);
-      self.get_computed().unwrap().hash(state);
-    } else {
-      false.hash(state);
-      self.get_named().unwrap().hash(state);
-    }
-  }
+#[derive(Debug, Clone)]
+pub enum ComputableDeclarationName {
+  Computed(ASTIndex),
+  Named(SrcMapping)
 }
 
 /// A non-computable declaration
 /// Used for variables, parameters
-#[derive(Debug, Clone, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub struct Declaration {
-  pub name: String,
+  pub name: SrcMapping,
   pub typ: Type,
   pub value: Option<ASTIndex>
 }
 impl Declaration {
-  pub fn new(name: String, typ: Type, value: Option<ASTIndex>) -> Declaration {
+  pub fn new(name: SrcMapping, typ: Type, value: Option<ASTIndex>) -> Declaration {
     Declaration {
       name,
       typ,
@@ -150,13 +40,13 @@ impl Declaration {
   pub fn clear_value(&mut self) {
     self.value = None;
   }
-  pub fn name(&self) -> &String { &self.name }
+  // pub fn name(&self) -> &String { &self.name }
   pub fn typ(&self) -> &Type { &self.typ }
   pub fn value(&self) -> Option<ASTIndex> { self.value }
 }
 
 /// Used for class declarations and dictionary values, which are computable
-#[derive(Debug, Clone, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub struct DeclarationComputable {
   pub name: ComputableDeclarationName,
   pub typ: Type,
@@ -165,20 +55,20 @@ pub struct DeclarationComputable {
 impl DeclarationComputable {
   pub fn computed(inner: ASTIndex, typ: Type, value: Option<ASTIndex>) -> DeclarationComputable {
     DeclarationComputable {
-      name: ComputableDeclarationName::new_computed(inner),
+      name: ComputableDeclarationName::Computed(inner),
       typ, value
     }
   }
-  pub fn named(name: String, typ: Type, value: Option<ASTIndex>) -> DeclarationComputable {
+  pub fn named(name: SrcMapping, typ: Type, value: Option<ASTIndex>) -> DeclarationComputable {
     DeclarationComputable {
-      name: ComputableDeclarationName::new_named(name),
+      name: ComputableDeclarationName::Named(name),
       typ, value
     }
   }
 
   pub fn from(declaration: &Declaration) -> DeclarationComputable {
     DeclarationComputable {
-      name: ComputableDeclarationName::new_named(declaration.name.clone()),
+      name: ComputableDeclarationName::Named(declaration.name.clone()),
       typ: declaration.typ.clone(),
       value: declaration.value.as_ref().map(|v| v.clone())
     }
@@ -186,7 +76,7 @@ impl DeclarationComputable {
 }
 
 /// A type-only declaration that has no assigned value, and is not computable.
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+#[derive(Debug, Clone)]
 pub struct DeclarationTyped {
   name: ComputableDeclarationName,
   typ: Box<Type>
@@ -194,13 +84,13 @@ pub struct DeclarationTyped {
 impl DeclarationTyped {
   pub fn computed(inner: ASTIndex, typ: Type) -> DeclarationTyped {
     DeclarationTyped {
-      name: ComputableDeclarationName::new_computed(inner),
+      name: ComputableDeclarationName::Computed(inner),
       typ: Box::new(typ)
     }
   }
-  pub fn named(name: String, typ: Type) -> DeclarationTyped {
+  pub fn named(name: SrcMapping, typ: Type) -> DeclarationTyped {
     DeclarationTyped {
-      name: ComputableDeclarationName::new_named(name),
+      name: ComputableDeclarationName::Named(name),
       typ: Box::new(typ)
     }
   }
@@ -212,7 +102,7 @@ impl DeclarationTyped {
   }
 }
 
-#[derive(Debug, Clone, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub struct DestructurableDeclaration {
   pub name: DestructurePattern,
   pub typ: Type
