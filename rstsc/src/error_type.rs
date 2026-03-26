@@ -13,34 +13,43 @@ pub struct CompilerError {
 
 impl Debug for CompilerError {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    write!(f, "CompilerError:\n{}", self.message)
+    write!(f, "CompilerError: {}", self.message)
   }
 }
 
 impl CompilerError {
-  /// Prints this error to an output, but does not exit the program
-  pub fn print(&self, sp: &SourceProperties) {
+  pub fn as_string(&self, sp: &SourceProperties) -> String {
+    let mut out = String::new();
+
     let error_line = self.get_line_info(sp);
     let context_lines = self.get_context_lines(sp, error_line.line_number);
-    let underline = self.underline_token(sp, error_line.line_start, error_line.line_end);
-    
-    // Print error message header
-    println!("Error: {}", self.message);
-    
-    // Print context lines with line numbers
+    let underline = self.underline_token(error_line.line_start, error_line.line_end);
+
+    // Error message header
+    out += "Error: ";
+    out += &self.message;
+
+    // Context + error lines
     for (_, line_info) in context_lines.iter().enumerate() {
       let line_num = line_info.line_number;
       let line_content = &line_info.content;
-      
+
       if line_num == error_line.line_number {
-        // This is the error line - print with underline
-        println!("{:4} | {}", line_num, line_content);
-        println!("     | {}", underline);
+        // Error line
+        out += &format!("{:4} | {}", line_num, line_content);
+        out += &format!("     | {}", underline);
       } else {
-        // Context line - just print the content
-        println!("{:4} | {}", line_num, line_content);
+        // Context line
+        out += &format!("{:4} | {}", line_num, line_content);
       }
     }
+
+    out
+  }
+
+  /// Prints this error to an output, but does not exit the program
+  pub fn print(&self, sp: &SourceProperties) {
+    println!("{}", self.as_string(sp));
   }
 
   /// Throws this error, exiting the program
@@ -53,6 +62,7 @@ impl CompilerError {
     CompilerError { token, message }
   }
 
+  // TODO: deprecate
   pub fn new_static(message: String) -> CompilerError {
     CompilerError { token: SrcMapping::empty(), message }
   }
@@ -94,7 +104,7 @@ impl CompilerError {
     // Find the line number by counting newlines before the token
     let mut line_number = 1;
     let mut line_start = 0;
-    
+
     for (i, ch) in source.char_indices() {
       if i >= self.token.idx as usize {
         break;
@@ -173,31 +183,24 @@ impl CompilerError {
   /// Creates an underline string for the token
   fn underline_token(
     &self,
-    sp: &SourceProperties,
     line_start: usize, line_end: usize
   ) -> String {
-    let source = match self.token.from {
-      crate::source_properties::SMSrc::Source => sp.source,
-      crate::source_properties::SMSrc::Pool => &sp.string_pool,
-      _ => return String::new(),
-    };
-
     // Calculate the position of the token within the line
     let token_start_in_line = self.token.idx as usize - line_start;
     let token_end_in_line = (self.token.idx + self.token.len) as usize - line_start;
-    
+
     // Ensure we don't go beyond the line bounds
     let token_end_in_line = token_end_in_line.min(line_end - line_start);
     let token_start_in_line = token_start_in_line.min(token_end_in_line);
 
     // Create the underline string
     let mut underline = String::new();
-    
+
     // Add spaces before the token
     for _ in 0..token_start_in_line {
       underline.push(' ');
     }
-    
+
     // Add carets for the token
     for _ in token_start_in_line..token_end_in_line {
       underline.push('^');

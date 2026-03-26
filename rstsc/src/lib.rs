@@ -1,3 +1,4 @@
+use crate::source_properties::SourceProperties;
 
 pub mod small_vec;
 pub mod rest;
@@ -19,8 +20,18 @@ pub mod type_infer;
 pub mod emit;
 
 /// Compiles a string of TypeScript code
-pub fn compile(code: &str, compact: bool) -> Result<String, error_type::CompilerError> {
-  let mut sp = source_properties::SourceProperties::new(code);
-  let ast = parser::get_block(&mut sp)?;
-  Ok(emit::emit_code(ast, &mut sp, compact))
+pub fn compile<'a>(
+  code: &'a str, compact: bool
+) -> (Result<String, error_type::CompilerError>, SourceProperties<'a>) {
+  let mut source_properties = source_properties::SourceProperties::new(code);
+  let compile_result =
+    parser::get_block(&mut source_properties)
+    .map(|ast| {
+      emit::emit_code(ast, &mut source_properties, compact)
+    });
+
+  (
+    compile_result,
+    source_properties
+  )
 }
