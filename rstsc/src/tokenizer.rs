@@ -32,7 +32,7 @@ fn should_chain(left: char, right: char) -> bool {
     // And / Or
     ('&', '&') => true,
     ('|', '|') => true,
-    
+
     // Bit-shifting
     ('>', '>') => true,
     ('<', '<') => true,
@@ -82,7 +82,7 @@ impl Token {
 
   pub fn from(value: &str) -> Token {
     // Token {
-    //   value: 
+    //   value:
     //   typ: TokenType::Unknown,
     // }
     todo!("Token::from()")
@@ -416,7 +416,8 @@ impl<'a> TokenList<'a> {
           TokenType::Identifier
         );
       } else if curr_char.is_numeric() || (curr_char == '.' && self.char_iter.peek_far().is_some_and(|x| x.is_numeric())) {
-        // Numbers
+        // Numbers (including BigInt)
+        #[derive(PartialEq, Eq)]
         enum Ending {
           False,
           ExpectSign,
@@ -424,47 +425,138 @@ impl<'a> TokenList<'a> {
         }
         let mut is_exponent: Ending = Ending::False;
         let mut token_len = 0;
+        let mut is_big_int = false;
+        let mut has_decimal_point = false;
+        
+        // Check for non-decimal integer prefixes (0b, 0o, 0x)
+        let mut is_non_decimal = false;
+        let mut digit_predicate: Box<dyn Fn(char) -> bool> = Box::new(|c| c.is_numeric() || c == '_');
+        
+        if curr_char == '0' {
+          if let Some(next_char) = self.char_iter.peek_far() {
+            match next_char.to_ascii_lowercase() {
+              'b' => {
+                // Binary literal
+                is_non_decimal = true;
+                digit_predicate = Box::new(|c| c == '0' || c == '1' || c == '_');
+                // Consume the '0' and 'b'
+                token_len += curr_char.len_utf8();
+                self.char_iter.skip(); // skip '0'
+                let b_char = self.char_iter.consume().unwrap(); // consume 'b' or 'B'
+                token_len += b_char.len_utf8();
+              }
+              'o' => {
+                // Octal literal
+                is_non_decimal = true;
+                digit_predicate = Box::new(|c| (c >= '0' && c <= '7') || c == '_');
+                // Consume the '0' and 'o'
+                token_len += curr_char.len_utf8();
+                self.char_iter.skip(); // skip '0'
+                let o_char = self.char_iter.consume().unwrap(); // consume 'o' or 'O'
+                token_len += o_char.len_utf8();
+              }
+              'x' => {
+                // Hexadecimal literal
+                is_non_decimal = true;
+                digit_predicate = Box::new(|c| c.is_ascii_hexdigit() || c == '_');
+                // Consume the '0' and 'x'
+                token_len += curr_char.len_utf8();
+                self.char_iter.skip(); // skip '0'
+                let x_char = self.char_iter.consume().unwrap(); // consume 'x' or 'X'
+                token_len += x_char.len_utf8();
+              }
+              _ => {
+                // Regular decimal starting with 0
+                token_len += curr_char.len_utf8();
+                self.char_iter.skip();
+              }
+            }
+          } else {
+            // Just '0' at end of input
+            token_len += curr_char.len_utf8();
+            self.char_iter.skip();
+          }
+        } else {
+          // Regular decimal number not starting with 0
+          token_len += curr_char.len_utf8();
+          self.char_iter.skip();
+        }
+        
         loop {
           if let Some(c) = self.char_iter.peek() {
-            match is_exponent {
-              Ending::False => {
-                if c.is_numeric() || c == '_' {
-                  token_len += c.len_utf8();
-                  self.char_iter.skip();
-                } else if c == '.' {
-                  token_len += c.len_utf8();
-                  self.char_iter.skip();
-                } else if c == 'e' || c == 'E' {
-                  is_exponent = Ending::ExpectSign;
-                  token_len += c.len_utf8();
-                  self.char_iter.skip();
-                } else if c == 'n' {
-                  token_len += c.len_utf8();
-                  self.char_iter.skip();
-                  break;
-                } else {
-                  break;
-                }
-              },
-              Ending::ExpectSign => {
-                if c == '+' || c == '-' {
-                  is_exponent = Ending::ExpectNumber;
-                  token_len += c.len_utf8();
-                  self.char_iter.skip();
-                } else if c.is_numeric() {
-                  is_exponent = Ending::ExpectNumber;
-                } else {
-                  break;
-                }
-              },
-              Ending::ExpectNumber => {
-                if c.is_numeric() || c == '_' {
-                  token_len += c.len_utf8();
-                  self.char_iter.skip();
-                } else {
-                  break;
-                }
-              },
+            if is_non_decimal {
+              // For non-decimal literals (binary, octal, hex), we can't have:
+              // - Decimal points
+              // - Exponents
+              // We can only have digits (according to the digit_predicate) and '_'
+              if digit_predicate(c) {
+                token_len += c.len_utf8();
+                self.char_iter.skip();
+              } else if c == 'n' {
+                // BigInt suffix
+                is_big_int = true;
+                token_len += c.len_utf8();
+                self.char_iter.skip();
+                break;
+              } else {
+                break;
+              }
+            } else {
+              // Decimal number handling
+              match is_exponent {
+                Ending::False => {
+                  if c.is_numeric() || c == '_' {
+                    token_len += c.len_utf8();
+                    self.char_iter.skip();
+                  } else if c == '.' {
+                    // Decimal point - not allowed for BigInts
+                    if is_big_int {
+                      break;
+                    }
+                    has_decimal_point = true;
+                    token_len += c.len_utf8();
+                    self.char_iter.skip();
+                  } else if c == 'e' || c == 'E' {
+                    // Exponent - not allowed for BigInts
+                    if is_big_int {
+                      break;
+                    }
+                    is_exponent = Ending::ExpectSign;
+                    token_len += c.len_utf8();
+                    self.char_iter.skip();
+                  } else if c == 'n' {
+                    // BigInt suffix - not allowed if we have decimal point or exponent
+                    if has_decimal_point || is_exponent != Ending::False {
+                      break;
+                    }
+                    is_big_int = true;
+                    token_len += c.len_utf8();
+                    self.char_iter.skip();
+                    break;
+                  } else {
+                    break;
+                  }
+                },
+                Ending::ExpectSign => {
+                  if c == '+' || c == '-' {
+                    is_exponent = Ending::ExpectNumber;
+                    token_len += c.len_utf8();
+                    self.char_iter.skip();
+                  } else if c.is_numeric() {
+                    is_exponent = Ending::ExpectNumber;
+                  } else {
+                    break;
+                  }
+                },
+                Ending::ExpectNumber => {
+                  if c.is_numeric() || c == '_' {
+                    token_len += c.len_utf8();
+                    self.char_iter.skip();
+                  } else {
+                    break;
+                  }
+                },
+              }
             }
           } else {
             break;
@@ -574,7 +666,7 @@ impl<'a> TokenList<'a> {
             // It is not a comment. Is it a Regex?
             if self.is_regex_position() {
               let mut token_len = 1; // we already have the first '/'
-              self.char_iter.consume(); 
+              self.char_iter.consume();
 
               let mut in_class = false; // To handle [ ... ]
               let mut is_escaped = false;
@@ -582,22 +674,22 @@ impl<'a> TokenList<'a> {
               loop {
                 if let Some(c) = self.char_iter.peek() {
                   // JS Regex cannot contain unescaped newlines
-                  if c == '\n' { break; } 
-                  
+                  if c == '\n' { break; }
+
                   token_len += c.len_utf8();
                   self.char_iter.consume();
 
                   if !is_escaped {
-                    if c == '[' { 
-                      in_class = true; 
-                    } else if c == ']' { 
-                      in_class = false; 
-                    } else if c == '/' && !in_class { 
+                    if c == '[' {
+                      in_class = true;
+                    } else if c == ']' {
+                      in_class = false;
+                    } else if c == '/' && !in_class {
                       // End of Regex body
-                      break; 
+                      break;
                     }
                   }
-                  
+
                   is_escaped = c == '\\' && !is_escaped;
                 } else {
                   break; // EOF
@@ -651,9 +743,9 @@ impl<'a> TokenList<'a> {
 
       return match token.typ {
         // If the last thing was a value, a slash is Division (e.g. "x / 5")
-        TokenType::Identifier | TokenType::Number | TokenType::String | 
+        TokenType::Identifier | TokenType::Number | TokenType::String |
         TokenType::StringTemplateEnd | TokenType::Regex => false,
-        
+
         // If the last thing was a symbol, we need to check specific symbols
         TokenType::Symbol => {
           match SourceProperties::map_source(self.source, token.value) {
@@ -661,9 +753,9 @@ impl<'a> TokenList<'a> {
             _ => true // e.g. "x = /abc/", "return /abc/"
           }
         },
-        
+
         // For keywords (if you parsed them as specific types) or Start of File
-        _ => true 
+        _ => true
       };
     }
     // If no previous tokens exist, we are at start of file -> Regex

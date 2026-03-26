@@ -17,7 +17,7 @@ pub static INVERSE_GROUPINGS: phf::Map<&'static str, &'static str> = phf_map! {
   "[" => "]",
   "{" => "}",
   "<" => ">",
-  
+
   ")" => "(",
   "]" => "[",
   "}" => "{",
@@ -82,7 +82,7 @@ fn get_single_statement<'a, 'b>(
     "function" => handle_function_declaration(sp)?.unwrap(),
     "class" => handle_class_declaration(sp)?.unwrap(),
     "import" => handle_import(sp)?.unwrap(),
-    "export" | "async" | "static" | "public" | "private" | "protected" | "readonly" | "abstract" | "override" => 
+    "export" | "async" | "static" | "public" | "private" | "protected" | "readonly" | "abstract" | "override" =>
         handle_modifiers(sp)?.unwrap(),
     "return" | "break" | "continue" | "throw" => handle_other_statements(sp)?.unwrap(),
     "type" => handle_type_declaration(sp)?.unwrap(),
@@ -175,7 +175,7 @@ fn get_declaration<'a, 'b>(
     }
   );
   sp.st.add_symbol(symbol)?;
-  
+
   Ok(Declaration::new(name, typ, value))
 }
 
@@ -225,7 +225,7 @@ fn get_destructurable_declaration<'a, 'b>(
 ) -> Result<DestructurableDeclaration, CompilerError> where 'a: 'b {
   let name = parse_destructure_pattern(false, sp)?;
   let (typ, initializer) = get_declaration_after_name(sp)?;
-  
+
   // Create symbol for identifier patterns
   if let DestructurePattern::Identifier { name: identifier_name } = &name {
     let symbol = Symbol::new(
@@ -239,7 +239,7 @@ fn get_destructurable_declaration<'a, 'b>(
     );
     sp.st.add_symbol(symbol)?;
   }
-  
+
   Ok(DestructurableDeclaration {
     name: if let Some(initializer) = initializer {
       DestructurePattern::WithInitializer { pattern: Box::new(name), initializer }
@@ -439,7 +439,7 @@ fn handle_control_flow(
       sp.tokens.skip("(")?;
       let condition = get_expression(0, sp)?;
       sp.tokens.skip_with_whitespace(")")?;
-      
+
       // Get body
       let body = get_single_statement(sp)?;
 
@@ -552,7 +552,7 @@ fn handle_for_loop(
     sp.nodes.add(ASTNode::StatementForOf { init, expression, body })
   } else if sp.tokens.try_skip_and_ignore_whitespace("in") {
     let expression = get_expression(0, sp)?;
-    
+
     sp.tokens.skip(")")?;
     let body = get_single_statement(sp)?;
 
@@ -728,7 +728,7 @@ fn get_function_after_name<'a, 'b>(
   sp.tokens.ignore_whitespace();
 
   let generics = get_optional_generics(sp)?;
-  
+
   // Get parameters and return type
   sp.tokens.ignore_whitespace();
   sp.tokens.skip("(")?;
@@ -776,7 +776,7 @@ fn get_constructor_after_name<'a, 'b>(
       "Type parameters cannot appear on a constructor declaration.".to_owned(),
     ))
   }
-  
+
   // Get parameters
   let mut params: SmallVec<DestructurableDeclaration> = SmallVec::new();
   let mut set_properties: SmallVec<ASTIndex> = SmallVec::new();
@@ -932,7 +932,7 @@ fn get_class_expression<'a, 'b>(
           ))
         }
       }
-      
+
       sp.tokens.ignore_whitespace();
 
       // Skip ";" (if any)
@@ -1155,8 +1155,8 @@ fn handle_modifiers(
 
     sp.tokens.skip("}")?;
 
-    Ok(Some(sp.nodes.add(ASTNode::StatementExport { 
-      inner: Box::new(crate::ast::ExportDeclaration { specifiers }) 
+    Ok(Some(sp.nodes.add(ASTNode::StatementExport {
+      inner: Box::new(crate::ast::ExportDeclaration { specifiers })
     })))
   } else {
     // Get the node that goes after the modifiers
@@ -1469,7 +1469,7 @@ fn handle_try_catch(
     };
     (capture_catch, capture_catch_type, block_catch)
   } else { (None, None, None) };
-  
+
   sp.tokens.ignore_whitespace();
   let block_finally = if sp.tokens.peek_str() == "finally" {
     let token = sp.tokens.consume();
@@ -1647,16 +1647,27 @@ fn parse_string_template(
 fn parse_regex(
   sp: &mut SourceProperties,
 ) -> ASTIndex {
-  todo!("Reimplement with new pooling...");
-  // let val = sp.tokens.consume().value;
+  let val_map = sp.tokens.consume().value;
+  let val = sp.str_src(val_map);
 
-  // let (pattern, flags) = val[1..].split_once('/')
-  //   .unwrap_or((&val[1..], ""));
+  let second_slash_idx = val.chars().enumerate()
+    .position(|(i, c)| i > 0 && c == '/').unwrap();
 
-  // sp.arena.add(ASTNode::ExprRegexLiteral { inner: Box::new(ExprRegexLiteral {
-  //   pattern: pattern.to_string(), 
-  //   flags: flags.to_string() 
-  // }) })
+  let pattern = SrcMapping {
+    idx: val_map.idx + 1,
+    len: second_slash_idx as u32 - 1,
+    from: val_map.from
+  };
+  let flags = SrcMapping {
+    idx: val_map.idx + second_slash_idx as u32 + 1,
+    len: val_map.len - second_slash_idx as u32 - 1,
+    from: val_map.from
+  };
+
+  sp.nodes.add(ASTNode::ExprRegexLiteral { inner: Box::new(ExprRegexLiteral {
+    pattern,
+    flags
+  }) })
 }
 
 fn parse_name(
@@ -1726,10 +1737,10 @@ fn parse_prefix(
             // Computed key
             sp.tokens.skip_unchecked();
             let inner_key = get_expression(0, sp)?;
-  
+
             sp.tokens.ignore_whitespace();
             sp.tokens.skip("]")?;
-  
+
             (true, inner_key)
           },
           other => {
@@ -1739,7 +1750,7 @@ fn parse_prefix(
             ));
           }
         };
-  
+
         // Skip ":"
         sp.tokens.ignore_whitespace();
         if let ASTNode::ExprIdentifier { name } = sp.nodes.get(key) {
@@ -1752,10 +1763,10 @@ fn parse_prefix(
         } else {
           sp.tokens.skip(":")?;
         }
-  
+
         // Get value
         let value = get_expression(1, sp)?;
-        
+
         properties.push(ObjectProperty::Property {
           computed,
           key,
