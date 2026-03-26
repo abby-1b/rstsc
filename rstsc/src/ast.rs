@@ -144,8 +144,9 @@ pub struct Switch {
 
 #[derive(Debug, Clone)]
 pub struct NamespaceDeclaration {
-  name: SrcMapping,
-  types: SmallVec<ASTIndex>,
+  pub modifiers: ModifierList,
+  pub name: SrcMapping,
+  pub body: ASTIndex,
 }
 
 #[derive(Debug, Clone)]
@@ -273,6 +274,9 @@ pub enum ASTNode {
   EnumDeclaration { inner: Box<EnumDeclaration> },
   InterfaceDeclaration { inner: Box<InterfaceDeclaration> },
 
+  /// `namespace X { ... }`
+  NamespaceDeclaration { inner: Box<NamespaceDeclaration> },
+
   /// `declare namespace X { ... }`
   DeclareNamespace { inner: Box<NamespaceDeclaration> },
 
@@ -325,6 +329,7 @@ impl ASTNode {
       ExprTypeAssertion { .. } => "ExprTypeAssertion",
       EnumDeclaration { .. } => "EnumDeclaration",
       InterfaceDeclaration { .. } => "InterfaceDeclaration",
+      NamespaceDeclaration { .. } => "NamespaceDeclaration",
       DeclareNamespace { .. } => "DeclareNamespace",
       Empty { .. } => "Empty",
     }.to_string()
@@ -349,6 +354,8 @@ impl ASTNode {
       ClassDefinition { inner } => { inner.modifiers = new_modifiers; }
       EnumDeclaration { inner } => { inner.modifiers = new_modifiers; }
       InterfaceDeclaration { inner } => { inner.modifiers = new_modifiers; }
+      NamespaceDeclaration { inner } => { inner.modifiers = new_modifiers; }
+      DeclareNamespace { inner } => { inner.modifiers = new_modifiers; }
       _ => {
         return Err(CompilerError::new_static(
           format!("{} can't have modifiers!", self.name())
@@ -368,7 +375,7 @@ pub struct ASTArena {
   pub nodes: Vec<ASTNode>,
 
   pub src_mappings: Vec<SrcMapping>,
-  // pub gen_c_indices: Vec<SrcMapping>, 
+  // pub gen_c_indices: Vec<SrcMapping>,
 }
 impl ASTArena {
   pub fn new() -> Self {

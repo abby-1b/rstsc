@@ -90,6 +90,7 @@ fn get_single_statement<'a, 'b>(
     "interface" => handle_interface(sp)?.unwrap(),
     "try" => handle_try_catch(sp)?.unwrap(),
     "declare" => handle_declare(sp)?.unwrap(),
+    "namespace" => handle_namespace(sp)?.unwrap(),
     _ => handle_expression(sp)?,
   };
 
@@ -1519,6 +1520,34 @@ fn handle_declare(
   let _discarded_block = get_block(sp);
 
   Ok(Some(sp.nodes.add(ASTNode::Empty)))
+}
+
+fn handle_namespace(
+  sp: &mut SourceProperties,
+) -> Result<Option<ASTIndex>, CompilerError> {
+  if sp.tokens.peek_str() != "namespace" {
+    return Ok(None);
+  }
+  sp.tokens.skip_unchecked(); // Skip "namespace"
+  sp.tokens.ignore_whitespace();
+
+  // Get namespace name
+  let name = sp.tokens.consume_type(TokenType::Identifier)?.value.to_owned();
+  sp.tokens.ignore_whitespace();
+
+  // Skip "{"
+  sp.tokens.skip("{")?;
+
+  // Parse the namespace body
+  let body = get_block(sp)?;
+
+  Ok(Some(sp.nodes.add(ASTNode::NamespaceDeclaration {
+    inner: Box::new(crate::ast::NamespaceDeclaration {
+      modifiers: ModifierList::new(),
+      name,
+      body,
+    })
+  })))
 }
 
 /// Handles expressions. Basically a soft wrapper around `get_expression`

@@ -122,10 +122,6 @@ fn emit_single(
     ASTNode::Block { nodes } => {
       if nodes.is_empty() {
         emitter.out("{}", false);
-      } else if nodes.len() == 1 {
-        emitter.out_diff("{ ", "{", false);
-        emit_single(nodes[0], emitter);
-        emitter.out_diff(" }", "}", false);
       } else {
         emitter.out("{", false);
         emitter.endline();
@@ -242,7 +238,7 @@ fn emit_single(
             emitter.endline();
             emitter.out("else ", false);
           } else {
-            // Otherwise, 
+            // Otherwise,
             emitter.out(" else ", false);
           }
         }
@@ -407,7 +403,7 @@ fn emit_single(
         }
         _ => false
       };
-      
+
       if !is_simple_param {
         emitter.out("(", false);
         emit_destructurable_declarations(
@@ -695,6 +691,30 @@ fn emit_single(
       emitter.out("={}))", true);
     },
     ASTNode::InterfaceDeclaration { .. } => {},
+    ASTNode::NamespaceDeclaration { inner } => {
+      emitter.out(&inner.modifiers.emit(true), false);
+      emitter.out("namespace ", false);
+      emitter.out(emitter.sp.str_src(inner.name), false);
+      emitter.out_diff(" {", "{", false);
+      emitter.endline();
+      emitter.indent();
+      emit_single(inner.body, emitter);
+      emitter.endline();
+      emitter.unindent();
+      emitter.out("}", false);
+    },
+    ASTNode::DeclareNamespace { inner } => {
+      emitter.out("declare ", false);
+      emitter.out("namespace ", false);
+      emitter.out(emitter.sp.str_src(inner.name), false);
+      emitter.out_diff(" {", "{", false);
+      emitter.endline();
+      emitter.indent();
+      emit_single(inner.body, emitter);
+      emitter.endline();
+      emitter.unindent();
+      emitter.out("}", false);
+    },
     ASTNode::Empty { .. } => {}
     other => {
       emitter.out(&format!("[ {} ]", other.name()), true);
