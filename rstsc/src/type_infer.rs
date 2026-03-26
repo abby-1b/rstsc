@@ -3,7 +3,7 @@ use crate::ast::{ASTIndex, ASTNode, ObjectProperty};
 use crate::declaration::DeclarationTyped;
 use crate::small_vec::SmallVec;
 use crate::source_properties::SourceProperties;
-use crate::types::{CustomDouble, Type};
+use crate::types::{CustomDouble, Type, get_numeric_literal_type};
 
 pub fn widen_type(typ: &Type) -> Type {
   match typ {
@@ -138,7 +138,7 @@ pub fn infer_types(
         Type::Unknown
       }
     },
-    ExprNumLiteral { number } => Type::NumberLiteral(CustomDouble::from_str(sp.str_src(*number)).unwrap()),
+    ExprNumLiteral { number } => get_numeric_literal_type(sp.str_src(*number)),
     ExprStrLiteral { string } => Type::StringLiteral(sp.str_src(*string).to_owned()),
     ExprRegexLiteral { .. } => Type::RegExp,
     ExprTemplateLiteral { .. } => Type::String,

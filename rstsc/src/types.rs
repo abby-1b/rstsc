@@ -79,11 +79,13 @@ pub struct TypeFunctionArgument {
 #[derive(Debug, Clone)]
 pub enum Type {
   // Primitives
-  
+
   Any,
 
   Number,
   NumberLiteral(CustomDouble),
+  BigInt,
+  BigIntLiteral(CustomDouble),
 
   String,
   StringLiteral(String),
@@ -100,7 +102,7 @@ pub enum Type {
 
   /// A union (eg. `string | number`)
   Union(SmallVec<Type>),
-  
+
   /// An intersection (eg. `{ a: string } & { b: number }` => `{ a: string, b: number }`)
   Intersection(SmallVec<Type>),
 
@@ -221,7 +223,7 @@ impl Type {
         }
         false
       },
-      
+
       _ => false,
     }
   }
@@ -824,7 +826,7 @@ fn parse_curly_braces(
       sp.tokens.skip_unchecked();
       break;
     }
-    
+
     let property = if sp.tokens.peek_str() == "[" {
       let osbr = parse_object_square_bracket(sp)?;
       match osbr {
@@ -849,7 +851,7 @@ fn parse_curly_braces(
     } else {
       ComputableDeclarationName::Named(sp.tokens.consume().value)
     };
-    
+
     // Get property type (fallback to `any`)
     sp.tokens.ignore_whitespace();
     let property_type = if sp.tokens.peek_str() == ":" {
@@ -985,10 +987,7 @@ fn get_expression(
     match &next.typ {
       TokenType::Number => {
         let token = sp.tokens.consume().value;
-        let value: f64 = sp.str_src(token).parse().unwrap();
-        Type::NumberLiteral(CustomDouble {
-          value
-        })
+        get_numeric_literal_type(sp.str_src(token))
       }
       TokenType::String => {
         let token = sp.tokens.consume().value;
@@ -1111,4 +1110,30 @@ pub fn get_generics(
     sp.tokens.skip_unchecked(); // Skip ">"
   }
   Ok(generics)
+}
+
+pub fn get_numeric_literal_type(num_str: &str) -> Type {
+  let mut is_bigint = false;
+  let trimmed_string = if num_str.ends_with("n") {
+    is_bigint = true;
+    num_str[0..num_str.len() - 2].to_owned()
+  } else {
+    num_str.to_owned()
+  };
+
+  let t = if let Ok(value) = trimmed_string.parse::<f64>() {
+    Type::NumberLiteral(CustomDouble { value })
+  } else {
+    Type::Number
+  };
+
+  if is_bigint {
+    match t {
+      Type::Number => Type::BigInt,
+      Type::NumberLiteral(n) => Type::BigIntLiteral(n),
+      _ => unreachable!(),
+    }
+  } else {
+    t
+  }
 }
