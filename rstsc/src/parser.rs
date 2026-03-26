@@ -830,18 +830,17 @@ fn get_constructor_after_name<'a, 'b>(
   } else {
     sp.tokens.skip("{")?;
     let body = get_block(sp)?;
-    match sp.nodes.get_mut(body) {
-      ASTNode::Block { nodes } => {
-        nodes.append_front(&mut set_properties);
-        Some(body)
-      }
-      _ => {
-        return Err(CompilerError::new(
-          sp.nodes.get_node_src_range(body),
-          "Expected block in function body".to_owned()
-        ))
-      }
+
+    // Ensure it's a block!
+    if !matches!(sp.nodes.get_mut(body), ASTNode::Block { .. }) {
+      return Err(CompilerError::new(
+        sp.nodes.get_node_src_range(body),
+        "Expected block in function body".to_owned()
+      ))
     }
+
+    put_set_properties_in_constructor_body(sp, body, &mut set_properties);
+    Some(body)
   };
 
   Ok(FunctionDefinition {
@@ -853,6 +852,68 @@ fn get_constructor_after_name<'a, 'b>(
     return_type,
     body
   })
+}
+
+fn put_set_properties_in_constructor_body(
+  sp: &mut SourceProperties,
+  body_idx: ASTIndex,
+  set_properties: &mut SmallVec<ASTIndex>,
+) {
+  let body_nodes = match sp.nodes.get(body_idx) {
+    ASTNode::Block { nodes } => nodes,
+    _ => unreachable!()
+  };
+
+  let mut super_idx = usize::MAX;
+  for (idx, node_idx) in body_nodes.iter().enumerate() {
+    // Is function call
+    let callee = if let ASTNode::ExprFunctionCall { inner } = sp.nodes.get(*node_idx) {
+      inner.callee
+    } else { continue };
+
+    // Is "super"
+    let name = if let ASTNode::ExprIdentifier { name } = sp.nodes.get(callee) {
+      sp.str_src(*name)
+    } else { continue };
+    if name != "super" { continue; }
+
+    super_idx = idx;
+    break;
+  }
+
+  let body_nodes = match sp.nodes.get_mut(body_idx) {
+    ASTNode::Block { nodes } => nodes,
+    _ => unreachable!()
+  };
+  if super_idx == usize::MAX {
+    // No super found!
+    body_nodes.append_front(set_properties);
+  } else {
+    let mut new_nodes: SmallVec<ASTIndex> = SmallVec::with_capacity(body_nodes.len() + set_properties.len());
+    
+    // Put nodes before (& including) super
+    let mut i = 0;
+    while i <= super_idx {
+      new_nodes.push(body_nodes[i]);
+      i += 1;
+    }
+
+    // Put set properties
+    i = 0;
+    while i < set_properties.len() {
+      new_nodes.push(set_properties[i]);
+      i += 1;
+    }
+
+    // Put nodes after super
+    i = super_idx + 1;
+    while i < body_nodes.len() {
+      new_nodes.push(body_nodes[i]);
+      i += 1;
+    }
+
+    *body_nodes = new_nodes;
+  }
 }
 
 fn handle_class_declaration<'a, 'b>(
