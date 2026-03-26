@@ -24,7 +24,6 @@ fn main() {
   //   }
   // }
 
-
   let mut source_properties = SourceProperties::new(SOURCE_TEST);
   let ast = get_block(&mut source_properties);
   if let Err(err) = ast {
@@ -45,7 +44,7 @@ fn main() {
 
   // let scopes = get_scopes();
 
-  
+
   let out = emit_code(ast, &mut source_properties, false);
   println!("{}", out);
 

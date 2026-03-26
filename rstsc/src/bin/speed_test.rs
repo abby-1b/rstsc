@@ -25,7 +25,7 @@ fn main() {
     }
 
     let ast = ast.unwrap();
-    
+
     // minify_ast(&mut ast);
     // dbg!(&ast);
 

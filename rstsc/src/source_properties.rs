@@ -107,7 +107,7 @@ impl<'a> SourceProperties<'a> {
       }
       VariableDeclaration { modifiers, def_type, defs } => {
         let modifiers_str = if modifiers.is_empty() { "" } else { &modifiers.emit(true) };
-        output.push_str(&format!("{}VariableDeclaration {}{} ({} definitions)\n", 
+        output.push_str(&format!("{}VariableDeclaration {}{} ({} definitions)\n",
           indent, modifiers_str, def_type.emit(), defs.len()));
         for def in defs {
           self.print_destructurable_declaration_debug(def, indent_level + 1, output);
@@ -116,7 +116,7 @@ impl<'a> SourceProperties<'a> {
       FunctionDefinition { inner } => {
         let name = inner.name.map(|n| self.str_src(n)).unwrap_or("<anonymous>");
         let modifiers_str = if inner.modifiers.is_empty() { "" } else { &inner.modifiers.emit(true) };
-        output.push_str(&format!("{}FunctionDefinition {}{}{}\n", 
+        output.push_str(&format!("{}FunctionDefinition {}{}{}\n",
           indent, modifiers_str, if modifiers_str.is_empty() { "" } else { " " }, name));
         output.push_str(&format!("{}  Generics: {} params\n", indent, inner.generics.len()));
         output.push_str(&format!("{}  Parameters: {} params\n", indent, inner.params.len()));
@@ -126,7 +126,7 @@ impl<'a> SourceProperties<'a> {
         }
       }
       ArrowFunctionDefinition { inner } => {
-        output.push_str(&format!("{}ArrowFunctionDefinition (async: {})\n", 
+        output.push_str(&format!("{}ArrowFunctionDefinition (async: {})\n",
           indent, inner.is_async));
         output.push_str(&format!("{}  Generics: {} params\n", indent, inner.generics.len()));
         output.push_str(&format!("{}  Parameters: {} params\n", indent, inner.params.len()));
@@ -136,7 +136,7 @@ impl<'a> SourceProperties<'a> {
       ClassDefinition { inner } => {
         let name = inner.name.map(|n| self.str_src(n)).unwrap_or("<anonymous>");
         let modifiers_str = if inner.modifiers.is_empty() { "" } else { &inner.modifiers.emit(true) };
-        output.push_str(&format!("{}ClassDefinition {}{}{}\n", 
+        output.push_str(&format!("{}ClassDefinition {}{}{}\n",
           indent, modifiers_str, if modifiers_str.is_empty() { "" } else { " " }, name));
         if let Some(extends) = &inner.extends {
           output.push_str(&format!("{}  Extends: {}\n", indent, extends.get_single_name()));
@@ -268,7 +268,7 @@ impl<'a> SourceProperties<'a> {
       InterfaceDeclaration { inner } => {
         let name = self.str_src(inner.name);
         let modifiers_str = if inner.modifiers.is_empty() { "" } else { &inner.modifiers.emit(true) };
-        output.push_str(&format!("{}InterfaceDeclaration {}{}{}\n", 
+        output.push_str(&format!("{}InterfaceDeclaration {}{}{}\n",
           indent, modifiers_str, if modifiers_str.is_empty() { "" } else { " " }, name));
         output.push_str(&format!("{}  Generics: {} params\n", indent, inner.generics.len()));
         output.push_str(&format!("{}  Extends: {} types\n", indent, inner.extends.len()));
@@ -278,7 +278,7 @@ impl<'a> SourceProperties<'a> {
       EnumDeclaration { inner } => {
         let name = self.str_src(inner.name);
         let modifiers_str = if inner.modifiers.is_empty() { "" } else { &inner.modifiers.emit(true) };
-        output.push_str(&format!("{}EnumDeclaration {}{}{} (const: {})\n", 
+        output.push_str(&format!("{}EnumDeclaration {}{}{} (const: {})\n",
           indent, modifiers_str, if modifiers_str.is_empty() { "" } else { " " }, name, inner.is_const));
         output.push_str(&format!("{}  Members: {} members\n", indent, inner.members.len()));
         for (member_name, member_value) in &inner.members {
@@ -341,7 +341,7 @@ impl<'a> SourceProperties<'a> {
         }
       }
       ExprRegexLiteral { inner } => {
-        output.push_str(&format!("{}ExprRegexLiteral: /{}/{}\n", indent, 
+        output.push_str(&format!("{}ExprRegexLiteral: /{}/{}\n", indent,
           self.str_src(inner.pattern), self.str_src(inner.flags)));
       }
       // For other nodes, use the Debug trait to automatically handle new variants
@@ -356,7 +356,7 @@ impl<'a> SourceProperties<'a> {
           &debug_str
         };
         output.push_str(&format!("{}{}{}\n", indent, node_name, fields_str));
-        
+
         // For nodes that contain ASTIndex children, we need to recursively process them
         // This is a fallback for nodes we haven't explicitly handled
         self.print_ast_children_debug(node, indent_level + 1, output);
@@ -401,11 +401,11 @@ impl<'a> SourceProperties<'a> {
   ) {
     let indent = "  ".repeat(indent_level);
     output.push_str(&format!("{}DestructurableDeclaration\n", indent));
-    
+
     let pattern_indent = "  ".repeat(indent_level + 1);
     output.push_str(&format!("{}Pattern:\n", pattern_indent));
     self.print_destructure_pattern_debug(&declaration.name, indent_level + 2, output);
-    
+
     output.push_str(&format!("{}Type: {:?}\n", pattern_indent, declaration.typ));
   }
 
@@ -416,7 +416,7 @@ impl<'a> SourceProperties<'a> {
     output: &mut String
   ) {
     let indent = "  ".repeat(indent_level);
-    
+
     match pattern {
       DestructurePattern::Array { elements, spread } => {
         output.push_str(&format!("{}ArrayPattern ({} elements)\n", indent, elements.len()));
@@ -474,7 +474,7 @@ impl<'a> SourceProperties<'a> {
       ClassMember::Method(method, getter_setter) => {
         let getter_setter_str = getter_setter.as_str();
         let name = method.name.map(|n| self.str_src(n)).unwrap_or("<anonymous>");
-        output.push_str(&format!("{}Method {}{}\n", indent, getter_setter_str, 
+        output.push_str(&format!("{}Method {}{}\n", indent, getter_setter_str,
           if getter_setter_str.is_empty() { "" } else { " " }));
         output.push_str(&format!("{}  Name: {}\n", indent, name));
       }

@@ -229,7 +229,7 @@ fn combine_sub(left: &ASTNode, right: &ASTNode) -> Option<ASTNode> {
     (ASTNode::ExprStrLiteral { .. }, ASTNode::ExprBoolLiteral { .. }) => {
       None
     }
-    
+
     (ASTNode::ExprBoolLiteral { value: lhs }, ASTNode::ExprNumLiteral { number: rhs }) => {
       let rhs = rhs.parse::<f64>().unwrap_or(f64::NAN);
       Some(ASTNode::ExprNumLiteral { number: (*lhs as u8 as f64 - rhs).to_string() })

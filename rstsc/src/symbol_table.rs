@@ -133,7 +133,7 @@ impl SymbolTable {
       Ok(())
     }
   }
-  
+
   pub fn mark_used_type(&mut self, token: Token, source: &str) -> Result<(), CompilerError> {
     let value = SourceProperties::map_source(source, token.value);
     if let Some(symbol) = self.lookup_mut(value) {

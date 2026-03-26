@@ -41,7 +41,7 @@ pub fn get_operator_binding_power(
     (ExprType::Infx, "``") => Some((38, 39)),
 
     (ExprType::Pstfx, "!") => Some((36, 37)), // Non-null assertion
-    
+
     (ExprType::Prefx, "new") => Some((34, 35)),
 
     (ExprType::Pstfx, "++") => Some((32, 33)),
