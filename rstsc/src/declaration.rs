@@ -125,10 +125,16 @@ pub struct DestructurableDeclaration {
   pub typ: Type,
 }
 impl From<Declaration> for DestructurableDeclaration {
-  fn from(value: Declaration) -> Self {
-    DestructurableDeclaration {
-      name: DestructurePattern::Identifier { name: value.name },
-      typ: value.typ,
-    }
+  fn from(decl: Declaration) -> Self {
+    let Declaration { name, value, typ } = decl;
+    let name = match value {
+      Some(value) => DestructurePattern::WithInitializer {
+        pattern: Box::new(DestructurePattern::Identifier { name }),
+        initializer: value,
+      },
+      None => DestructurePattern::Identifier { name },
+    };
+
+    DestructurableDeclaration { name, typ }
   }
 }
