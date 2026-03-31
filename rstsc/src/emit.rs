@@ -848,6 +848,9 @@ fn emit_function_definition(
     emitter.out(before_name_statement, false);
     emitter.out(" ", false);
   }
+  if function.is_generator {
+    emitter.out("*", false);
+  }
   if let Some(name) = &function.name {
     emitter.out(emitter.sp.str_src(*name), false);
   }

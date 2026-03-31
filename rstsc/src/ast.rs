@@ -24,13 +24,14 @@ pub enum ObjectProperty {
 pub struct FunctionDefinition {
   pub modifiers: ModifierList,
 
+  pub is_generator: bool,
   pub name: Option<SrcMapping>,
 
   pub generics: SmallVec<Type>,
   pub params: SmallVec<DestructurableDeclaration>,
   pub rest: Rest,
   pub return_type: Option<Type>,
-  pub body: Option<ASTIndex>
+  pub body: Option<ASTIndex>,
 }
 
 #[derive(Debug, Clone)]
