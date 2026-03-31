@@ -249,8 +249,8 @@ pub fn test_code(source: &str, compiled: &str, whitespace: WhiteSpace) -> Result
   // Get the `rstsc` output
   let out = std::panic::catch_unwind(|| rstsc::compile(code, false));
   let mut actual: String = match out {
-    Ok(Ok(code)) => code.clone(),
-    Ok(Err(err)) => format!("{:?}", err),
+    Ok((Ok(code), _)) => code.clone(),
+    Ok((Err(err), _)) => format!("{:?}", err),
     Err(err) => {
       println!("RSTSC error: {:?}", code);
       format!("{:?}", err)
