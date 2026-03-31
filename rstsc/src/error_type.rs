@@ -28,6 +28,7 @@ impl CompilerError {
     // Error message header
     out += "Error: ";
     out += &self.message;
+    out += "\n";
 
     // Context + error lines
     for (_, line_info) in context_lines.iter().enumerate() {
@@ -36,11 +37,11 @@ impl CompilerError {
 
       if line_num == error_line.line_number {
         // Error line
-        out += &format!("{:4} | {}", line_num, line_content);
-        out += &format!("     | {}", underline);
+        out += &format!("{:4} | {}\n", line_num, line_content);
+        out += &format!("     | {}\n", underline);
       } else {
         // Context line
-        out += &format!("{:4} | {}", line_num, line_content);
+        out += &format!("{:4} | {}\n", line_num, line_content);
       }
     }
 
