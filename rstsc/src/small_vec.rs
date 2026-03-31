@@ -1,5 +1,10 @@
-use std::{alloc::Layout, hash::Hash, ops::{Index, IndexMut, Range, RangeFrom, RangeFull, RangeTo}, ptr::NonNull};
 use core::fmt::Debug;
+use std::{
+  alloc::Layout,
+  hash::Hash,
+  ops::{Index, IndexMut, Range, RangeFrom, RangeFull, RangeTo},
+  ptr::NonNull,
+};
 
 // Setting this to `u8` still makes the vec 16 bytes long due to alignment
 // Using `u32` seems to be good enough, unless further packing makes a smaller
@@ -20,21 +25,28 @@ impl<T> SmallVec<T> {
     SmallVec {
       memory: NonNull::dangling(),
       capacity: 0,
-      length: 0
+      length: 0,
     }
   }
 
   pub fn with_element(el: T) -> SmallVec<T> {
     let mut ret = SmallVec::new();
-    unsafe { ret.allocate(1); }
+    unsafe {
+      ret.allocate(1);
+    }
     ret.push(el);
     ret
   }
 
   pub fn with_capacity(capacity: usize) -> SmallVec<T> {
-    debug_assert!(capacity <= Self::MAX_LEN, "SmallVec exceeded max capacity while initializing with capacity");
+    debug_assert!(
+      capacity <= Self::MAX_LEN,
+      "SmallVec exceeded max capacity while initializing with capacity"
+    );
     let mut v = Self::new();
-    unsafe { v.allocate(capacity as SizeType); }
+    unsafe {
+      v.allocate(capacity as SizeType);
+    }
     v
   }
 
@@ -55,11 +67,15 @@ impl<T> SmallVec<T> {
   }
 
   pub fn last(&self) -> Option<&T> {
-    if self.length == 0 { return None }
+    if self.length == 0 {
+      return None;
+    }
     Some(&self[self.len() - 1])
   }
   pub fn last_mut(&mut self) -> Option<&mut T> {
-    if self.length == 0 { return None }
+    if self.length == 0 {
+      return None;
+    }
     let idx = self.length as usize - 1;
     Some(&mut self[idx])
   }
@@ -74,32 +90,47 @@ impl<T> SmallVec<T> {
   pub fn iter_mut(&mut self) -> IterMut<'_, T> {
     IterMut {
       vec: self,
-      index: 0
+      index: 0,
     }
   }
 
   pub fn push(&mut self, value: T) {
     if self.capacity == 0 || self.length == self.capacity {
-      debug_assert!(self.len() != Self::MAX_LEN, "SmallVec exceeded max capacity while pushing");
-      let new_cap = if self.capacity == 0 { 1 } else { self.capacity.saturating_mul(2) };
+      debug_assert!(
+        self.len() != Self::MAX_LEN,
+        "SmallVec exceeded max capacity while pushing"
+      );
+      let new_cap = if self.capacity == 0 {
+        1
+      } else {
+        self.capacity.saturating_mul(2)
+      };
       unsafe { self.allocate(new_cap) }
     }
-    unsafe { self.memory.as_ptr().add(self.len()).write(value); }
+    unsafe {
+      self.memory.as_ptr().add(self.len()).write(value);
+    }
     self.length += 1;
   }
   pub fn pop(&mut self) -> Option<T> {
-    if self.length == 0 { return None }
+    if self.length == 0 {
+      return None;
+    }
     self.length -= 1;
     Some(unsafe { self.memory.as_ptr().add(self.len()).read() })
   }
 
   pub fn append(&mut self, other: &mut Self) {
-    if other.length == 0 { return; }
+    if other.length == 0 {
+      return;
+    }
 
     // Allocate necessary memory
     let needed_len = self.length + other.length;
     if needed_len > self.capacity {
-      unsafe { self.allocate(needed_len); }
+      unsafe {
+        self.allocate(needed_len);
+      }
     }
 
     // Copy elements from `other` to the end of `self`
@@ -107,7 +138,7 @@ impl<T> SmallVec<T> {
       other.memory.as_ptr().copy_to_nonoverlapping(
         // Elements are placed at index `self.len`
         self.memory.as_ptr().add(self.len()),
-        other.len()
+        other.len(),
       );
     }
 
@@ -116,17 +147,19 @@ impl<T> SmallVec<T> {
   }
 
   pub fn append_front(&mut self, other: &mut Self) {
-    if other.length == 0 { return; }
+    if other.length == 0 {
+      return;
+    }
 
     let needed_len = self.length + other.length;
     if needed_len > self.capacity {
       // New buffer needed
       unsafe {
         let new_memory = Self::get_new_memory(needed_len);
-        self.memory.as_ptr().copy_to_nonoverlapping(
-          new_memory.as_ptr().add(other.len()),
-          self.len()
-        );
+        self
+          .memory
+          .as_ptr()
+          .copy_to_nonoverlapping(new_memory.as_ptr().add(other.len()), self.len());
         self.drop_inner_buffer();
         self.memory = new_memory;
         self.capacity = needed_len;
@@ -134,19 +167,18 @@ impl<T> SmallVec<T> {
     } else {
       // Move elements within the existing buffer (potentially overlapping)
       unsafe {
-        self.memory.as_ptr().copy_to(
-          self.memory.as_ptr().add(other.len()),
-          self.len()
-        );
+        self
+          .memory
+          .as_ptr()
+          .copy_to(self.memory.as_ptr().add(other.len()), self.len());
       }
     }
 
     // Put new elements at the start of memory
     unsafe {
-      other.memory.copy_to_nonoverlapping(
-        self.memory,
-        other.len()
-      );
+      other
+        .memory
+        .copy_to_nonoverlapping(self.memory, other.len());
     }
 
     self.length += other.length;
@@ -159,12 +191,12 @@ impl<T> SmallVec<T> {
 
     if self.capacity > 0 {
       // Move old memory into new memory
-      self.memory.copy_to_nonoverlapping(
-        new_memory, self.len()
-      );
+      self.memory.copy_to_nonoverlapping(new_memory, self.len());
 
       // Deallocate old memory
-      unsafe { self.drop_inner_buffer(); }
+      unsafe {
+        self.drop_inner_buffer();
+      }
     }
 
     self.capacity = new_capacity;
@@ -187,9 +219,14 @@ impl<T> SmallVec<T> {
   }
 
   /// Checks if this vector has a given element
-  pub fn has(&self, el: T) -> bool where T: PartialEq {
+  pub fn has(&self, el: T) -> bool
+  where
+    T: PartialEq,
+  {
     for e in self {
-      if *e == el { return true; }
+      if *e == el {
+        return true;
+      }
     }
     false
   }
@@ -218,14 +255,18 @@ impl<T> Default for SmallVec<T> {
 
 impl<T> Drop for SmallVec<T> {
   fn drop(&mut self) {
-    if self.capacity == 0 { return; }
+    if self.capacity == 0 {
+      return;
+    }
 
     // Deallocate inner elements
     let slice = std::ptr::slice_from_raw_parts_mut(self.memory.as_ptr(), self.len());
     unsafe { std::ptr::drop_in_place(slice) };
 
     // Drop the buffer itself
-    unsafe { self.drop_inner_buffer(); }
+    unsafe {
+      self.drop_inner_buffer();
+    }
   }
 }
 
@@ -250,9 +291,7 @@ impl<T> Index<usize> for SmallVec<T> {
       );
     }
 
-    let memory_index = unsafe {
-      self.memory.as_ptr().add(index)
-    };
+    let memory_index = unsafe { self.memory.as_ptr().add(index) };
     unsafe { &*memory_index }
   }
 }
@@ -266,9 +305,7 @@ impl<T> IndexMut<usize> for SmallVec<T> {
       );
     }
 
-    let memory_index = unsafe {
-      self.memory.as_ptr().add(index)
-    };
+    let memory_index = unsafe { self.memory.as_ptr().add(index) };
     unsafe { &mut *memory_index }
   }
 }
@@ -278,12 +315,16 @@ impl<T> Index<Range<usize>> for SmallVec<T> {
   fn index(&self, index: Range<usize>) -> &Self::Output {
     #[cfg(debug_assertions)]
     if index.start > index.end || index.end > self.len() {
-      panic!("Index out of bounds: range {:?} with len {}", index, self.len());
+      panic!(
+        "Index out of bounds: range {:?} with len {}",
+        index,
+        self.len()
+      );
     }
     unsafe {
       std::slice::from_raw_parts(
         self.memory.as_ptr().add(index.start),
-        index.end - index.start
+        index.end - index.start,
       )
     }
   }
@@ -294,11 +335,13 @@ impl<T> Index<RangeTo<usize>> for SmallVec<T> {
   fn index(&self, index: RangeTo<usize>) -> &Self::Output {
     #[cfg(debug_assertions)]
     if index.end > self.len() {
-      panic!("Index out of bounds: range ..{} with len {}", index.end, self.len());
+      panic!(
+        "Index out of bounds: range ..{} with len {}",
+        index.end,
+        self.len()
+      );
     }
-    unsafe {
-      std::slice::from_raw_parts(self.memory.as_ptr(), index.end)
-    }
+    unsafe { std::slice::from_raw_parts(self.memory.as_ptr(), index.end) }
   }
 }
 
@@ -307,12 +350,16 @@ impl<T> Index<RangeFrom<usize>> for SmallVec<T> {
   fn index(&self, index: RangeFrom<usize>) -> &Self::Output {
     #[cfg(debug_assertions)]
     if index.start > self.len() {
-      panic!("Index out of bounds: range {}.. with len {}", index.start, self.len());
+      panic!(
+        "Index out of bounds: range {}.. with len {}",
+        index.start,
+        self.len()
+      );
     }
     unsafe {
       std::slice::from_raw_parts(
         self.memory.as_ptr().add(index.start),
-        self.len() - index.start
+        self.len() - index.start,
       )
     }
   }
@@ -322,27 +369,21 @@ impl<T> Index<RangeFull> for SmallVec<T> {
   type Output = [T];
   #[inline]
   fn index(&self, _index: RangeFull) -> &Self::Output {
-    unsafe {
-      std::slice::from_raw_parts(self.memory.as_ptr(), self.len())
-    }
+    unsafe { std::slice::from_raw_parts(self.memory.as_ptr(), self.len()) }
   }
 }
 
 impl<T> AsRef<[T]> for SmallVec<T> {
   #[inline]
   fn as_ref(&self) -> &[T] {
-    unsafe {
-      std::slice::from_raw_parts(self.memory.as_ptr(), self.len())
-    }
+    unsafe { std::slice::from_raw_parts(self.memory.as_ptr(), self.len()) }
   }
 }
 
 impl<T> AsMut<[T]> for SmallVec<T> {
   #[inline]
   fn as_mut(&mut self) -> &mut [T] {
-    unsafe {
-      std::slice::from_raw_parts_mut(self.memory.as_ptr(), self.len())
-    }
+    unsafe { std::slice::from_raw_parts_mut(self.memory.as_ptr(), self.len()) }
   }
 }
 
@@ -357,7 +398,9 @@ impl<T: PartialEq + Debug> PartialEq for SmallVec<T> {
     let a = self.iter();
     let b = other.iter();
     for (a, b) in a.zip(b) {
-      if a != b { return false; }
+      if a != b {
+        return false;
+      }
     }
     true
   }
@@ -500,5 +543,3 @@ impl<T> Drop for IntoIter<T> {
     self.vec.length = 0;
   }
 }
-
-

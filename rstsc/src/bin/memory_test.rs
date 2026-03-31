@@ -1,10 +1,10 @@
-use std::alloc;
 use cap::Cap;
+use std::alloc;
 
 use rstsc::ast::ASTIndex;
+use rstsc::parser::get_block;
 use rstsc::source_properties::SourceProperties;
 use rstsc::tokenizer::TokenList;
-use rstsc::parser::get_block;
 
 #[global_allocator]
 static ALLOCATOR: Cap<alloc::System> = Cap::new(alloc::System, usize::MAX);
@@ -22,10 +22,16 @@ fn main() {
   // dbg!(&ast);
 
   let total_allocated = ALLOCATOR.total_allocated() - start_mem;
-  println!("total: {} KiB", (total_allocated as f32 / 10.24).round() / 100.0);
+  println!(
+    "total: {} KiB",
+    (total_allocated as f32 / 10.24).round() / 100.0
+  );
 
   let max_allocated = ALLOCATOR.max_allocated() - start_mem;
-  println!("max: {} KiB", (max_allocated as f32 / 10.24).round() / 100.0);
+  println!(
+    "max: {} KiB",
+    (max_allocated as f32 / 10.24).round() / 100.0
+  );
 
   drop(ast);
 

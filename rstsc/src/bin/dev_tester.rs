@@ -1,19 +1,17 @@
 use rstsc::ast::ASTIndex;
+use rstsc::source_properties;
 use rstsc::source_properties::SourceProperties;
-use rstsc::{source_properties};
 // use rstsc::import_excluding;
+use rstsc::emit::emit_code;
+use rstsc::parser::get_block;
 /// This file is used for less rigorous testing during development.
-
 // use rstsc::ft;
 // use rstsc::minify::minify_ast;
 use rstsc::tokenizer::TokenList;
-use rstsc::parser::get_block;
-use rstsc::emit::emit_code;
 
 const SOURCE_TEST: &str = include_str!("./test.ts");
 
 fn main() {
-
   // let mut tokens = TokenList::from(SOURCE_TEST);
   // loop {
   //   let t = tokens.consume();
@@ -43,7 +41,6 @@ fn main() {
   // dbg!(&symbol_table);
 
   // let scopes = get_scopes();
-
 
   let out = emit_code(ast, &mut source_properties, false);
   println!("{}", out);

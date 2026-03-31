@@ -1,6 +1,10 @@
 use std::{collections::VecDeque, str::Chars};
 
-use crate::{error_type::CompilerError, small_vec::SmallVec, source_properties::{SMSrc, SourceProperties, SrcMapping}};
+use crate::{
+  error_type::CompilerError,
+  small_vec::SmallVec,
+  source_properties::{SMSrc, SourceProperties, SrcMapping},
+};
 
 pub static TOKEN_QUEUE_SIZE: usize = 32;
 
@@ -46,7 +50,7 @@ fn should_chain(left: char, right: char) -> bool {
     ('=', '>') => true, // Arrow function
 
     ('?', '?') => true, // Non-nullish coalescing
-    _ => false
+    _ => false,
   }
 }
 
@@ -65,7 +69,7 @@ pub enum TokenType {
   EndOfFile,
 
   /// Used when explicitly creating tokens from a string
-  Unknown
+  Unknown,
 }
 
 #[derive(Debug, Clone)]
@@ -88,7 +92,6 @@ impl Token {
     todo!("Token::from()")
   }
 }
-
 
 pub struct TokenList<'a> {
   source: &'a str,
@@ -121,7 +124,7 @@ pub struct TokenListCheckpoint {
   str_literal_nesting: SmallVec<i16>,
 
   #[cfg(debug_assertions)]
-  can_drop: bool
+  can_drop: bool,
 }
 
 #[cfg(debug_assertions)]
@@ -168,22 +171,33 @@ impl<'a> TokenList<'a> {
     }
 
     // Find the first index where the element is > char_index
-    let idx = newline_indices.binary_search_by(|&x| {
-      if x <= char_index { std::cmp::Ordering::Less } else { std::cmp::Ordering::Greater }
-    }).unwrap_or_else(|i| i);
+    let idx = newline_indices
+      .binary_search_by(|&x| {
+        if x <= char_index {
+          std::cmp::Ordering::Less
+        } else {
+          std::cmp::Ordering::Greater
+        }
+      })
+      .unwrap_or_else(|i| i);
 
     newline_indices[idx - 1]
   }
 
   /// Checks if the token list is over
   pub fn is_done(&self) -> bool {
-    if self.next_tokens.len() == 0 { return false }
+    if self.next_tokens.len() == 0 {
+      return false;
+    }
     let last_token_idx = self.next_tokens.len().saturating_sub(1);
-    if self.on_token < last_token_idx { return false }
-    if
-      self.on_token == last_token_idx &&
-      self.next_tokens[self.on_token].typ == TokenType::EndOfFile
-    { return true; }
+    if self.on_token < last_token_idx {
+      return false;
+    }
+    if self.on_token == last_token_idx
+      && self.next_tokens[self.on_token].typ == TokenType::EndOfFile
+    {
+      return true;
+    }
     self.find_index >= self.source.len() as u32 - 1
   }
 
@@ -219,16 +233,16 @@ impl<'a> TokenList<'a> {
   }
 
   #[must_use]
-  pub fn consume_type<'b>(&mut self, typ: TokenType) -> Result<Token, CompilerError> where 'a: 'b {
+  pub fn consume_type<'b>(&mut self, typ: TokenType) -> Result<Token, CompilerError>
+  where
+    'a: 'b,
+  {
     let ret = self.consume();
     if ret.typ != typ {
       // println!("{}", std::backtrace::Backtrace::capture());
       Err(CompilerError::new(
         ret.value,
-        format!(
-          "Expected {:?}, found {:?}",
-          typ, ret.typ
-        ),
+        format!("Expected {:?}, found {:?}", typ, ret.typ),
       ))
     } else {
       Ok(ret)
@@ -237,7 +251,10 @@ impl<'a> TokenList<'a> {
 
   /// Skips a single character in the currently-loaded token
   #[must_use]
-  pub fn consume_single_character<'b>(&mut self) -> &'b str where 'a: 'b {
+  pub fn consume_single_character<'b>(&mut self) -> &'b str
+  where
+    'a: 'b,
+  {
     // // Get character
     // let single_character = &self.next_tokens[self.on_token].value[0..1];
 
@@ -256,7 +273,7 @@ impl<'a> TokenList<'a> {
     let single_character = SrcMapping {
       idx: self.next_tokens[self.on_token].value.idx,
       len: 1,
-      from: self.next_tokens[self.on_token].value.from
+      from: self.next_tokens[self.on_token].value.from,
     };
 
     // Skip character in source string
@@ -278,10 +295,7 @@ impl<'a> TokenList<'a> {
       self.skip_unchecked();
       Ok(())
     } else {
-      Err(CompilerError::expected(
-        self.peek().value,
-        candidate
-      ))
+      Err(CompilerError::expected(self.peek().value, candidate))
     }
   }
 
@@ -297,11 +311,10 @@ impl<'a> TokenList<'a> {
   }
 
   pub fn skip_unchecked(&mut self) {
-    if
-      self.on_token == self.next_tokens.len() - 1 &&
-      self.next_tokens[self.on_token].typ == TokenType::EndOfFile
+    if self.on_token == self.next_tokens.len() - 1
+      && self.next_tokens[self.on_token].typ == TokenType::EndOfFile
     {
-      return
+      return;
     }
     self.on_token += 1;
   }
@@ -320,7 +333,9 @@ impl<'a> TokenList<'a> {
       while self.on_token >= self.next_tokens.len() && !self.is_done() {
         self.queue_token();
       }
-      if !self.next_tokens[self.on_token].is_whitespace() { break; }
+      if !self.next_tokens[self.on_token].is_whitespace() {
+        break;
+      }
       self.on_token += 1;
     }
   }
@@ -347,7 +362,7 @@ impl<'a> TokenList<'a> {
       curly_bracket_nesting: self.curly_bracket_nesting,
       str_literal_nesting: self.str_template_nesting.clone(),
       #[cfg(debug_assertions)]
-      can_drop: false
+      can_drop: false,
     }
   }
 
@@ -356,16 +371,22 @@ impl<'a> TokenList<'a> {
     self.checkpoints -= 1;
     self.on_token = checkpoint.last_token_idx;
     self.curly_bracket_nesting = checkpoint.curly_bracket_nesting;
-    self.str_template_nesting.clone_from(&checkpoint.str_literal_nesting);
+    self
+      .str_template_nesting
+      .clone_from(&checkpoint.str_literal_nesting);
     #[cfg(debug_assertions)]
-    { checkpoint.can_drop = true; }
+    {
+      checkpoint.can_drop = true;
+    }
   }
 
   /// Ignores a checkpoint
   pub fn ignore_checkpoint(&mut self, mut checkpoint: TokenListCheckpoint) {
     self.checkpoints -= 1;
     #[cfg(debug_assertions)]
-    { checkpoint.can_drop = true; }
+    {
+      checkpoint.can_drop = true;
+    }
   }
 
   /// Queues into `self.next_tokens`
@@ -377,7 +398,9 @@ impl<'a> TokenList<'a> {
     }
 
     // If reached end of file, stop
-    if self.on_token < self.next_tokens.len() && self.next_tokens[self.on_token].typ == TokenType::EndOfFile {
+    if self.on_token < self.next_tokens.len()
+      && self.next_tokens[self.on_token].typ == TokenType::EndOfFile
+    {
       return;
     }
 
@@ -396,7 +419,9 @@ impl<'a> TokenList<'a> {
         let mut has_newline = false;
         let mut token_len = 0;
         while curr_char == '\n' || curr_char == ' ' || curr_char == '\t' {
-          if curr_char == '\n' { has_newline = true; }
+          if curr_char == '\n' {
+            has_newline = true;
+          }
           self.char_iter.skip();
           curr_char = self.char_iter.peek().unwrap_or('.');
           token_len += curr_char.len_utf8();
@@ -407,15 +432,19 @@ impl<'a> TokenList<'a> {
             TokenType::LineTerminator
           } else {
             TokenType::Spacing
-          }
+          },
         );
       } else if curr_char.is_ascii_alphabetic() || curr_char == '_' || curr_char == '$' {
         // Identifiers
         break 'token_done (
-          self.char_iter.consume_all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$'),
-          TokenType::Identifier
+          self
+            .char_iter
+            .consume_all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$'),
+          TokenType::Identifier,
         );
-      } else if curr_char.is_numeric() || (curr_char == '.' && self.char_iter.peek_far().is_some_and(|x| x.is_numeric())) {
+      } else if curr_char.is_numeric()
+        || (curr_char == '.' && self.char_iter.peek_far().is_some_and(|x| x.is_numeric()))
+      {
         // Numbers (including BigInt)
         #[derive(PartialEq, Eq)]
         enum Ending {
@@ -427,11 +456,12 @@ impl<'a> TokenList<'a> {
         let mut token_len = 0;
         let mut is_big_int = false;
         let mut has_decimal_point = false;
-        
+
         // Check for non-decimal integer prefixes (0b, 0o, 0x)
         let mut is_non_decimal = false;
-        let mut digit_predicate: Box<dyn Fn(char) -> bool> = Box::new(|c| c.is_numeric() || c == '_');
-        
+        let mut digit_predicate: Box<dyn Fn(char) -> bool> =
+          Box::new(|c| c.is_numeric() || c == '_');
+
         if curr_char == '0' {
           if let Some(next_char) = self.char_iter.peek_far() {
             match next_char.to_ascii_lowercase() {
@@ -481,7 +511,7 @@ impl<'a> TokenList<'a> {
           token_len += curr_char.len_utf8();
           self.char_iter.skip();
         }
-        
+
         loop {
           if let Some(c) = self.char_iter.peek() {
             if is_non_decimal {
@@ -536,7 +566,7 @@ impl<'a> TokenList<'a> {
                   } else {
                     break;
                   }
-                },
+                }
                 Ending::ExpectSign => {
                   if c == '+' || c == '-' {
                     is_exponent = Ending::ExpectNumber;
@@ -547,7 +577,7 @@ impl<'a> TokenList<'a> {
                   } else {
                     break;
                   }
-                },
+                }
                 Ending::ExpectNumber => {
                   if c.is_numeric() || c == '_' {
                     token_len += c.len_utf8();
@@ -555,7 +585,7 @@ impl<'a> TokenList<'a> {
                   } else {
                     break;
                   }
-                },
+                }
               }
             }
           } else {
@@ -563,10 +593,7 @@ impl<'a> TokenList<'a> {
           }
         }
 
-        break 'token_done (
-          token_len,
-          TokenType::Number
-        );
+        break 'token_done (token_len, TokenType::Number);
       } else if curr_char == '"' || curr_char == '\'' {
         // Strings
         let start_char = self.char_iter.consume().unwrap();
@@ -576,23 +603,27 @@ impl<'a> TokenList<'a> {
           loop {
             if let Some(curr_char) = self.char_iter.peek() {
               token_len += curr_char.len_utf8();
-              if curr_char == '\n' { break token_len - 1; }
+              if curr_char == '\n' {
+                break token_len - 1;
+              }
               self.char_iter.consume();
               let is_start_char = curr_char == start_char && !is_escaped;
               is_escaped = curr_char == '\\' && !is_escaped;
-              if is_start_char { break token_len; }
+              if is_start_char {
+                break token_len;
+              }
             } else {
               break token_len - 1;
             }
           },
-          TokenType::String
+          TokenType::String,
         );
-      } else if
-        curr_char == '`' || (
-          curr_char == '}' &&
-          self.str_template_nesting.last()
-            .is_some_and(|x| *x == self.curly_bracket_nesting)
-        )
+      } else if curr_char == '`'
+        || (curr_char == '}'
+          && self
+            .str_template_nesting
+            .last()
+            .is_some_and(|x| *x == self.curly_bracket_nesting))
       {
         // Template literal
         let start_char = self.char_iter.consume().unwrap();
@@ -639,16 +670,18 @@ impl<'a> TokenList<'a> {
             // Single comment (Existing code)
             break 'token_done (
               self.char_iter.consume_all(|c| c != '\n'),
-              TokenType::Spacing
+              TokenType::Spacing,
             );
-          },
+          }
           '*' => {
             // Multiline comment (Existing code)
             let mut has_newline = false;
             let mut token_len = 2;
             self.char_iter.skip();
             while self.char_iter.peek().is_some_and(|x| x != '/') || curr_char != '*' {
-              if curr_char == '\n' { has_newline = true; }
+              if curr_char == '\n' {
+                has_newline = true;
+              }
               token_len += curr_char.len_utf8();
               curr_char = self.char_iter.consume().unwrap();
             }
@@ -659,9 +692,9 @@ impl<'a> TokenList<'a> {
                 TokenType::LineTerminator
               } else {
                 TokenType::Spacing
-              }
-            )
-          },
+              },
+            );
+          }
           _ => {
             // It is not a comment. Is it a Regex?
             if self.is_regex_position() {
@@ -674,7 +707,9 @@ impl<'a> TokenList<'a> {
               loop {
                 if let Some(c) = self.char_iter.peek() {
                   // JS Regex cannot contain unescaped newlines
-                  if c == '\n' { break; }
+                  if c == '\n' {
+                    break;
+                  }
 
                   token_len += c.len_utf8();
                   self.char_iter.consume();
@@ -719,10 +754,7 @@ impl<'a> TokenList<'a> {
         curr_char = self.char_iter.consume().unwrap();
         token_len += curr_char.len_utf8();
       }
-      break 'token_done (
-        token_len,
-        TokenType::Symbol
-      );
+      break 'token_done (token_len, TokenType::Symbol);
     };
 
     self.finish_token(out.0 as u32, out.1);
@@ -730,7 +762,11 @@ impl<'a> TokenList<'a> {
 
   fn finish_token(&mut self, len: u32, t: TokenType) {
     self.next_tokens.push_back(Token {
-      value: SrcMapping { idx: self.find_index, len, from: SMSrc::Source },
+      value: SrcMapping {
+        idx: self.find_index,
+        len,
+        from: SMSrc::Source,
+      },
       typ: t,
     });
     self.find_index += len;
@@ -739,23 +775,28 @@ impl<'a> TokenList<'a> {
   fn is_regex_position(&self) -> bool {
     // Look backwards through existing tokens
     for token in self.next_tokens.iter().rev() {
-      if token.is_whitespace() { continue; }
+      if token.is_whitespace() {
+        continue;
+      }
 
       return match token.typ {
         // If the last thing was a value, a slash is Division (e.g. "x / 5")
-        TokenType::Identifier | TokenType::Number | TokenType::String |
-        TokenType::StringTemplateEnd | TokenType::Regex => false,
+        TokenType::Identifier
+        | TokenType::Number
+        | TokenType::String
+        | TokenType::StringTemplateEnd
+        | TokenType::Regex => false,
 
         // If the last thing was a symbol, we need to check specific symbols
         TokenType::Symbol => {
           match SourceProperties::map_source(self.source, token.value) {
             ")" | "]" | "}" => false, // e.g. "(a + b) / 2"
-            _ => true // e.g. "x = /abc/", "return /abc/"
+            _ => true,                // e.g. "x = /abc/", "return /abc/"
           }
-        },
+        }
 
         // For keywords (if you parsed them as specific types) or Start of File
-        _ => true
+        _ => true,
       };
     }
     // If no previous tokens exist, we are at start of file -> Regex
@@ -798,7 +839,10 @@ impl<'a> CustomCharIterator<'a> {
     (self.queue[0], self.queue[1]) = (self.queue[1], next);
   }
 
-  pub fn consume_all<F>(&mut self, consume_fn: F) -> usize where F: Fn(char) -> bool {
+  pub fn consume_all<F>(&mut self, consume_fn: F) -> usize
+  where
+    F: Fn(char) -> bool,
+  {
     let mut byte_count = 0;
     while self.peek().is_some_and(&consume_fn) {
       let c = self.peek().unwrap();

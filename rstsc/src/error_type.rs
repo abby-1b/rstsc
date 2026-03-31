@@ -1,7 +1,7 @@
 use core::str;
 use std::fmt::Debug;
 
-use crate::{source_properties::{SrcMapping, SourceProperties}};
+use crate::source_properties::{SourceProperties, SrcMapping};
 
 static PRINT_LINES_BEFORE: usize = 2;
 static PRINT_LINES_AFTER: usize = 1;
@@ -65,28 +65,26 @@ impl CompilerError {
 
   // TODO: deprecate
   pub fn new_static(message: String) -> CompilerError {
-    CompilerError { token: SrcMapping::empty(), message }
+    CompilerError {
+      token: SrcMapping::empty(),
+      message,
+    }
   }
 
-  pub fn expected(
-    token: SrcMapping,
-    expect: &str,
-  ) -> CompilerError {
-    CompilerError::new(
-      token,
-      format!(
-        "Expected {:?}",
-        expect
-      ),
-    )
+  pub fn expected(token: SrcMapping, expect: &str) -> CompilerError {
+    CompilerError::new(token, format!("Expected {:?}", expect))
   }
 
   /// Used for testing purposes only
   pub fn test(sp: &mut SourceProperties) {
     CompilerError::new(
       sp.tokens.peek().value,
-      format!("Test error. Backtrace:\n{}", std::backtrace::Backtrace::capture()),
-    ).throw(sp);
+      format!(
+        "Test error. Backtrace:\n{}",
+        std::backtrace::Backtrace::capture()
+      ),
+    )
+    .throw(sp);
   }
 
   /// Gets line information for the error token
@@ -94,12 +92,14 @@ impl CompilerError {
     let source = match self.token.from {
       crate::source_properties::SMSrc::Source => sp.source,
       crate::source_properties::SMSrc::Pool => &sp.string_pool,
-      _ => return LineInfo {
-        line_number: 0,
-        line_start: 0,
-        line_end: self.token.len as usize,
-        content: String::new(),
-      },
+      _ => {
+        return LineInfo {
+          line_number: 0,
+          line_start: 0,
+          line_end: self.token.len as usize,
+          content: String::new(),
+        }
+      }
     };
 
     // Find the line number by counting newlines before the token
@@ -134,11 +134,7 @@ impl CompilerError {
   }
 
   /// Gets context lines around the error line
-  fn get_context_lines(
-    &self,
-    sp: &SourceProperties,
-    error_line_num: usize
-  ) -> Vec<LineInfo> {
+  fn get_context_lines(&self, sp: &SourceProperties, error_line_num: usize) -> Vec<LineInfo> {
     let source = match self.token.from {
       crate::source_properties::SMSrc::Source => sp.source,
       crate::source_properties::SMSrc::Pool => &sp.string_pool,
@@ -182,10 +178,7 @@ impl CompilerError {
   }
 
   /// Creates an underline string for the token
-  fn underline_token(
-    &self,
-    line_start: usize, line_end: usize
-  ) -> String {
+  fn underline_token(&self, line_start: usize, line_end: usize) -> String {
     // Calculate the position of the token within the line
     let token_start_in_line = self.token.idx as usize - line_start;
     let token_end_in_line = (self.token.idx + self.token.len) as usize - line_start;

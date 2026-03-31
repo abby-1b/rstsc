@@ -2,7 +2,6 @@ use phf::phf_map;
 
 use crate::{ast::ASTNode, source_properties::SourceProperties};
 
-
 #[derive(Debug, Clone, Copy)]
 pub enum ExprType {
   Prefx,
@@ -10,7 +9,7 @@ pub enum ExprType {
   Pstfx,
 
   /// Used for things that aren't really operators (like conditional `:`)
-  Special
+  Special,
 }
 
 impl ExprType {
@@ -19,14 +18,12 @@ impl ExprType {
       ASTNode::PrefixOpr { .. } => Some(ExprType::Prefx),
       ASTNode::InfixOpr { .. } => Some(ExprType::Infx),
       ASTNode::PostfixOpr { .. } => Some(ExprType::Pstfx),
-      _ => None
+      _ => None,
     }
   }
 }
 
-pub fn get_operator_binding_power(
-  expr_type: ExprType, opr: &str
-) -> Option<(u8, u8)> {
+pub fn get_operator_binding_power(expr_type: ExprType, opr: &str) -> Option<(u8, u8)> {
   match (&expr_type, opr) {
     (ExprType::Prefx, "<>") => Some((40, 41)), // Used for C-style casts
 
@@ -34,10 +31,10 @@ pub fn get_operator_binding_power(
     (ExprType::Prefx, "[") => Some((40, 41)),
     (ExprType::Prefx, "(") => Some((40, 41)),
 
-    (ExprType::Infx, "." ) => Some((38, 39)),
+    (ExprType::Infx, ".") => Some((38, 39)),
     (ExprType::Infx, "?.") => Some((38, 39)),
-    (ExprType::Infx, "[" ) => Some((38, 39)),
-    (ExprType::Infx, "(" ) => Some((38, 39)),
+    (ExprType::Infx, "[") => Some((38, 39)),
+    (ExprType::Infx, "(") => Some((38, 39)),
     (ExprType::Infx, "``") => Some((38, 39)),
 
     (ExprType::Pstfx, "!") => Some((36, 37)), // Non-null assertion
@@ -47,16 +44,16 @@ pub fn get_operator_binding_power(
     (ExprType::Pstfx, "++") => Some((32, 33)),
     (ExprType::Pstfx, "--") => Some((32, 33)),
 
-    (ExprType::Prefx, "++"    ) => Some((30, 31)),
-    (ExprType::Prefx, "--"    ) => Some((30, 31)),
-    (ExprType::Prefx, "!"     ) => Some((30, 31)),
-    (ExprType::Prefx, "~"     ) => Some((30, 31)),
-    (ExprType::Prefx, "+"     ) => Some((30, 31)),
-    (ExprType::Prefx, "-"     ) => Some((30, 31)),
+    (ExprType::Prefx, "++") => Some((30, 31)),
+    (ExprType::Prefx, "--") => Some((30, 31)),
+    (ExprType::Prefx, "!") => Some((30, 31)),
+    (ExprType::Prefx, "~") => Some((30, 31)),
+    (ExprType::Prefx, "+") => Some((30, 31)),
+    (ExprType::Prefx, "-") => Some((30, 31)),
     (ExprType::Prefx, "typeof") => Some((30, 31)),
-    (ExprType::Prefx, "void"  ) => Some((30, 31)),
+    (ExprType::Prefx, "void") => Some((30, 31)),
     (ExprType::Prefx, "delete") => Some((30, 31)),
-    (ExprType::Prefx, "await" ) => Some((30, 31)),
+    (ExprType::Prefx, "await") => Some((30, 31)),
 
     (ExprType::Infx, "**") => Some((29, 28)),
 
@@ -67,25 +64,25 @@ pub fn get_operator_binding_power(
     (ExprType::Infx, "+") => Some((24, 25)),
     (ExprType::Infx, "-") => Some((24, 25)),
 
-    (ExprType::Infx, "<<" ) => Some((22, 23)),
-    (ExprType::Infx, ">>" ) => Some((22, 23)),
+    (ExprType::Infx, "<<") => Some((22, 23)),
+    (ExprType::Infx, ">>") => Some((22, 23)),
     (ExprType::Infx, ">>>") => Some((22, 23)),
 
-    (ExprType::Infx, "<"         ) => Some((20, 21)),
-    (ExprType::Infx, "<="        ) => Some((20, 21)),
-    (ExprType::Infx, ">"         ) => Some((20, 21)),
-    (ExprType::Infx, ">="        ) => Some((20, 21)),
-    (ExprType::Infx, "in"        ) => Some((20, 21)),
+    (ExprType::Infx, "<") => Some((20, 21)),
+    (ExprType::Infx, "<=") => Some((20, 21)),
+    (ExprType::Infx, ">") => Some((20, 21)),
+    (ExprType::Infx, ">=") => Some((20, 21)),
+    (ExprType::Infx, "in") => Some((20, 21)),
     (ExprType::Infx, "instanceof") => Some((20, 21)),
 
-    (ExprType::Infx, "==" ) => Some((18, 19)),
-    (ExprType::Infx, "!=" ) => Some((18, 19)),
+    (ExprType::Infx, "==") => Some((18, 19)),
+    (ExprType::Infx, "!=") => Some((18, 19)),
     (ExprType::Infx, "===") => Some((18, 19)),
     (ExprType::Infx, "!==") => Some((18, 19)),
 
-    (ExprType::Infx, "&" ) => Some((16, 17)),
-    (ExprType::Infx, "^" ) => Some((14, 15)),
-    (ExprType::Infx, "|" ) => Some((12, 13)),
+    (ExprType::Infx, "&") => Some((16, 17)),
+    (ExprType::Infx, "^") => Some((14, 15)),
+    (ExprType::Infx, "|") => Some((12, 13)),
     (ExprType::Infx, "&&") => Some((10, 11)),
 
     (ExprType::Infx, "||") => Some((8, 9)),
@@ -93,39 +90,36 @@ pub fn get_operator_binding_power(
 
     (ExprType::Special, ":") => Some((6, 7)), // Conditional
 
-    (ExprType::Infx,  "="   ) => Some((5, 4)),
-    (ExprType::Infx,  "+="  ) => Some((5, 4)),
-    (ExprType::Infx,  "-="  ) => Some((5, 4)),
-    (ExprType::Infx,  "**=" ) => Some((5, 4)),
-    (ExprType::Infx,  "*="  ) => Some((5, 4)),
-    (ExprType::Infx,  "/="  ) => Some((5, 4)),
-    (ExprType::Infx,  "%="  ) => Some((5, 4)),
-    (ExprType::Infx,  "<<=" ) => Some((5, 4)),
-    (ExprType::Infx,  ">>=" ) => Some((5, 4)),
-    (ExprType::Infx,  ">>>=") => Some((5, 4)),
-    (ExprType::Infx,  "&="  ) => Some((5, 4)),
-    (ExprType::Infx,  "^="  ) => Some((5, 4)),
-    (ExprType::Infx,  "|="  ) => Some((5, 4)),
-    (ExprType::Infx,  "&&=" ) => Some((5, 4)),
-    (ExprType::Infx,  "||=" ) => Some((5, 4)),
-    (ExprType::Infx,  "??=" ) => Some((5, 4)),
-    (ExprType::Infx,  "?"   ) => Some((5, 4)),
-    (ExprType::Infx,  "=>"  ) => Some((5, 4)),
+    (ExprType::Infx, "=") => Some((5, 4)),
+    (ExprType::Infx, "+=") => Some((5, 4)),
+    (ExprType::Infx, "-=") => Some((5, 4)),
+    (ExprType::Infx, "**=") => Some((5, 4)),
+    (ExprType::Infx, "*=") => Some((5, 4)),
+    (ExprType::Infx, "/=") => Some((5, 4)),
+    (ExprType::Infx, "%=") => Some((5, 4)),
+    (ExprType::Infx, "<<=") => Some((5, 4)),
+    (ExprType::Infx, ">>=") => Some((5, 4)),
+    (ExprType::Infx, ">>>=") => Some((5, 4)),
+    (ExprType::Infx, "&=") => Some((5, 4)),
+    (ExprType::Infx, "^=") => Some((5, 4)),
+    (ExprType::Infx, "|=") => Some((5, 4)),
+    (ExprType::Infx, "&&=") => Some((5, 4)),
+    (ExprType::Infx, "||=") => Some((5, 4)),
+    (ExprType::Infx, "??=") => Some((5, 4)),
+    (ExprType::Infx, "?") => Some((5, 4)),
+    (ExprType::Infx, "=>") => Some((5, 4)),
 
-    (ExprType::Prefx, "yield" ) => Some((2, 3)),
-    (ExprType::Prefx, "..."   ) => Some((2, 3)),
+    (ExprType::Prefx, "yield") => Some((2, 3)),
+    (ExprType::Prefx, "...") => Some((2, 3)),
 
     (ExprType::Infx, ",") => Some((0, 1)),
 
-    _ => { None }
+    _ => None,
   }
 }
 
-pub fn get_type_operator_binding_power(
-  expr_type: ExprType, opr: &str
-) -> Option<(u8, u8)> {
+pub fn get_type_operator_binding_power(expr_type: ExprType, opr: &str) -> Option<(u8, u8)> {
   match (&expr_type, opr) {
-
     (ExprType::Prefx, "{") => Some((16, 17)),
     (ExprType::Prefx, "(") => Some((16, 17)),
     (ExprType::Prefx, "<") => Some((16, 17)),
@@ -135,32 +129,32 @@ pub fn get_type_operator_binding_power(
     (ExprType::Infx, "[") => Some((14, 15)),
     (ExprType::Infx, "<") => Some((14, 15)),
 
-    (ExprType::Prefx, "-"  ) => Some((12, 13)),
+    (ExprType::Prefx, "-") => Some((12, 13)),
     (ExprType::Prefx, "new") => Some((12, 13)),
 
-    (ExprType::Prefx, "typeof"  ) => Some((10, 11)),
-    (ExprType::Prefx, "keyof"   ) => Some((10, 11)),
-    (ExprType::Prefx, "asserts" ) => Some((10, 11)),
-    (ExprType::Prefx, "infer"   ) => Some((10, 11)),
+    (ExprType::Prefx, "typeof") => Some((10, 11)),
+    (ExprType::Prefx, "keyof") => Some((10, 11)),
+    (ExprType::Prefx, "asserts") => Some((10, 11)),
+    (ExprType::Prefx, "infer") => Some((10, 11)),
     (ExprType::Prefx, "readonly") => Some((10, 11)),
-    (ExprType::Prefx, "unique"  ) => Some((10, 11)),
+    (ExprType::Prefx, "unique") => Some((10, 11)),
     (ExprType::Prefx, "abstract") => Some((10, 11)),
     (ExprType::Prefx, "&") => Some((10, 11)),
     (ExprType::Prefx, "|") => Some((10, 11)),
 
-    (ExprType::Infx , "&") => Some((8, 9)),
+    (ExprType::Infx, "&") => Some((8, 9)),
 
-    (ExprType::Infx , "|") => Some((6, 7)),
+    (ExprType::Infx, "|") => Some((6, 7)),
 
     (ExprType::Infx, "extends") => Some((4, 5)),
 
-    (ExprType::Infx , "?"  ) => Some((2, 3)), // Conditional
-    (ExprType::Infx , "is" ) => Some((2, 3)),
+    (ExprType::Infx, "?") => Some((2, 3)), // Conditional
+    (ExprType::Infx, "is") => Some((2, 3)),
     (ExprType::Prefx, "...") => Some((2, 3)), // Spread
 
-    (ExprType::Infx, ":" ) => Some((0, 1)),
+    (ExprType::Infx, ":") => Some((0, 1)),
 
-    _ => { None }
+    _ => None,
   }
 }
 
@@ -169,12 +163,15 @@ pub fn get_operator_binding_power_from_node(
   sp: &SourceProperties,
 ) -> Option<(u8, u8)> {
   if let Some(opr_type) = ExprType::from(node) {
-    get_operator_binding_power(opr_type, match node {
-      ASTNode::PrefixOpr { opr, .. } => sp.str_src(*opr),
-      ASTNode::InfixOpr { opr, .. } => sp.str_src(*opr),
-      ASTNode::PostfixOpr { opr, .. } => sp.str_src(*opr),
-      _ => " "
-    })
+    get_operator_binding_power(
+      opr_type,
+      match node {
+        ASTNode::PrefixOpr { opr, .. } => sp.str_src(*opr),
+        ASTNode::InfixOpr { opr, .. } => sp.str_src(*opr),
+        ASTNode::PostfixOpr { opr, .. } => sp.str_src(*opr),
+        _ => " ",
+      },
+    )
   } else {
     None
   }

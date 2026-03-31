@@ -7,5 +7,13 @@
 	"editor.insertSpaces": true,
 	"lldb.displayFormat": "auto",
 	"lldb.dereferencePointers": true,
-	"lldb.consoleMode": "commands"
+	"lldb.consoleMode": "commands",
+	"editor.semanticTokenColorCustomizations": {
+		"enabled": true,
+		"rules": {
+			"*.mutable": {
+				"underline": false,
+			}
+		}
+	}
 }

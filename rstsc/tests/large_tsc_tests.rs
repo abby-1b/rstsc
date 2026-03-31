@@ -18,12 +18,24 @@ fn large_tsc_tests() {
   std::fs::create_dir_all("target/test").unwrap();
   if !std::path::Path::new(directory).exists() {
     std::process::Command::new("git")
-      .args(&["clone", "--filter=blob:none", "--no-checkout", "--depth=1", "https://github.com/microsoft/TypeScript.git", directory])
+      .args(&[
+        "clone",
+        "--filter=blob:none",
+        "--no-checkout",
+        "--depth=1",
+        "https://github.com/microsoft/TypeScript.git",
+        directory,
+      ])
       .status()
       .unwrap();
 
     std::process::Command::new("git")
-      .args(&["sparse-checkout", "set", "--no-cone", "tests/cases/conformance/*"])
+      .args(&[
+        "sparse-checkout",
+        "set",
+        "--no-cone",
+        "tests/cases/conformance/*",
+      ])
       .current_dir(directory)
       .status()
       .unwrap();
@@ -78,7 +90,7 @@ fn run_sequential(all_files: Vec<PathBuf>) {
 fn run_parallel(all_files: Vec<PathBuf>) {
   let total_files = all_files.len();
   let chunk_size = (total_files + THREAD_COUNT - 1) / THREAD_COUNT;
-  
+
   let mut handles = Vec::new();
   for file_chunk in all_files.chunks(chunk_size) {
     let chunk_vec = file_chunk.to_vec();

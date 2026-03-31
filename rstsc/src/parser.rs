@@ -1,16 +1,32 @@
-use phf::{phf_map, phf_set};
-use crate::ast::{ASTIndex, ASTNode, ArrowFunctionDefinition, ClassDefinition, ClassMember, EnumDeclaration, ExprFunctionCall, ExprRegexLiteral, ExprTemplateLiteral, FunctionDefinition, GetterSetter, ImportDefinition, IndividualImport, InterfaceDeclaration, ObjectProperty, Switch, TryCatchFinally};
-use crate::ast_common::{ACCESSIBILITY_MODIFIERS, MODIFIERS, Modifier, ModifierList, VariableDefType};
-use crate::declaration::{ComputableDeclarationName, Declaration, DeclarationComputable, DeclarationTyped, DestructurableDeclaration, DestructurePattern};
+use crate::ast::{
+  ASTIndex, ASTNode, ArrowFunctionDefinition, ClassDefinition, ClassMember, EnumDeclaration,
+  ExprFunctionCall, ExprRegexLiteral, ExprTemplateLiteral, FunctionDefinition, GetterSetter,
+  ImportDefinition, IndividualImport, InterfaceDeclaration, ObjectProperty, Switch,
+  TryCatchFinally,
+};
+use crate::ast_common::{
+  Modifier, ModifierList, VariableDefType, ACCESSIBILITY_MODIFIERS, MODIFIERS,
+};
+use crate::declaration::{
+  ComputableDeclarationName, Declaration, DeclarationComputable, DeclarationTyped,
+  DestructurableDeclaration, DestructurePattern,
+};
 use crate::error_type::CompilerError;
-use crate::operations::{ARROW_FN_PRECEDENCE, COMMA_PRECEDENCE, ExprType, TEMPLATE_LITERAL_TAG_PRECEDENCE, get_operator_binding_power};
+use crate::operations::{
+  get_operator_binding_power, ExprType, ARROW_FN_PRECEDENCE, COMMA_PRECEDENCE,
+  TEMPLATE_LITERAL_TAG_PRECEDENCE,
+};
 use crate::rest::Rest;
 use crate::small_vec::SmallVec;
 use crate::source_properties::{SourceProperties, SrcMapping};
 use crate::symbol_table::{Symbol, SymbolOrigin};
 use crate::tokenizer::TokenType;
 use crate::type_infer::infer_types;
-use crate::types::{ObjectSquareBracketReturn, Type, get_comma_separated_types_until, get_generics, get_optional_generics, get_type, parse_object_square_bracket, try_get_type};
+use crate::types::{
+  get_comma_separated_types_until, get_generics, get_optional_generics, get_type,
+  parse_object_square_bracket, try_get_type, ObjectSquareBracketReturn, Type,
+};
+use phf::{phf_map, phf_set};
 
 pub static INVERSE_GROUPINGS: phf::Map<&'static str, &'static str> = phf_map! {
   "(" => ")",
@@ -24,8 +40,8 @@ pub static INVERSE_GROUPINGS: phf::Map<&'static str, &'static str> = phf_map! {
   ">" => "<",
 };
 
-const VARIABLE_DECLARATIONS: &[&str] = &[ "var", "let", "const" ];
-const IGNORE_MODIFIER_IF_SYMBOL: &[&str] = &[ "(", "<", ":", "=" ];
+const VARIABLE_DECLARATIONS: &[&str] = &["var", "let", "const"];
+const IGNORE_MODIFIER_IF_SYMBOL: &[&str] = &["(", "<", ":", "="];
 
 pub static ANONYMOUS_CLASS_NAME: &str = "\0";
 
@@ -50,13 +66,24 @@ pub fn get_block(sp: &mut SourceProperties) -> Result<ASTIndex, CompilerError> {
   loop {
     nodes.push(get_single_statement(sp)?);
 
-    if sp.tokens.peek_str() == ";" { sp.tokens.skip_unchecked(); continue; }
-    if sp.tokens.is_done() { break; }
-    if [ ")", "]", "}" ].contains(&sp.tokens.peek_str()) { sp.tokens.skip_unchecked(); break; }
+    if sp.tokens.peek_str() == ";" {
+      sp.tokens.skip_unchecked();
+      continue;
+    }
+    if sp.tokens.is_done() {
+      break;
+    }
+    if [")", "]", "}"].contains(&sp.tokens.peek_str()) {
+      sp.tokens.skip_unchecked();
+      break;
+    }
   }
 
   // Remove trailing empty
-  if nodes.last().is_some_and(|i| matches!(*sp.nodes.get(*i), ASTNode::Empty)) {
+  if nodes
+    .last()
+    .is_some_and(|i| matches!(*sp.nodes.get(*i), ASTNode::Empty))
+  {
     nodes.pop();
   }
 
@@ -68,9 +95,10 @@ pub fn get_block(sp: &mut SourceProperties) -> Result<ASTIndex, CompilerError> {
 /// Gets a single statement, until it reaches either a `;` or a group end
 /// (eg. `)]}`). Only consumes semicolons, not group ends. If a group start is
 /// reached (eg. `([{`), calls the corresponding function for said group.
-fn get_single_statement<'a, 'b>(
-  sp: &mut SourceProperties
-) -> Result<ASTIndex, CompilerError> where 'a: 'b {
+fn get_single_statement<'a, 'b>(sp: &mut SourceProperties) -> Result<ASTIndex, CompilerError>
+where
+  'a: 'b,
+{
   sp.tokens.ignore_whitespace();
   if sp.tokens.is_done() {
     return Ok(sp.nodes.add(ASTNode::Empty));
@@ -82,8 +110,8 @@ fn get_single_statement<'a, 'b>(
     "function" => handle_function_declaration(sp)?.unwrap(),
     "class" => handle_class_declaration(sp)?.unwrap(),
     "import" => handle_import(sp)?.unwrap(),
-    "export" | "async" | "static" | "public" | "private" | "protected" | "readonly" | "abstract" | "override" =>
-        handle_modifiers(sp)?.unwrap(),
+    "export" | "async" | "static" | "public" | "private" | "protected" | "readonly"
+    | "abstract" | "override" => handle_modifiers(sp)?.unwrap(),
     "return" | "break" | "continue" | "throw" => handle_other_statements(sp)?.unwrap(),
     "type" => handle_type_declaration(sp)?.unwrap(),
     "enum" => handle_enum(false, sp)?.unwrap(),
@@ -103,9 +131,7 @@ fn get_single_statement<'a, 'b>(
 }
 
 /// Handles blocks (defined as a non-expression `{` token)
-fn handle_block(
-  sp: &mut SourceProperties
-) -> Result<Option<ASTIndex>, CompilerError> {
+fn handle_block(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, CompilerError> {
   if sp.tokens.peek_str() != "{" {
     return Ok(None);
   }
@@ -114,9 +140,10 @@ fn handle_block(
 }
 
 /// Handles variable initialization
-fn handle_var<'a, 'b>(
-  sp: &mut SourceProperties
-) -> Result<Option<ASTIndex>, CompilerError> where 'a: 'b {
+fn handle_var<'a, 'b>(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, CompilerError>
+where
+  'a: 'b,
+{
   if !VARIABLE_DECLARATIONS.contains(&sp.tokens.peek_str()) {
     return Ok(None);
   }
@@ -134,34 +161,37 @@ fn handle_var<'a, 'b>(
   Ok(Some(sp.nodes.add(ASTNode::VariableDeclaration {
     modifiers: ModifierList::new(),
     def_type,
-    defs
+    defs,
   })))
 }
 
-fn get_variable_def_type<'b>(
-  sp: &mut SourceProperties,
-) -> Result<VariableDefType, CompilerError> {
+fn get_variable_def_type<'b>(sp: &mut SourceProperties) -> Result<VariableDefType, CompilerError> {
   // Get the header
   let header_token = sp.tokens.consume();
   sp.tokens.ignore_whitespace();
   match sp.str_src(header_token.value) {
-    "var"   => Ok(VariableDefType::Var),
-    "let"   => Ok(VariableDefType::Let),
+    "var" => Ok(VariableDefType::Var),
+    "let" => Ok(VariableDefType::Let),
     "const" => Ok(VariableDefType::Const),
     other => Err(CompilerError::new(
       header_token.value,
       format!("Unexpected variable declaration: {}", other),
-    ))
+    )),
   }
 }
 
 /// Gets a single named (and optionally typed) declaration,
 /// with or without a value. Does NOT handle rest parameters!
-fn get_declaration<'a, 'b>(
-  sp: &mut SourceProperties,
-) -> Result<Declaration, CompilerError> where 'a: 'b {
+fn get_declaration<'a, 'b>(sp: &mut SourceProperties) -> Result<Declaration, CompilerError>
+where
+  'a: 'b,
+{
   sp.tokens.ignore_whitespace();
-  let name = sp.tokens.consume_type(TokenType::Identifier)?.value.to_owned();
+  let name = sp
+    .tokens
+    .consume_type(TokenType::Identifier)?
+    .value
+    .to_owned();
   let (typ, value) = get_declaration_after_name(sp)?;
 
   // Create symbol for this declaration
@@ -172,7 +202,7 @@ fn get_declaration<'a, 'b>(
       infer_types(*value, sp)
     } else {
       Type::Unknown
-    }
+    },
   );
   sp.st.add_symbol(symbol)?;
 
@@ -181,13 +211,16 @@ fn get_declaration<'a, 'b>(
 
 fn get_declaration_after_name<'a, 'b>(
   sp: &mut SourceProperties,
-) -> Result<(Type, Option<ASTIndex>), CompilerError> where 'a: 'b {
+) -> Result<(Type, Option<ASTIndex>), CompilerError>
+where
+  'a: 'b,
+{
   let typ = if sp.tokens.try_skip_and_ignore_whitespace("?") {
     if sp.tokens.peek_str() != ":" {
       return Err(CompilerError::new(
         sp.tokens.consume().value,
-        "Expected `:` after `?` in conditional declaration".to_owned()
-      ))
+        "Expected `:` after `?` in conditional declaration".to_owned(),
+      ));
     }
     let mut typ = get_type(sp)?;
     typ.intersection(Type::Void);
@@ -197,22 +230,18 @@ fn get_declaration_after_name<'a, 'b>(
       return Err(CompilerError::new(
         sp.tokens.consume().value,
         "Expected `:` after `!` in non-null asserted declaration".to_owned(),
-      ))
+      ));
     }
     Some(get_type(sp)?)
   } else {
     try_get_type(sp)?
-  }.unwrap_or(Type::Unknown);
+  }
+  .unwrap_or(Type::Unknown);
 
   sp.tokens.ignore_whitespace();
   let value = if sp.tokens.peek_str() == "=" {
     sp.tokens.skip_unchecked();
-    Some(
-      get_expression(
-        *crate::operations::COMMA_PRECEDENCE,
-        sp
-      )?
-    )
+    Some(get_expression(*crate::operations::COMMA_PRECEDENCE, sp)?)
   } else {
     None
   };
@@ -222,12 +251,18 @@ fn get_declaration_after_name<'a, 'b>(
 
 fn get_destructurable_declaration<'a, 'b>(
   sp: &mut SourceProperties,
-) -> Result<DestructurableDeclaration, CompilerError> where 'a: 'b {
+) -> Result<DestructurableDeclaration, CompilerError>
+where
+  'a: 'b,
+{
   let name = parse_destructure_pattern(false, sp)?;
   let (typ, initializer) = get_declaration_after_name(sp)?;
 
   // Create symbol for identifier patterns
-  if let DestructurePattern::Identifier { name: identifier_name } = &name {
+  if let DestructurePattern::Identifier {
+    name: identifier_name,
+  } = &name
+  {
     let symbol = Symbol::new(
       sp.str_src(*identifier_name),
       SymbolOrigin::Variable,
@@ -235,30 +270,40 @@ fn get_destructurable_declaration<'a, 'b>(
         infer_types(*init, sp)
       } else {
         Type::Unknown
-      }
+      },
     );
     sp.st.add_symbol(symbol)?;
   }
 
   Ok(DestructurableDeclaration {
     name: if let Some(initializer) = initializer {
-      DestructurePattern::WithInitializer { pattern: Box::new(name), initializer }
-    } else { name },
-    typ
+      DestructurePattern::WithInitializer {
+        pattern: Box::new(name),
+        initializer,
+      }
+    } else {
+      name
+    },
+    typ,
   })
 }
 
 fn get_multiple_destructurable_declarations<'a, 'b>(
   allow_rest: bool,
   sp: &mut SourceProperties,
-) -> Result<(SmallVec<DestructurableDeclaration>, Rest), CompilerError> where 'a: 'b {
+) -> Result<(SmallVec<DestructurableDeclaration>, Rest), CompilerError>
+where
+  'a: 'b,
+{
   sp.tokens.ignore_whitespace();
   let mut declarations: SmallVec<DestructurableDeclaration> = SmallVec::new();
   let mut rest = Rest::new();
-  while ![ ";", ")" ].contains(&sp.tokens.peek_str()) {
+  while ![";", ")"].contains(&sp.tokens.peek_str()) {
     rest.try_set(sp, allow_rest)?;
     declarations.push(get_destructurable_declaration(sp)?);
-    if !sp.tokens.ignore_commas() { break }
+    if !sp.tokens.ignore_commas() {
+      break;
+    }
   }
   Ok((declarations, rest))
 }
@@ -281,7 +326,7 @@ fn parse_destructure_pattern(
             return Err(CompilerError::new(
               sp.tokens.consume().value,
               "Only one spread allowed in array destructure".to_owned(),
-            ))
+            ));
           }
           sp.tokens.skip_unchecked();
           spread = Some(Box::new(parse_destructure_pattern(false, sp)?));
@@ -290,7 +335,7 @@ fn parse_destructure_pattern(
             return Err(CompilerError::new(
               sp.tokens.consume().value,
               "A spread may not have a trailing comma".to_owned(),
-            ))
+            ));
           }
           while sp.tokens.try_skip_and_ignore_whitespace(",") {
             elements.push(DestructurePattern::Ignore);
@@ -300,7 +345,7 @@ fn parse_destructure_pattern(
             return Err(CompilerError::new(
               sp.tokens.consume().value,
               "A spread must be last in a destructuring pattern".to_owned(),
-            ))
+            ));
           }
           elements.push(parse_destructure_pattern(true, sp)?);
         }
@@ -312,7 +357,7 @@ fn parse_destructure_pattern(
       sp.tokens.skip_unchecked(); // Skip "]"
       sp.tokens.ignore_whitespace();
       DestructurePattern::Array { elements, spread }
-    },
+    }
     "{" => {
       // Object destructure
       sp.tokens.skip_unchecked(); // Skip "{"
@@ -325,7 +370,7 @@ fn parse_destructure_pattern(
             return Err(CompilerError::new(
               sp.tokens.consume().value,
               "Only one rest element allowed in object destructure".to_owned(),
-            ))
+            ));
           }
           sp.tokens.skip_unchecked();
           rest = Some(Box::new(parse_destructure_pattern(false, sp)?));
@@ -333,14 +378,14 @@ fn parse_destructure_pattern(
             return Err(CompilerError::new(
               sp.tokens.consume().value,
               "A rest element cannot have an initializer".to_owned(),
-            ))
+            ));
           }
         } else if sp.tokens.peek_str() == "," {
           if rest.is_some() {
             return Err(CompilerError::new(
               sp.tokens.consume().value,
               "A rest element may not have a trailing comma".to_owned(),
-            ))
+            ));
           }
           sp.tokens.skip_unchecked();
         } else {
@@ -348,13 +393,13 @@ fn parse_destructure_pattern(
             return Err(CompilerError::new(
               sp.tokens.consume().value,
               "A spread must be last in a destructuring pattern".to_owned(),
-            ))
+            ));
           }
           let property = parse_destructure_pattern(false, sp)?;
           let needs_alias = match property {
             DestructurePattern::NumericProperty { .. } => true,
             DestructurePattern::StringProperty { .. } => true,
-            _ => false
+            _ => false,
           };
           let alias = if sp.tokens.peek_str() == ":" {
             sp.tokens.skip_unchecked();
@@ -378,19 +423,30 @@ fn parse_destructure_pattern(
       }
       sp.tokens.skip_unchecked(); // Skip "}"
       sp.tokens.ignore_whitespace();
-      DestructurePattern::Object { properties, spread: rest }
-    },
+      DestructurePattern::Object {
+        properties,
+        spread: rest,
+      }
+    }
     _ => {
       // Identifier, numeric property, or string property
       let token = sp.tokens.consume();
       let out = match token.typ {
-        TokenType::Identifier => DestructurePattern::Identifier { name: token.value.to_owned() },
-        TokenType::Number => DestructurePattern::NumericProperty { value: token.value.to_owned() },
-        TokenType::String => DestructurePattern::StringProperty { value: token.value.to_owned() },
-        _ => return Err(CompilerError::new(
-          token.value,
-          "Expected Identifier, Number or String in destructure pattern".to_owned(),
-        ))
+        TokenType::Identifier => DestructurePattern::Identifier {
+          name: token.value.to_owned(),
+        },
+        TokenType::Number => DestructurePattern::NumericProperty {
+          value: token.value.to_owned(),
+        },
+        TokenType::String => DestructurePattern::StringProperty {
+          value: token.value.to_owned(),
+        },
+        _ => {
+          return Err(CompilerError::new(
+            token.value,
+            "Expected Identifier, Number or String in destructure pattern".to_owned(),
+          ))
+        }
       };
       sp.tokens.ignore_whitespace();
       out
@@ -413,7 +469,7 @@ fn try_parse_destructure_pattern_initializer(
     sp.tokens.skip_unchecked();
     Ok(DestructurePattern::WithInitializer {
       pattern: Box::new(curr_pattern),
-      initializer: get_expression(*COMMA_PRECEDENCE, sp)?
+      initializer: get_expression(*COMMA_PRECEDENCE, sp)?,
     })
   } else {
     Ok(curr_pattern)
@@ -421,10 +477,8 @@ fn try_parse_destructure_pattern_initializer(
 }
 
 /// Handles control flow, like `if`, `while`, and `for`
-fn handle_control_flow(
-  sp: &mut SourceProperties,
-) -> Result<Option<ASTIndex>, CompilerError> {
-  const CONTROL_FLOW: &[&str] = &[ "if", "while", "for", "switch" ];
+fn handle_control_flow(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, CompilerError> {
+  const CONTROL_FLOW: &[&str] = &["if", "while", "for", "switch"];
   if !CONTROL_FLOW.contains(&sp.tokens.peek_str()) {
     return Ok(None);
   }
@@ -454,11 +508,15 @@ fn handle_control_flow(
         } else {
           None
         };
-        sp.nodes.add(ASTNode::StatementIf { condition, body, alternate })
+        sp.nodes.add(ASTNode::StatementIf {
+          condition,
+          body,
+          alternate,
+        })
       } else {
         sp.nodes.add(ASTNode::StatementWhile { condition, body })
       }
-    },
+    }
     "for" => handle_for_loop(sp)?,
     "switch" => {
       // Get condition
@@ -477,7 +535,7 @@ fn handle_control_flow(
           let case_condition = get_expression(0, sp)?;
           sp.tokens.skip_with_whitespace(":")?;
           let mut case_body = SmallVec::new();
-          while !sp.tokens.is_done() && ![ "case", "default", "}" ].contains(&sp.tokens.peek_str()) {
+          while !sp.tokens.is_done() && !["case", "default", "}"].contains(&sp.tokens.peek_str()) {
             case_body.push(get_single_statement(sp)?);
             sp.tokens.ignore_whitespace();
           }
@@ -487,13 +545,13 @@ fn handle_control_flow(
             return Err(CompilerError::new(
               sp.tokens.consume().value,
               "Switch statements can only have one default case".to_owned(),
-            ))
+            ));
           }
           sp.tokens.skip_unchecked();
           sp.tokens.ignore_whitespace();
           sp.tokens.skip(":")?;
           let mut default_body = SmallVec::new();
-          while !sp.tokens.is_done() && ![ "case", "}" ].contains(&sp.tokens.peek_str()) {
+          while !sp.tokens.is_done() && !["case", "}"].contains(&sp.tokens.peek_str()) {
             default_body.push(get_single_statement(sp)?);
             sp.tokens.ignore_whitespace();
           }
@@ -502,23 +560,27 @@ fn handle_control_flow(
           return Err(CompilerError::new(
             sp.tokens.consume().value,
             "Expected `case` or `default` in switch statement".to_owned(),
-          ))
+          ));
         }
       }
 
       sp.tokens.skip_unchecked(); // Skip "}"
 
-      sp.nodes.add(ASTNode::StatementSwitch { inner: Box::new(Switch {
-        condition, cases, default
-      }) })
+      sp.nodes.add(ASTNode::StatementSwitch {
+        inner: Box::new(Switch {
+          condition,
+          cases,
+          default,
+        }),
+      })
     }
-    other => { panic!("Control flow not implemented: {}", other); }
+    other => {
+      panic!("Control flow not implemented: {}", other);
+    }
   }))
 }
 
-fn handle_for_loop(
-  sp: &mut SourceProperties,
-) -> Result<ASTIndex, CompilerError> {
+fn handle_for_loop(sp: &mut SourceProperties) -> Result<ASTIndex, CompilerError> {
   sp.tokens.skip("(")?;
   sp.tokens.ignore_whitespace();
   let init = if sp.tokens.peek_str() == ";" {
@@ -529,7 +591,7 @@ fn handle_for_loop(
     sp.nodes.add(ASTNode::VariableDeclaration {
       modifiers: ModifierList::new(),
       def_type: def_typ,
-      defs
+      defs,
     })
   } else {
     get_expression(0, sp)?
@@ -542,33 +604,44 @@ fn handle_for_loop(
     sp.tokens.skip(")")?;
     let body = get_single_statement(sp)?;
 
-    sp.nodes.add(ASTNode::StatementFor { init, condition, update, body })
+    sp.nodes.add(ASTNode::StatementFor {
+      init,
+      condition,
+      update,
+      body,
+    })
   } else if sp.tokens.try_skip_and_ignore_whitespace("of") {
     let expression = get_expression(0, sp)?;
 
     sp.tokens.skip(")")?;
     let body = get_single_statement(sp)?;
 
-    sp.nodes.add(ASTNode::StatementForOf { init, expression, body })
+    sp.nodes.add(ASTNode::StatementForOf {
+      init,
+      expression,
+      body,
+    })
   } else if sp.tokens.try_skip_and_ignore_whitespace("in") {
     let expression = get_expression(0, sp)?;
 
     sp.tokens.skip(")")?;
     let body = get_single_statement(sp)?;
 
-    sp.nodes.add(ASTNode::StatementForIn { init, expression, body })
+    sp.nodes.add(ASTNode::StatementForIn {
+      init,
+      expression,
+      body,
+    })
   } else {
     return Err(CompilerError::new(
       sp.tokens.peek().value,
       "Expected `;`, `of`, or `in` in for loop".to_owned(),
-    ))
+    ));
   })
 }
 
 /// Handles import statements
-fn handle_import(
-  sp: &mut SourceProperties,
-) -> Result<Option<ASTIndex>, CompilerError> {
+fn handle_import(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, CompilerError> {
   if sp.tokens.peek_str() != "import" {
     return Ok(None);
   }
@@ -601,11 +674,15 @@ fn handle_import(
     sp.tokens.skip_unchecked();
     sp.tokens.skip_with_whitespace("as")?;
     has_distinction += 1;
-    let name = sp.tokens.consume_type(TokenType::Identifier)?.value.to_owned();
+    let name = sp
+      .tokens
+      .consume_type(TokenType::Identifier)?
+      .value
+      .to_owned();
     sp.st.add_symbol(Symbol::new(
       sp.str_src(name),
       SymbolOrigin::Import,
-      Type::Unknown
+      Type::Unknown,
     ))?;
     Some(name)
   } else {
@@ -619,20 +696,28 @@ fn handle_import(
     sp.tokens.skip_unchecked();
     sp.tokens.ignore_whitespace();
     while !sp.tokens.is_done() && sp.tokens.peek_str() != "}" {
-      let name = sp.tokens.consume_type(TokenType::Identifier)?.value.to_owned();
+      let name = sp
+        .tokens
+        .consume_type(TokenType::Identifier)?
+        .value
+        .to_owned();
       let alias = if sp.tokens.peek_str() == "as" {
         sp.tokens.skip_unchecked();
         sp.tokens.ignore_whitespace();
-        Some(sp.tokens.consume_type(TokenType::Identifier)?.value.to_owned())
-      } else { None };
+        Some(
+          sp.tokens
+            .consume_type(TokenType::Identifier)?
+            .value
+            .to_owned(),
+        )
+      } else {
+        None
+      };
       sp.tokens.ignore_whitespace();
       let _ = sp.tokens.try_skip_and_ignore_whitespace(",");
       let final_name = sp.str_src(alias.clone().unwrap_or(name.clone()));
-      sp.st.add_symbol(Symbol::new(
-        final_name,
-        SymbolOrigin::Import,
-        Type::Unknown
-      ))?;
+      sp.st
+        .add_symbol(Symbol::new(final_name, SymbolOrigin::Import, Type::Unknown))?;
       individual.push(IndividualImport { name, alias });
     }
     sp.tokens.skip("}")?;
@@ -643,7 +728,7 @@ fn handle_import(
   if has_distinction > 1 {
     return Err(CompilerError::new(
       sp.tokens.consume().value,
-      "Can't mix multiple import types!".to_owned()
+      "Can't mix multiple import types!".to_owned(),
     ));
   } else if has_distinction > 0 {
     sp.tokens.skip("from")?;
@@ -651,27 +736,31 @@ fn handle_import(
   }
   let source = sp.tokens.consume_type(TokenType::String)?.value.to_owned();
 
-  Ok(Some(sp.nodes.add(ASTNode::StatementImport { inner: Box::new(if let Some(default_alias) = default_alias {
-    ImportDefinition::DefaultAliased { source, alias: default_alias }
-  } else if let Some(wildcard) = wildcard {
-    ImportDefinition::AllAsAlias { source, alias: wildcard }
-  } else if individual.len() > 0 {
-    ImportDefinition::Individual { source, parts: individual }
-  } else {
-    ImportDefinition::SourceOnly { source }
-  }) })))
+  Ok(Some(sp.nodes.add(ASTNode::StatementImport {
+    inner: Box::new(if let Some(default_alias) = default_alias {
+      ImportDefinition::DefaultAliased {
+        source,
+        alias: default_alias,
+      }
+    } else if let Some(wildcard) = wildcard {
+      ImportDefinition::AllAsAlias {
+        source,
+        alias: wildcard,
+      }
+    } else if individual.len() > 0 {
+      ImportDefinition::Individual {
+        source,
+        parts: individual,
+      }
+    } else {
+      ImportDefinition::SourceOnly { source }
+    }),
+  })))
 }
 
 /// Handles `return`, `break`, `continue`, and `throw`
-fn handle_other_statements(
-  sp: &mut SourceProperties,
-) -> Result<Option<ASTIndex>, CompilerError> {
-  const STATEMENT_NAMES: &[&str] = &[
-    "return",
-    "break",
-    "continue",
-    "throw",
-  ];
+fn handle_other_statements(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, CompilerError> {
+  const STATEMENT_NAMES: &[&str] = &["return", "break", "continue", "throw"];
   if !STATEMENT_NAMES.contains(&sp.tokens.peek_str()) {
     return Ok(None);
   }
@@ -690,13 +779,18 @@ fn handle_other_statements(
     "break" => sp.nodes.add(ASTNode::StatementBreak { value }),
     "continue" => sp.nodes.add(ASTNode::StatementContinue { value }),
     "throw" => sp.nodes.add(ASTNode::StatementThrow { value }),
-    other => { panic!("Statement not implemented: {}", other); }
+    other => {
+      panic!("Statement not implemented: {}", other);
+    }
   }))
 }
 
 fn handle_function_declaration<'a, 'b>(
   sp: &mut SourceProperties,
-) -> Result<Option<ASTIndex>, CompilerError> where 'a: 'b {
+) -> Result<Option<ASTIndex>, CompilerError>
+where
+  'a: 'b,
+{
   if sp.tokens.peek_str() != "function" {
     return Ok(None);
   }
@@ -723,7 +817,7 @@ fn handle_function_declaration<'a, 'b>(
 
   let func = get_function_after_name(name, sp, is_generator)?;
   Ok(Some(sp.nodes.add(ASTNode::FunctionDefinition {
-    inner: Box::new(func)
+    inner: Box::new(func),
   })))
 }
 
@@ -733,7 +827,10 @@ fn get_function_after_name<'a, 'b>(
   name: Option<SrcMapping>,
   sp: &mut SourceProperties,
   is_generator: bool,
-) -> Result<FunctionDefinition, CompilerError> where 'a: 'b {
+) -> Result<FunctionDefinition, CompilerError>
+where
+  'a: 'b,
+{
   sp.tokens.ignore_whitespace();
 
   let generics = get_optional_generics(sp)?;
@@ -768,7 +865,7 @@ fn get_function_after_name<'a, 'b>(
     params: params.0,
     rest: params.1,
     return_type,
-    body
+    body,
   })
 }
 
@@ -776,7 +873,10 @@ fn get_function_after_name<'a, 'b>(
 fn get_constructor_after_name<'a, 'b>(
   members: &mut SmallVec<ClassMember>,
   sp: &mut SourceProperties,
-) -> Result<FunctionDefinition, CompilerError> where 'a: 'b {
+) -> Result<FunctionDefinition, CompilerError>
+where
+  'a: 'b,
+{
   sp.tokens.ignore_whitespace();
 
   // Handle generics
@@ -784,7 +884,7 @@ fn get_constructor_after_name<'a, 'b>(
     return Err(CompilerError::new(
       sp.tokens.consume().value,
       "Type parameters cannot appear on a constructor declaration.".to_owned(),
-    ))
+    ));
   }
 
   // Get parameters
@@ -801,22 +901,28 @@ fn get_constructor_after_name<'a, 'b>(
       params.push(declaration.clone().into());
       declaration.clear_value();
       members.push(ClassMember::Property(
-        DeclarationComputable::from(&declaration), modifiers
+        DeclarationComputable::from(&declaration),
+        modifiers,
       ));
       let this_name = sp.add_custom_string("this");
       let this_node = sp.nodes.add(ASTNode::ExprIdentifier { name: this_name });
-      let decl_node = sp.nodes.add(ASTNode::ExprIdentifier { name: declaration.name });
+      let decl_node = sp.nodes.add(ASTNode::ExprIdentifier {
+        name: declaration.name,
+      });
       let dot_opr = sp.add_custom_string(".");
       let left_right = (
         sp.nodes.add(ASTNode::InfixOpr {
           left_right: (this_node, decl_node),
           opr: dot_opr,
         }),
-        sp.nodes.add(ASTNode::ExprIdentifier { name: declaration.name }),
+        sp.nodes.add(ASTNode::ExprIdentifier {
+          name: declaration.name,
+        }),
       );
       let eq_opr = sp.add_custom_string("=");
       set_properties.push(sp.nodes.add(ASTNode::InfixOpr {
-        left_right, opr: eq_opr,
+        left_right,
+        opr: eq_opr,
       }))
     } else {
       params.push(get_destructurable_declaration(sp)?);
@@ -845,8 +951,8 @@ fn get_constructor_after_name<'a, 'b>(
     if !matches!(sp.nodes.get_mut(body), ASTNode::Block { .. }) {
       return Err(CompilerError::new(
         sp.nodes.get_node_src_range(body),
-        "Expected block in function body".to_owned()
-      ))
+        "Expected block in function body".to_owned(),
+      ));
     }
 
     put_set_properties_in_constructor_body(sp, body, &mut set_properties);
@@ -861,7 +967,7 @@ fn get_constructor_after_name<'a, 'b>(
     params,
     rest,
     return_type,
-    body
+    body,
   })
 }
 
@@ -872,7 +978,7 @@ fn put_set_properties_in_constructor_body(
 ) {
   let body_nodes = match sp.nodes.get(body_idx) {
     ASTNode::Block { nodes } => nodes,
-    _ => unreachable!()
+    _ => unreachable!(),
   };
 
   let mut super_idx = usize::MAX;
@@ -880,13 +986,19 @@ fn put_set_properties_in_constructor_body(
     // Is function call
     let callee = if let ASTNode::ExprFunctionCall { inner } = sp.nodes.get(*node_idx) {
       inner.callee
-    } else { continue };
+    } else {
+      continue;
+    };
 
     // Is "super"
     let name = if let ASTNode::ExprIdentifier { name } = sp.nodes.get(callee) {
       sp.str_src(*name)
-    } else { continue };
-    if name != "super" { continue; }
+    } else {
+      continue;
+    };
+    if name != "super" {
+      continue;
+    }
 
     super_idx = idx;
     break;
@@ -894,14 +1006,15 @@ fn put_set_properties_in_constructor_body(
 
   let body_nodes = match sp.nodes.get_mut(body_idx) {
     ASTNode::Block { nodes } => nodes,
-    _ => unreachable!()
+    _ => unreachable!(),
   };
   if super_idx == usize::MAX {
     // No super found!
     body_nodes.append_front(set_properties);
   } else {
-    let mut new_nodes: SmallVec<ASTIndex> = SmallVec::with_capacity(body_nodes.len() + set_properties.len());
-    
+    let mut new_nodes: SmallVec<ASTIndex> =
+      SmallVec::with_capacity(body_nodes.len() + set_properties.len());
+
     // Put nodes before (& including) super
     let mut i = 0;
     while i <= super_idx {
@@ -929,16 +1042,20 @@ fn put_set_properties_in_constructor_body(
 
 fn handle_class_declaration<'a, 'b>(
   sp: &mut SourceProperties,
-) -> Result<Option<ASTIndex>, CompilerError> where 'a: 'b {
+) -> Result<Option<ASTIndex>, CompilerError>
+where
+  'a: 'b,
+{
   if sp.tokens.peek_str() != "class" {
     return Ok(None);
   }
   Ok(Some(get_class_expression(sp)?))
 }
 
-fn get_class_expression<'a, 'b>(
-  sp: &mut SourceProperties,
-) -> Result<ASTIndex, CompilerError> where 'a: 'b {
+fn get_class_expression<'a, 'b>(sp: &mut SourceProperties) -> Result<ASTIndex, CompilerError>
+where
+  'a: 'b,
+{
   let class_start = sp.tokens.consume(); // Skip "class"
   sp.tokens.ignore_whitespace();
 
@@ -946,15 +1063,17 @@ fn get_class_expression<'a, 'b>(
     name,
     generics,
     extends,
-    implements
+    implements,
   } = get_typed_header(false, sp)?;
   let extends = match extends.len() {
-    len if len > 1 => return Err(CompilerError::new(
-      class_start.value,
-      "Classes can only extend once!".to_owned(),
-    )),
+    len if len > 1 => {
+      return Err(CompilerError::new(
+        class_start.value,
+        "Classes can only extend once!".to_owned(),
+      ))
+    }
     1 => Some(extends.last().unwrap().clone()),
-    _ => None
+    _ => None,
   };
 
   // Mark import
@@ -992,9 +1111,9 @@ fn get_class_expression<'a, 'b>(
             DeclarationComputable {
               name: ComputableDeclarationName::Computed(name),
               typ: typ,
-              value
+              value,
             },
-            modifiers.clone()
+            modifiers.clone(),
           ));
         }
         ObjectSquareBracketReturn::MappedType(..) => {
@@ -1048,15 +1167,17 @@ fn get_class_expression<'a, 'b>(
     let name = sp.tokens.consume_type(TokenType::Identifier)?;
     sp.tokens.ignore_whitespace();
 
-    if sp.str_src(name.value) != "constructor" && [ ":", "?", "!", "=", ";" ].contains(&sp.tokens.peek_str()) {
+    if sp.str_src(name.value) != "constructor"
+      && [":", "?", "!", "=", ";"].contains(&sp.tokens.peek_str())
+    {
       // Normal property
 
       if let Some(generator_token) = generator_token {
-          return Err(CompilerError::new(
-            generator_token,
-            "Generators must be methods, not properties".to_owned(),
-          ));
-        }
+        return Err(CompilerError::new(
+          generator_token,
+          "Generators must be methods, not properties".to_owned(),
+        ));
+      }
       if is_getter || is_setter {
         return Err(CompilerError::new(
           sp.tokens.peek().value,
@@ -1068,7 +1189,7 @@ fn get_class_expression<'a, 'b>(
       let (typ, value) = get_declaration_after_name(sp)?;
       members.push(ClassMember::Property(
         DeclarationComputable::named(name.value.to_owned(), typ, value),
-        modifiers
+        modifiers,
       ));
     } else {
       // Otherwise, it's a method
@@ -1085,16 +1206,9 @@ fn get_class_expression<'a, 'b>(
             "Constructors cannot be getters or setters!".to_owned(),
           ));
         }
-        get_constructor_after_name(
-          &mut members,
-          sp,
-        )?
+        get_constructor_after_name(&mut members, sp)?
       } else {
-        get_function_after_name(
-          Some(name.value),
-          sp,
-          generator_token.is_some()
-        )?
+        get_function_after_name(Some(name.value), sp, generator_token.is_some())?
       };
 
       function.modifiers.flags |= modifiers.flags;
@@ -1109,7 +1223,7 @@ fn get_class_expression<'a, 'b>(
           GetterSetter::Setter
         } else {
           GetterSetter::None
-        }
+        },
       ));
     }
 
@@ -1124,15 +1238,17 @@ fn get_class_expression<'a, 'b>(
   }
   sp.tokens.skip("}")?; // Skip body "}"
 
-  Ok(sp.nodes.add(ASTNode::ClassDefinition { inner: Box::new(ClassDefinition {
-    modifiers: ModifierList::new(),
-    name,
-    generics,
-    extends,
-    implements,
-    kv_maps,
-    members
-  }) }))
+  Ok(sp.nodes.add(ASTNode::ClassDefinition {
+    inner: Box::new(ClassDefinition {
+      modifiers: ModifierList::new(),
+      name,
+      generics,
+      extends,
+      implements,
+      kv_maps,
+      members,
+    }),
+  }))
 }
 
 struct TypedHeader {
@@ -1167,7 +1283,7 @@ fn get_typed_header(
 
   let extends = if sp.tokens.peek_str() == "extends" {
     sp.tokens.skip_unchecked(); // Skip "extends"
-    get_comma_separated_types_until(&[ "implements", "{", "=" ], sp)?
+    get_comma_separated_types_until(&["implements", "{", "="], sp)?
   } else {
     SmallVec::new()
   };
@@ -1175,19 +1291,20 @@ fn get_typed_header(
 
   let implements = if sp.tokens.peek_str() == "implements" {
     sp.tokens.skip_unchecked(); // Skip "implements"
-    get_comma_separated_types_until(&[ "{", "=" ], sp)?
+    get_comma_separated_types_until(&["{", "="], sp)?
   } else {
     SmallVec::new()
   };
 
   Ok(TypedHeader {
-    name, generics, extends, implements
+    name,
+    generics,
+    extends,
+    implements,
   })
 }
 
-fn handle_modifiers(
-  sp: &mut SourceProperties,
-) -> Result<Option<ASTIndex>, CompilerError> {
+fn handle_modifiers(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, CompilerError> {
   if !MODIFIERS.contains(&sp.tokens.peek_str()) {
     return Ok(None);
   }
@@ -1217,14 +1334,23 @@ fn handle_modifiers(
       }
 
       // Get the export name
-      let name = sp.tokens.consume_type(TokenType::Identifier)?.value.to_owned();
+      let name = sp
+        .tokens
+        .consume_type(TokenType::Identifier)?
+        .value
+        .to_owned();
       sp.tokens.ignore_whitespace();
 
       // Check for alias (as)
       let alias = if sp.tokens.peek_str() == "as" {
         sp.tokens.skip_unchecked();
         sp.tokens.ignore_whitespace();
-        Some(sp.tokens.consume_type(TokenType::Identifier)?.value.to_owned())
+        Some(
+          sp.tokens
+            .consume_type(TokenType::Identifier)?
+            .value
+            .to_owned(),
+        )
       } else {
         None
       };
@@ -1246,16 +1372,17 @@ fn handle_modifiers(
     sp.tokens.skip("}")?;
 
     Ok(Some(sp.nodes.add(ASTNode::StatementExport {
-      inner: Box::new(crate::ast::ExportDeclaration { specifiers })
+      inner: Box::new(crate::ast::ExportDeclaration { specifiers }),
     })))
   } else {
     // Get the node that goes after the modifiers
     let node_after_modifiers = get_single_statement(sp)?;
 
-    sp.nodes.get_mut(node_after_modifiers).apply_modifiers(modifiers)?;
+    sp.nodes
+      .get_mut(node_after_modifiers)
+      .apply_modifiers(modifiers)?;
     Ok(Some(node_after_modifiers))
   }
-
 }
 
 fn fetch_modifier_list(sp: &mut SourceProperties) -> ModifierList {
@@ -1280,36 +1407,36 @@ fn fetch_modifier_list(sp: &mut SourceProperties) -> ModifierList {
       "readonly" => Modifier::Readonly,
       "abstract" => Modifier::Abstract,
       "override" => Modifier::Override,
-      other => panic!("Modifier not implemented: {:?}", other)
+      other => panic!("Modifier not implemented: {:?}", other),
     });
   }
   modifiers
 }
 
-fn handle_type_declaration(
-  sp: &mut SourceProperties,
-) -> Result<Option<ASTIndex>, CompilerError> {
+fn handle_type_declaration(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, CompilerError> {
   if sp.tokens.peek_str() != "type" {
     return Ok(None);
   }
   let type_start = sp.tokens.consume();
 
   let TypedHeader {
-    name, generics,
-    extends, implements
+    name,
+    generics,
+    extends,
+    implements,
   } = get_typed_header(true, sp)?;
   let name = unsafe { name.unwrap_unchecked() };
   if !extends.is_empty() {
     return Err(CompilerError::new(
       type_start.value,
       "Type declarations can't extend!".to_owned(),
-    ))
+    ));
   }
   if !implements.is_empty() {
     return Err(CompilerError::new(
       type_start.value,
       "Type declarations can't implement!".to_owned(),
-    ))
+    ));
   }
 
   // Consume `=`
@@ -1319,21 +1446,23 @@ fn handle_type_declaration(
   // Get the second type
   let equals_typ = get_type(sp)?;
 
-  Ok(Some(sp.nodes.add(ASTNode::InterfaceDeclaration { inner: Box::new(InterfaceDeclaration {
-    modifiers: ModifierList::new(),
-    name,
-    generics,
-    extends,
-    equals_type: equals_typ
-  }) })))
+  Ok(Some(sp.nodes.add(ASTNode::InterfaceDeclaration {
+    inner: Box::new(InterfaceDeclaration {
+      modifiers: ModifierList::new(),
+      name,
+      generics,
+      extends,
+      equals_type: equals_typ,
+    }),
+  })))
 }
 
 fn handle_enum(
   is_const: bool,
-  sp: &mut SourceProperties
+  sp: &mut SourceProperties,
 ) -> Result<Option<ASTIndex>, CompilerError> {
   if sp.tokens.peek_str() != "enum" {
-    return Ok(None)
+    return Ok(None);
   }
   sp.tokens.skip_unchecked();
   sp.tokens.ignore_whitespace();
@@ -1344,8 +1473,8 @@ fn handle_enum(
         token.value,
         "Expected enum name".to_owned(),
       ))
-    },
-    token => token.value.to_owned()
+    }
+    token => token.value.to_owned(),
   };
 
   sp.tokens.ignore_whitespace();
@@ -1357,7 +1486,9 @@ fn handle_enum(
   while !sp.tokens.is_done() {
     sp.tokens.ignore_whitespace();
     let next = sp.tokens.peek_str();
-    if next == "}" { break }
+    if next == "}" {
+      break;
+    }
 
     let token = sp.tokens.consume();
     let name = match token.typ {
@@ -1388,32 +1519,34 @@ fn handle_enum(
 
   sp.tokens.skip("}")?;
 
-  Ok(Some(sp.nodes.add(ASTNode::EnumDeclaration { inner: Box::new(EnumDeclaration {
-    modifiers: ModifierList::new(),
-    name,
-    members,
-    is_const,
-  }) })))
+  Ok(Some(sp.nodes.add(ASTNode::EnumDeclaration {
+    inner: Box::new(EnumDeclaration {
+      modifiers: ModifierList::new(),
+      name,
+      members,
+      is_const,
+    }),
+  })))
 }
 
-fn handle_interface(
-  sp: &mut SourceProperties,
-) -> Result<Option<ASTIndex>, CompilerError> {
+fn handle_interface(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, CompilerError> {
   if sp.tokens.peek_str() != "interface" {
     return Ok(None);
   }
   let interface_start = sp.tokens.consume();
 
   let TypedHeader {
-    name, generics,
-    extends, implements
+    name,
+    generics,
+    extends,
+    implements,
   } = get_typed_header(true, sp)?;
   let name = unsafe { name.unwrap_unchecked() };
   if !implements.is_empty() {
     return Err(CompilerError::new(
       interface_start.value,
       "Interfaces can't implement, only extend!".to_owned(),
-    ))
+    ));
   }
 
   sp.tokens.skip("{")?;
@@ -1430,7 +1563,9 @@ fn handle_interface(
     sp.tokens.ignore_whitespace();
     let next = sp.tokens.peek();
     let next_str = sp.str_src(next.value);
-    if next_str == "}" { break }
+    if next_str == "}" {
+      break;
+    }
 
     if next_str == "(" {
       // Function
@@ -1441,12 +1576,9 @@ fn handle_interface(
       // or a computed property
       match parse_object_square_bracket(sp)? {
         ObjectSquareBracketReturn::KVMap(kv_map) => key_value.push(kv_map),
-        ObjectSquareBracketReturn::ComputedProp(value) => {
-          named_parts.push(DeclarationTyped::computed(
-            value,
-            try_get_type(sp)?.unwrap_or(Type::Unknown)
-          ))
-        },
+        ObjectSquareBracketReturn::ComputedProp(value) => named_parts.push(
+          DeclarationTyped::computed(value, try_get_type(sp)?.unwrap_or(Type::Unknown)),
+        ),
         ObjectSquareBracketReturn::MappedType(..) => {
           return Err(CompilerError::new(
             next.value,
@@ -1466,21 +1598,18 @@ fn handle_interface(
         let function = get_type(sp)?;
         named_parts.push(DeclarationTyped::named(
           function_name.value.to_owned(),
-          function
+          function,
         ));
       } else {
         // It isn't a function, treat it as a named declaration
         sp.tokens.restore_checkpoint(checkpoint);
         let decl = get_declaration(sp)?;
-        named_parts.push(DeclarationTyped::named(
-          decl.name,
-          decl.typ().clone()
-        ));
+        named_parts.push(DeclarationTyped::named(decl.name, decl.typ().clone()));
       }
     }
 
     sp.tokens.ignore_whitespace();
-    while [ ";", "," ].contains(&sp.tokens.peek_str()) {
+    while [";", ","].contains(&sp.tokens.peek_str()) {
       sp.tokens.skip_unchecked();
       sp.tokens.ignore_whitespace();
     }
@@ -1490,33 +1619,40 @@ fn handle_interface(
 
   let named_dict = Type::Object {
     key_value,
-    parts: named_parts
+    parts: named_parts,
   };
 
   let mut equals_type = Type::Intersection(SmallVec::new());
-  if function_types.inner_count() != 0 { equals_type.intersection(function_types); }
-  if named_dict.inner_count() != 0 { equals_type.intersection(named_dict); }
-  Ok(Some(sp.nodes.add(ASTNode::InterfaceDeclaration { inner: Box::new(InterfaceDeclaration {
-    modifiers: ModifierList::new(),
-    name,
-    generics,
-    extends,
-    equals_type: if equals_type.inner_count() == 0 {
-      Type::Object { key_value: SmallVec::new(), parts: SmallVec::new() }
-    } else if equals_type.inner_count() == 1 {
-      match equals_type {
-        Type::Intersection(inner) => inner[0].clone(),
-        _ => panic!("")
-      }
-    } else {
-      equals_type
-    }
-  }) })))
+  if function_types.inner_count() != 0 {
+    equals_type.intersection(function_types);
+  }
+  if named_dict.inner_count() != 0 {
+    equals_type.intersection(named_dict);
+  }
+  Ok(Some(sp.nodes.add(ASTNode::InterfaceDeclaration {
+    inner: Box::new(InterfaceDeclaration {
+      modifiers: ModifierList::new(),
+      name,
+      generics,
+      extends,
+      equals_type: if equals_type.inner_count() == 0 {
+        Type::Object {
+          key_value: SmallVec::new(),
+          parts: SmallVec::new(),
+        }
+      } else if equals_type.inner_count() == 1 {
+        match equals_type {
+          Type::Intersection(inner) => inner[0].clone(),
+          _ => panic!(""),
+        }
+      } else {
+        equals_type
+      },
+    }),
+  })))
 }
 
-fn handle_try_catch(
-  sp: &mut SourceProperties,
-) -> Result<Option<ASTIndex>, CompilerError> {
+fn handle_try_catch(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, CompilerError> {
   if sp.tokens.peek_str() != "try" {
     return Ok(None);
   }
@@ -1540,7 +1676,11 @@ fn handle_try_catch(
     let (capture_catch, capture_catch_type) = if sp.tokens.peek_str() == "(" {
       sp.tokens.skip_unchecked();
       sp.tokens.ignore_whitespace();
-      let capture_catch = sp.tokens.consume_type(TokenType::Identifier)?.value.to_owned();
+      let capture_catch = sp
+        .tokens
+        .consume_type(TokenType::Identifier)?
+        .value
+        .to_owned();
       sp.tokens.ignore_whitespace();
       let capture_catch_type = try_get_type(sp)?;
       sp.tokens.skip_with_whitespace(")")?;
@@ -1558,7 +1698,9 @@ fn handle_try_catch(
       }
     };
     (capture_catch, capture_catch_type, block_catch)
-  } else { (None, None, None) };
+  } else {
+    (None, None, None)
+  };
 
   sp.tokens.ignore_whitespace();
   let block_finally = if sp.tokens.peek_str() == "finally" {
@@ -1573,13 +1715,15 @@ fn handle_try_catch(
         ))
       }
     }
-  } else { None };
+  } else {
+    None
+  };
 
   if block_catch.is_none() && block_finally.is_none() {
     return Err(CompilerError::new(
       sp.tokens.peek().value,
       "Expected `catch` or `finally`".to_owned(),
-    ))
+    ));
   }
 
   return Ok(Some(sp.nodes.add(ASTNode::StatementTryCatchFinally {
@@ -1588,14 +1732,12 @@ fn handle_try_catch(
       capture_catch,
       capture_catch_type,
       block_catch,
-      block_finally
-    })
+      block_finally,
+    }),
   })));
 }
 
-fn handle_declare(
-  sp: &mut SourceProperties,
-) -> Result<Option<ASTIndex>, CompilerError> {
+fn handle_declare(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, CompilerError> {
   if sp.tokens.peek_str() != "declare" {
     return Ok(None);
   }
@@ -1612,9 +1754,7 @@ fn handle_declare(
   Ok(Some(sp.nodes.add(ASTNode::Empty)))
 }
 
-fn handle_namespace(
-  sp: &mut SourceProperties,
-) -> Result<Option<ASTIndex>, CompilerError> {
+fn handle_namespace(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, CompilerError> {
   if sp.tokens.peek_str() != "namespace" {
     return Ok(None);
   }
@@ -1622,7 +1762,11 @@ fn handle_namespace(
   sp.tokens.ignore_whitespace();
 
   // Get namespace name
-  let name = sp.tokens.consume_type(TokenType::Identifier)?.value.to_owned();
+  let name = sp
+    .tokens
+    .consume_type(TokenType::Identifier)?
+    .value
+    .to_owned();
   sp.tokens.ignore_whitespace();
 
   // Skip "{"
@@ -1636,20 +1780,16 @@ fn handle_namespace(
       modifiers: ModifierList::new(),
       name,
       body,
-    })
+    }),
   })))
 }
 
 /// Handles expressions. Basically a soft wrapper around `get_expression`
-fn handle_expression(
-  sp: &mut SourceProperties,
-) -> Result<ASTIndex, CompilerError> {
+fn handle_expression(sp: &mut SourceProperties) -> Result<ASTIndex, CompilerError> {
   get_expression(0, sp)
 }
 
-fn parse_number(
-  sp: &mut SourceProperties,
-) -> Result<ASTIndex, CompilerError> {
+fn parse_number(sp: &mut SourceProperties) -> Result<ASTIndex, CompilerError> {
   let mut number = sp.tokens.consume().value.to_owned();
   let p = sp.tokens.peek();
   if p.typ == TokenType::Identifier {
@@ -1669,21 +1809,17 @@ fn parse_number(
   Ok(sp.nodes.add(ASTNode::ExprNumLiteral { number }))
 }
 
-fn parse_string(
-  sp: &mut SourceProperties,
-) -> ASTIndex {
+fn parse_string(sp: &mut SourceProperties) -> ASTIndex {
   sp.nodes.add(ASTNode::ExprStrLiteral {
-    string: sp.tokens.consume().value
+    string: sp.tokens.consume().value,
   })
 }
 
-fn parse_string_template(
-  sp: &mut SourceProperties,
-) -> Result<ASTIndex, CompilerError> {
+fn parse_string_template(sp: &mut SourceProperties) -> Result<ASTIndex, CompilerError> {
   let head_token = sp.tokens.consume();
   if head_token.typ == TokenType::String {
     return Ok(sp.nodes.add(ASTNode::ExprStrLiteral {
-      string: head_token.value
+      string: head_token.value,
     }));
   }
 
@@ -1696,31 +1832,39 @@ fn parse_string_template(
   while sp.tokens.peek().typ != TokenType::EndOfFile {
     let expr = get_expression(0, sp)?;
     let literal_part = sp.tokens.consume();
-    if literal_part.typ != TokenType::StringTemplateMiddle && literal_part.typ != TokenType::StringTemplateEnd {
+    if literal_part.typ != TokenType::StringTemplateMiddle
+      && literal_part.typ != TokenType::StringTemplateEnd
+    {
       return Err(CompilerError::new(
         literal_part.value,
         "Expected string template part".to_owned(),
       ));
     }
-    let first_char_size = sp.str_src(literal_part.value).chars().next().unwrap().len_utf8() as u32;
-    parts.push((expr, match literal_part.typ {
-      TokenType::StringTemplateMiddle => {
-        SrcMapping {
+    let first_char_size = sp
+      .str_src(literal_part.value)
+      .chars()
+      .next()
+      .unwrap()
+      .len_utf8() as u32;
+    parts.push((
+      expr,
+      match literal_part.typ {
+        TokenType::StringTemplateMiddle => SrcMapping {
           idx: literal_part.value.idx + first_char_size,
           len: literal_part.value.len - first_char_size - 2,
           from: literal_part.value.from,
-        }
-      }
-      TokenType::StringTemplateEnd => {
-        SrcMapping {
+        },
+        TokenType::StringTemplateEnd => SrcMapping {
           idx: literal_part.value.idx + first_char_size,
           len: literal_part.value.len - first_char_size - 1,
           from: literal_part.value.from,
-        }
-      }
-      _ => unreachable!()
-    }));
-    if literal_part.typ == TokenType::StringTemplateEnd { break; }
+        },
+        _ => unreachable!(),
+      },
+    ));
+    if literal_part.typ == TokenType::StringTemplateEnd {
+      break;
+    }
     if sp.tokens.peek().typ == TokenType::EndOfFile {
       return Err(CompilerError::new(
         sp.tokens.peek().value,
@@ -1730,43 +1874,41 @@ fn parse_string_template(
   }
 
   Ok(sp.nodes.add(ASTNode::ExprTemplateLiteral {
-    inner: Box::new(ExprTemplateLiteral { head, parts })
+    inner: Box::new(ExprTemplateLiteral { head, parts }),
   }))
 }
 
-fn parse_regex(
-  sp: &mut SourceProperties,
-) -> ASTIndex {
+fn parse_regex(sp: &mut SourceProperties) -> ASTIndex {
   let val_map = sp.tokens.consume().value;
   let val = sp.str_src(val_map);
 
-  let second_slash_idx = val.chars().enumerate()
-    .position(|(i, c)| i > 0 && c == '/').unwrap();
+  let second_slash_idx = val
+    .chars()
+    .enumerate()
+    .position(|(i, c)| i > 0 && c == '/')
+    .unwrap();
 
   let pattern = SrcMapping {
     idx: val_map.idx + 1,
     len: second_slash_idx as u32 - 1,
-    from: val_map.from
+    from: val_map.from,
   };
   let flags = SrcMapping {
     idx: val_map.idx + second_slash_idx as u32 + 1,
     len: val_map.len - second_slash_idx as u32 - 1,
-    from: val_map.from
+    from: val_map.from,
   };
 
-  sp.nodes.add(ASTNode::ExprRegexLiteral { inner: Box::new(ExprRegexLiteral {
-    pattern,
-    flags
-  }) })
+  sp.nodes.add(ASTNode::ExprRegexLiteral {
+    inner: Box::new(ExprRegexLiteral { pattern, flags }),
+  })
 }
 
-fn parse_name(
-  sp: &mut SourceProperties,
-) -> Result<ASTIndex, CompilerError> {
+fn parse_name(sp: &mut SourceProperties) -> Result<ASTIndex, CompilerError> {
   let token = sp.tokens.consume();
   match sp.str_src(token.value) {
-    "true" => { Ok(sp.nodes.add(ASTNode::ExprBoolLiteral { value: true })) }
-    "false" => { Ok(sp.nodes.add(ASTNode::ExprBoolLiteral { value: false })) }
+    "true" => Ok(sp.nodes.add(ASTNode::ExprBoolLiteral { value: true })),
+    "false" => Ok(sp.nodes.add(ASTNode::ExprBoolLiteral { value: false })),
     name => {
       // Mark symbol as used (not in type context)
       sp.st.mark_used(&token, sp.source)?;
@@ -1775,14 +1917,11 @@ fn parse_name(
   }
 }
 
-fn parse_prefix(
-  precedence: u8,
-  sp: &mut SourceProperties,
-) -> Result<ASTIndex, CompilerError> {
+fn parse_prefix(precedence: u8, sp: &mut SourceProperties) -> Result<ASTIndex, CompilerError> {
   let prefix_start = sp.tokens.consume().value;
   let prefix_start_str = sp.str_src(prefix_start);
 
-  let is_grouping = [ "(", "[" ].contains(&prefix_start_str);
+  let is_grouping = ["(", "["].contains(&prefix_start_str);
   if is_grouping {
     // Groupings get special treatment!
     let nodes = separate_commas(get_expression(0, sp)?, sp);
@@ -1802,27 +1941,38 @@ fn parse_prefix(
     loop {
       sp.tokens.ignore_whitespace();
       let key_token = sp.tokens.peek();
-      if sp.str_src(key_token.value) == "}" { break; }
+      if sp.str_src(key_token.value) == "}" {
+        break;
+      }
 
       if sp.str_src(key_token.value) == "..." {
         // Spread
         sp.tokens.skip_unchecked(); // Skip "..."
 
         properties.push(ObjectProperty::Rest {
-          argument: get_expression(1, sp)?
+          argument: get_expression(1, sp)?,
         });
       } else {
         // Identifier, String, Number, or computed key
         let (computed, key) = match (&key_token.typ, sp.str_src(key_token.value)) {
-          (TokenType::Identifier, _) => {
-            (false, sp.nodes.add(ASTNode::ExprIdentifier { name: sp.tokens.consume().value }))
-          },
-          (TokenType::String, _) => {
-            (false, sp.nodes.add(ASTNode::ExprStrLiteral { string: sp.tokens.consume().value }))
-          },
-          (TokenType::Number, _) => {
-            (false, sp.nodes.add(ASTNode::ExprNumLiteral { number: sp.tokens.consume().value }))
-          }
+          (TokenType::Identifier, _) => (
+            false,
+            sp.nodes.add(ASTNode::ExprIdentifier {
+              name: sp.tokens.consume().value,
+            }),
+          ),
+          (TokenType::String, _) => (
+            false,
+            sp.nodes.add(ASTNode::ExprStrLiteral {
+              string: sp.tokens.consume().value,
+            }),
+          ),
+          (TokenType::Number, _) => (
+            false,
+            sp.nodes.add(ASTNode::ExprNumLiteral {
+              number: sp.tokens.consume().value,
+            }),
+          ),
           (TokenType::Symbol, "[") => {
             // Computed key
             sp.tokens.skip_unchecked();
@@ -1832,7 +1982,7 @@ fn parse_prefix(
             sp.tokens.skip("]")?;
 
             (true, inner_key)
-          },
+          }
           other => {
             return Err(CompilerError::new(
               key_token.value,
@@ -1860,7 +2010,7 @@ fn parse_prefix(
         properties.push(ObjectProperty::Property {
           computed,
           key,
-          value
+          value,
         });
       }
 
@@ -1873,7 +2023,8 @@ fn parse_prefix(
   } else {
     let expr = get_expression(precedence, sp)?;
     Ok(sp.nodes.add(ASTNode::PrefixOpr {
-      opr: prefix_start, expr
+      opr: prefix_start,
+      expr,
     }))
   }
 }
@@ -1883,8 +2034,10 @@ fn parse_infix<'a, 'b>(
   left: ASTIndex,
   precedence: u8,
   sp: &mut SourceProperties,
-) -> Result<ASTIndex, CompilerError> where 'a: 'b {
-
+) -> Result<ASTIndex, CompilerError>
+where
+  'a: 'b,
+{
   if let ASTNode::ExprIdentifier { name } = sp.nodes.get(left) {
     if sp.str_src(*name) == "async" && sp.tokens.peek_str() == "(" {
       let arrow_fn = parse_arrow_function(sp)?;
@@ -1892,7 +2045,7 @@ fn parse_infix<'a, 'b>(
         ASTNode::ArrowFunctionDefinition { inner } => {
           inner.is_async = true;
         }
-        _ => unreachable!()
+        _ => unreachable!(),
       }
       return Ok(arrow_fn);
     }
@@ -1916,9 +2069,7 @@ fn parse_infix<'a, 'b>(
           if let ASTNode::ExprIdentifier { name } = sp.nodes.get(left) {
             if sp.str_src(*name) == "import" {
               // Dynamic import
-              return Ok(sp.nodes.add(ASTNode::ExpressionImport {
-                value: inner
-              }));
+              return Ok(sp.nodes.add(ASTNode::ExpressionImport { value: inner }));
             }
           }
           let arguments = separate_commas(inner, sp);
@@ -1926,15 +2077,19 @@ fn parse_infix<'a, 'b>(
             inner: Box::new(ExprFunctionCall {
               callee: left,
               generics: SmallVec::new(),
-              arguments
-            })
+              arguments,
+            }),
+          }));
+        }
+        "[" => {
+          return Ok(sp.nodes.add(ASTNode::ExprIndexing {
+            callee: left,
+            property: inner,
           }))
-        },
-        "[" => return Ok(sp.nodes.add(ASTNode::ExprIndexing {
-          callee: left,
-          property: inner
-        })),
-        other => { panic!("Grouping not implemented: {}", other); }
+        }
+        other => {
+          panic!("Grouping not implemented: {}", other);
+        }
       };
     }
     "=>" => {
@@ -1945,34 +2100,40 @@ fn parse_infix<'a, 'b>(
       // This avoids re-parsing stuff that can be salvaged!
 
       let params = match sp.nodes.get(left) {
-        ASTNode::ExprIdentifier { name } => {
-          SmallVec::with_element(DestructurableDeclaration {
-            name: DestructurePattern::Identifier { name: name.clone() },
-            typ: Type::Unknown
-          })
-        }
+        ASTNode::ExprIdentifier { name } => SmallVec::with_element(DestructurableDeclaration {
+          name: DestructurePattern::Identifier { name: name.clone() },
+          typ: Type::Unknown,
+        }),
         ASTNode::Parenthesis { nodes } => {
           let mut params = SmallVec::new();
           for n in nodes {
             params.push(match sp.nodes.get(*n) {
               ASTNode::ExprIdentifier { name } => DestructurableDeclaration {
                 name: DestructurePattern::Identifier { name: name.clone() },
-                typ: Type::Unknown
+                typ: Type::Unknown,
               },
               ASTNode::InfixOpr {
                 left_right, opr, ..
-              } if sp.str_src(*opr) == "=" && matches!(sp.nodes.get(left_right.0), ASTNode::ExprIdentifier { .. }) => match sp.nodes.get(left_right.0) {
-                ASTNode::ExprIdentifier { name } => DestructurableDeclaration {
-                  name: DestructurePattern::Identifier { name: name.clone() },
-                  typ: Type::Unknown
-                },
-                _ => unreachable!()
+              } if sp.str_src(*opr) == "="
+                && matches!(sp.nodes.get(left_right.0), ASTNode::ExprIdentifier { .. }) =>
+              {
+                match sp.nodes.get(left_right.0) {
+                  ASTNode::ExprIdentifier { name } => DestructurableDeclaration {
+                    name: DestructurePattern::Identifier { name: name.clone() },
+                    typ: Type::Unknown,
+                  },
+                  _ => unreachable!(),
+                }
               }
-              ASTNode::Empty => { continue; }
-              other => return Err(CompilerError::new(
-                sp.nodes.get_node_src_range(*n),
-                format!("Arrow function expected parameter, found {:?}", other),
-              ))
+              ASTNode::Empty => {
+                continue;
+              }
+              other => {
+                return Err(CompilerError::new(
+                  sp.nodes.get_node_src_range(*n),
+                  format!("Arrow function expected parameter, found {:?}", other),
+                ))
+              }
             });
           }
           params
@@ -1992,7 +2153,7 @@ fn parse_infix<'a, 'b>(
         params,
         Rest::new(),
         Type::Unknown,
-        sp
+        sp,
       )?);
     }
     "?" => {
@@ -2007,11 +2168,7 @@ fn parse_infix<'a, 'b>(
             "Ternary not closed!".to_string(),
           ));
         }
-        if_true = parse_infix(
-          if_true,
-          *crate::operations::COLON_PRECEDENCE,
-          sp
-        )?;
+        if_true = parse_infix(if_true, *crate::operations::COLON_PRECEDENCE, sp)?;
         sp.tokens.ignore_whitespace();
       }
       sp.tokens.skip_unchecked();
@@ -2019,7 +2176,8 @@ fn parse_infix<'a, 'b>(
 
       return Ok(sp.nodes.add(ASTNode::ExprTernary {
         condition: left,
-        if_true, if_false,
+        if_true,
+        if_false,
       }));
     }
     "<" => {
@@ -2034,7 +2192,7 @@ fn parse_infix<'a, 'b>(
           if let ASTNode::ExprFunctionCall { inner } = sp.nodes.get_mut(fn_call) {
             inner.generics.append(&mut generics);
           }
-          return Ok(fn_call)
+          return Ok(fn_call);
         }
       }
 
@@ -2053,23 +2211,20 @@ fn parse_infix<'a, 'b>(
 }
 
 /// Turns a tree containing commas into a vector with the nodes they separated
-fn separate_commas(
-  node: ASTIndex,
-  sp: &mut SourceProperties,
-) -> SmallVec<ASTIndex> {
+fn separate_commas(node: ASTIndex, sp: &mut SourceProperties) -> SmallVec<ASTIndex> {
   let sp_inner = sp as *const SourceProperties;
   let left_right: (ASTIndex, ASTIndex) = match sp.nodes.get_mut(node) {
     // Separate infix operations (but only if the operation is ",")
-    ASTNode::InfixOpr { left_right, opr } if (unsafe {
-      (&*sp_inner).str_src(*opr)
-    }) == "," => {
+    ASTNode::InfixOpr { left_right, opr } if (unsafe { (&*sp_inner).str_src(*opr) }) == "," => {
       // The size of the output vec is calculated from the sum
       // of both sides, so there's no wasted capacity.
       *left_right
     }
 
     // Otherwise, return the node, as it's between commas
-    _ => { return SmallVec::with_element(node); }
+    _ => {
+      return SmallVec::with_element(node);
+    }
   };
 
   let mut nodes = separate_commas(left_right.0, sp);
@@ -2080,9 +2235,7 @@ fn separate_commas(
 /// Tries parsing an arrow function, returning CompilerError if none is present.
 /// Caller is responsible for restoring the tokenizer back to its origial state
 /// if this function doesn't return successfully.
-fn parse_arrow_function(
-  sp: &mut SourceProperties,
-) -> Result<ASTIndex, CompilerError> {
+fn parse_arrow_function(sp: &mut SourceProperties) -> Result<ASTIndex, CompilerError> {
   sp.tokens.skip("(")?;
   let (params, spread) = get_multiple_destructurable_declarations(true, sp)?;
   sp.tokens.skip(")")?;
@@ -2093,7 +2246,7 @@ fn parse_arrow_function(
     params,
     spread,
     return_type.unwrap_or(Type::Unknown),
-    sp
+    sp,
   )?)
 }
 
@@ -2113,28 +2266,35 @@ fn parse_arrow_function_after_arrow(
     get_block(sp)?
   };
 
-  Ok(sp.nodes.add(ASTNode::ArrowFunctionDefinition { inner: Box::new(ArrowFunctionDefinition {
-    is_async: false,
-    generics: SmallVec::new(),
-    params,
-    rest,
-    return_type,
-    body
-  }) }))
+  Ok(sp.nodes.add(ASTNode::ArrowFunctionDefinition {
+    inner: Box::new(ArrowFunctionDefinition {
+      is_async: false,
+      generics: SmallVec::new(),
+      params,
+      rest,
+      return_type,
+      body,
+    }),
+  }))
 }
 
 /// Gets a single expression
 pub fn get_expression<'a, 'b>(
   precedence: u8,
   sp: &mut SourceProperties,
-) -> Result<ASTIndex, CompilerError> where 'a: 'b {
+) -> Result<ASTIndex, CompilerError>
+where
+  'a: 'b,
+{
   sp.tokens.ignore_whitespace();
 
   // Get left (or sometimes only) side (which can be the prexfix!)
   let mut left = {
     let next = sp.tokens.peek();
 
-    if [ ")", "]", "}", ",", ";" ].contains(&sp.str_src(next.value)) || next.typ == TokenType::EndOfFile {
+    if [")", "]", "}", ",", ";"].contains(&sp.str_src(next.value))
+      || next.typ == TokenType::EndOfFile
+    {
       // End it here!
       return Ok(sp.nodes.add(ASTNode::Empty));
     }
@@ -2171,12 +2331,11 @@ pub fn get_expression<'a, 'b>(
             None
           };
           let function = get_function_after_name(name, sp, is_generator)?;
-          sp.nodes.add(ASTNode::FunctionDefinition { inner: Box::new(function) })
+          sp.nodes.add(ASTNode::FunctionDefinition {
+            inner: Box::new(function),
+          })
         } else {
-          let binding_power = get_operator_binding_power(
-            ExprType::Prefx,
-            next_str
-          );
+          let binding_power = get_operator_binding_power(ExprType::Prefx, next_str);
           if let Some(binding_power) = binding_power {
             // These prefix operators include what you might expect (+, -, ~),
             // along with arrays, dicts, and parenthesis!
@@ -2198,7 +2357,8 @@ pub fn get_expression<'a, 'b>(
                 }
               }
               sp.tokens.ignore_whitespace();
-              let is_arrow_function = ["=>", ":"].contains(&sp.tokens.peek_str()) && precedence <= *ARROW_FN_PRECEDENCE;
+              let is_arrow_function =
+                ["=>", ":"].contains(&sp.tokens.peek_str()) && precedence <= *ARROW_FN_PRECEDENCE;
               sp.tokens.restore_checkpoint(checkpoint);
 
               if is_arrow_function {
@@ -2221,12 +2381,12 @@ pub fn get_expression<'a, 'b>(
             // Get next expression...
             let mut expr = get_expression(
               get_operator_binding_power(ExprType::Prefx, "<>").unwrap().0,
-              sp
+              sp,
             )?;
             match sp.nodes.get_mut(expr) {
               ASTNode::ArrowFunctionDefinition { inner } => {
                 inner.generics = generics;
-              },
+              }
               _ => {
                 if generics.len() > 1 {
                   return Err(CompilerError::new(
@@ -2235,7 +2395,8 @@ pub fn get_expression<'a, 'b>(
                   ));
                 }
                 expr = sp.nodes.add(ASTNode::ExprTypeAssertion {
-                  cast_type: Box::new(generics[0].clone()), value: expr
+                  cast_type: Box::new(generics[0].clone()),
+                  value: expr,
                 });
               }
             }
@@ -2251,16 +2412,13 @@ pub fn get_expression<'a, 'b>(
             ));
           }
         }
-      },
+      }
       _ => {
         return Err(CompilerError::new(
           sp.tokens.consume().value,
-          format!(
-            "Unexpected token when parsing expression: {:?}",
-            next
-          ),
+          format!("Unexpected token when parsing expression: {:?}", next),
         ));
-      },
+      }
     }
   };
 
@@ -2269,7 +2427,9 @@ pub fn get_expression<'a, 'b>(
     // Get the next token
     sp.tokens.ignore_whitespace();
     let next = sp.tokens.peek();
-    if next.typ == TokenType::EndOfFile { break; }
+    if next.typ == TokenType::EndOfFile {
+      break;
+    }
     let next_str = sp.str_src(next.value);
 
     // `as` statements get special treatment
@@ -2278,16 +2438,13 @@ pub fn get_expression<'a, 'b>(
       let cast_type = get_type(sp)?;
       left = sp.nodes.add(ASTNode::ExprAs {
         value: left,
-        cast_type: Box::new(cast_type)
+        cast_type: Box::new(cast_type),
       });
       continue;
     }
 
     // Handle postfix
-    if let Some(binding_power) = get_operator_binding_power(
-      ExprType::Pstfx,
-      next_str
-    ) {
+    if let Some(binding_power) = get_operator_binding_power(ExprType::Pstfx, next_str) {
       if binding_power.0 < precedence {
         break;
       }
@@ -2299,7 +2456,7 @@ pub fn get_expression<'a, 'b>(
         // Any other postfix operator
         sp.nodes.add(ASTNode::PostfixOpr {
           expr: left,
-          opr: sp.tokens.consume().value
+          opr: sp.tokens.consume().value,
         })
       };
       continue;
@@ -2313,24 +2470,22 @@ pub fn get_expression<'a, 'b>(
       let argument = parse_string_template(sp)?;
       left = sp.nodes.add(ASTNode::TemplateLiteralTag {
         callee: left,
-        argument
+        argument,
       });
       continue;
     }
 
     // Handle infix
-    let binding_power = if let Some(binding_power) = get_operator_binding_power(
-      ExprType::Infx,
-      next_str
-    ) {
-      if binding_power.0 < precedence {
+    let binding_power =
+      if let Some(binding_power) = get_operator_binding_power(ExprType::Infx, next_str) {
+        if binding_power.0 < precedence {
+          break;
+        }
+        binding_power
+      } else {
+        // If there is no infix for this symbol, stop
         break;
-      }
-      binding_power
-    } else {
-      // If there is no infix for this symbol, stop
-      break;
-    };
+      };
 
     // It's infix
     left = parse_infix(left, binding_power.1, sp)?;

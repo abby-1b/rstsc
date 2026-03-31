@@ -1,9 +1,8 @@
-
 use crate::ast::{ASTIndex, ASTNode, ObjectProperty};
 use crate::declaration::DeclarationTyped;
 use crate::small_vec::SmallVec;
 use crate::source_properties::SourceProperties;
-use crate::types::{CustomDouble, Type, get_numeric_literal_type};
+use crate::types::{get_numeric_literal_type, CustomDouble, Type};
 
 pub fn widen_type(typ: &Type) -> Type {
   match typ {
@@ -16,24 +15,25 @@ pub fn widen_type(typ: &Type) -> Type {
         inner.push(t.0.clone());
       }
       Type::Array(Box::new(Type::union_from(&inner)))
-    },
-    _ => typ.clone()
+    }
+    _ => typ.clone(),
   }
 }
 
 // Helper rule functions
 
-fn recurse_all(
-  nodes: &SmallVec<ASTIndex>,
-  sp: &mut SourceProperties,
-) {
+fn recurse_all(nodes: &SmallVec<ASTIndex>, sp: &mut SourceProperties) {
   for node in nodes.iter() {
     infer_types(*node, sp);
   }
 }
 
-fn numeric_result(_: &Type, _: &Type) -> Type { Type::Number }
-fn boolean_result(_: &Type, _: &Type) -> Type { Type::Boolean }
+fn numeric_result(_: &Type, _: &Type) -> Type {
+  Type::Number
+}
+fn boolean_result(_: &Type, _: &Type) -> Type {
+  Type::Boolean
+}
 
 fn union_result(mut a: Type, b: Type) -> Type {
   a.union(b);
@@ -50,7 +50,9 @@ fn infix_result(op: &str, l: Type, r: Type) -> Type {
       _ => Type::Number,
     },
     "-" | "*" | "/" | "%" | "**" | "<<" | ">>" | ">>>" => numeric_result(&l, &r),
-    "==" | "!=" | "===" | "!==" | "<" | ">" | "<=" | ">=" | "instanceof" | "in" => boolean_result(&l, &r),
+    "==" | "!=" | "===" | "!==" | "<" | ">" | "<=" | ">=" | "instanceof" | "in" => {
+      boolean_result(&l, &r)
+    }
     "&&" | "||" | "??" => union_result(l, r),
     "?." => union_result(l, Type::Void),
     _ => Type::Unknown,
@@ -74,7 +76,11 @@ fn prefix_result(op: &str, t: Type) -> Type {
 
 fn postfix_result(op: &str, t: Type) -> Type {
   match op {
-    "!" => { let mut t = t.clone(); t.remove(Type::Void); t },
+    "!" => {
+      let mut t = t.clone();
+      t.remove(Type::Void);
+      t
+    }
     "++" => Type::Number,
     "--" => Type::Number,
     _ => Type::Unknown,
@@ -83,9 +89,7 @@ fn postfix_result(op: &str, t: Type) -> Type {
 
 fn index_result(arr: &Type, index: &Type) -> Type {
   match (arr, index) {
-    (Type::Array(of_type), Type::Number | Type::NumberLiteral(..)) => {
-      (**of_type).clone()
-    },
+    (Type::Array(of_type), Type::Number | Type::NumberLiteral(..)) => (**of_type).clone(),
     (Type::Tuple { inner_types }, Type::Number) => {
       if inner_types.len() == 0 {
         Type::Void
@@ -96,40 +100,37 @@ fn index_result(arr: &Type, index: &Type) -> Type {
         }
         union_type
       }
-    },
+    }
     (Type::Tuple { inner_types }, Type::NumberLiteral(index)) => {
-      if inner_types.len() == 0 || unsafe {
-        index.value.fract() != 0.0 || index.value < 0.0
-      } {
+      if inner_types.len() == 0 || unsafe { index.value.fract() != 0.0 || index.value < 0.0 } {
         Type::Void
       } else {
         let index = unsafe { index.value } as usize;
         let mut union_type = Type::Unknown;
         for i in 0..inner_types.len() {
           let t = inner_types[i].0.clone();
-          if index == i { return t; }
+          if index == i {
+            return t;
+          }
           union_type.union(t.clone());
         }
         union_type
       }
-    },
+    }
     _ => Type::Unknown,
   }
 }
 
 // Main inference functions
 
-pub fn infer_types(
-  node: ASTIndex,
-  sp: &mut SourceProperties,
-) -> Type {
+pub fn infer_types(node: ASTIndex, sp: &mut SourceProperties) -> Type {
   use ASTNode::*;
 
   match unsafe { &*(sp.nodes.get(node) as *const ASTNode) } {
     Block { nodes } => {
       recurse_all(nodes, sp);
       Type::Void
-    },
+    }
 
     ExprIdentifier { name } => {
       if let Some(symbol) = sp.st.lookup(sp.str_src(*name)) {
@@ -137,46 +138,49 @@ pub fn infer_types(
       } else {
         Type::Unknown
       }
-    },
+    }
     ExprNumLiteral { number } => get_numeric_literal_type(sp.str_src(*number)),
     ExprStrLiteral { string } => Type::StringLiteral(sp.str_src(*string).to_owned()),
     ExprRegexLiteral { .. } => Type::RegExp,
     ExprTemplateLiteral { .. } => Type::String,
     ExprBoolLiteral { value } => Type::BooleanLiteral(*value),
 
-    ExprIndexing { callee, property } => index_result(
-      &infer_types(*callee, sp),
-      &infer_types(*property, sp),
-    ),
-    ExprTernary { condition, if_true, if_false } => {
+    ExprIndexing { callee, property } => {
+      index_result(&infer_types(*callee, sp), &infer_types(*property, sp))
+    }
+    ExprTernary {
+      condition,
+      if_true,
+      if_false,
+    } => {
       let cond_t = infer_types(*condition, sp);
       let a = infer_types(*if_true, sp);
       let b = infer_types(*if_false, sp);
       match cond_t {
         Type::BooleanLiteral(true) => a,
         Type::BooleanLiteral(false) => b,
-        _ => union_result(a, b)
+        _ => union_result(a, b),
       }
-    },
+    }
 
     PrefixOpr { opr, expr } => {
       let t = infer_types(*expr, sp);
       let r = prefix_result(sp.str_src(*opr), t);
       r
-    },
+    }
 
     InfixOpr { left_right, opr } => {
       let l = infer_types(left_right.0, sp);
       let r = infer_types(left_right.1, sp);
       let res = infix_result(sp.str_src(*opr), l, r);
       res
-    },
+    }
 
     PostfixOpr { expr, opr } => {
       let t = infer_types(*expr, sp);
       let r = postfix_result(sp.str_src(*opr), t);
       r
-    },
+    }
 
     Parenthesis { nodes } => {
       if nodes.len() == 0 {
@@ -188,7 +192,7 @@ pub fn infer_types(
         }
         last.unwrap()
       }
-    },
+    }
 
     Array { nodes } => {
       let mut types = SmallVec::new();
@@ -196,23 +200,25 @@ pub fn infer_types(
         types.push(infer_types(*n, sp));
       }
       Type::union_from(&types)
-    },
+    }
 
     Dict { properties } => {
       let mut parts = SmallVec::new();
       for p in properties {
         match p {
-          ObjectProperty::Property { computed, key, value } => {
+          ObjectProperty::Property {
+            computed,
+            key,
+            value,
+          } => {
             let typ = infer_types(*value, sp);
             match (*computed, sp.nodes.get(*key)) {
-              (false, ExprIdentifier { name }) => parts.push(
-                DeclarationTyped::named(name.clone(), typ)
-              ),
-              _ => {
-                parts.push(DeclarationTyped::computed(key.clone(), typ))
+              (false, ExprIdentifier { name }) => {
+                parts.push(DeclarationTyped::named(name.clone(), typ))
               }
+              _ => parts.push(DeclarationTyped::computed(key.clone(), typ)),
             }
-          },
+          }
           ObjectProperty::Rest { argument } => {
             let arg_type = infer_types(*argument, sp);
             match arg_type {
@@ -220,12 +226,12 @@ pub fn infer_types(
                 for part in ps.iter() {
                   parts.push(part.clone());
                 }
-              },
+              }
               _ => {
                 parts.push(DeclarationTyped::computed(argument.clone(), arg_type));
               }
             }
-          },
+          }
           ObjectProperty::Shorthand { key } => {
             // Look up the variable in the symbol table; its type becomes the
             // property type (falls back to Unknown if the symbol isn't found)
@@ -235,11 +241,14 @@ pub fn infer_types(
               Type::Unknown
             };
             parts.push(DeclarationTyped::named(key.clone(), typ));
-          },
+          }
         }
       }
-      Type::Object { key_value: SmallVec::new(), parts }
-    },
+      Type::Object {
+        key_value: SmallVec::new(),
+        parts,
+      }
+    }
 
     StatementReturn { value } => {
       if let Some(e) = value {
@@ -247,17 +256,14 @@ pub fn infer_types(
       } else {
         Type::Void
       }
-    },
+    }
 
     // TODO: infer missing types
-    _ => Type::Unknown
+    _ => Type::Unknown,
   }
 }
 
-fn infer_return_type(
-  body: ASTIndex,
-  sp: &mut SourceProperties
-) -> Type {
+fn infer_return_type(body: ASTIndex, sp: &mut SourceProperties) -> Type {
   match unsafe { &*(sp.nodes.get(body) as *const ASTNode) } {
     ASTNode::Block { nodes } => {
       // find returns. if none, void
@@ -265,14 +271,28 @@ fn infer_return_type(
       for stmt in nodes.iter() {
         match unsafe { &*(sp.nodes.get(*stmt) as *const ASTNode) } {
           ASTNode::StatementReturn { value } => {
-            let t = if let Some(e) = value { infer_types(*e, sp) } else { Type::Void };
-            if let Some(prev) = acc.as_mut() { prev.union(t); } else { acc = Some(t); }
-          },
-          ASTNode::Block { .. } | ASTNode::ExprFunctionCall { .. } | ASTNode::InfixOpr { .. } | ASTNode::PrefixOpr { .. } | ASTNode::PostfixOpr { .. }=> {
+            let t = if let Some(e) = value {
+              infer_types(*e, sp)
+            } else {
+              Type::Void
+            };
+            if let Some(prev) = acc.as_mut() {
+              prev.union(t);
+            } else {
+              acc = Some(t);
+            }
+          }
+          ASTNode::Block { .. }
+          | ASTNode::ExprFunctionCall { .. }
+          | ASTNode::InfixOpr { .. }
+          | ASTNode::PrefixOpr { .. }
+          | ASTNode::PostfixOpr { .. } => {
             // still walk nested statements to widen/modify symbol table types
             infer_types(*stmt, sp);
-          },
-          _ => { infer_types(*stmt, sp); }
+          }
+          _ => {
+            infer_types(*stmt, sp);
+          }
         }
       }
       acc.unwrap_or(Type::Void)

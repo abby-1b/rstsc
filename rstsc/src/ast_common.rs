@@ -6,7 +6,7 @@ use crate::small_vec::SmallVec;
 pub enum VariableDefType {
   Var,
   Let,
-  Const
+  Const,
 }
 impl VariableDefType {
   pub fn emit(&self) -> String {
@@ -14,16 +14,17 @@ impl VariableDefType {
       VariableDefType::Var => "var",
       VariableDefType::Let => "let",
       VariableDefType::Const => "const",
-    }.to_string()
+    }
+    .to_string()
   }
 }
 
-pub const ACCESSIBILITY_MODIFIERS: &[&str] = &[
-  "public", "private", "protected",
-];
+pub const ACCESSIBILITY_MODIFIERS: &[&str] = &["public", "private", "protected"];
 
 pub const MODIFIERS: &[&str] = &[
-  "public", "private", "protected",
+  "public",
+  "private",
+  "protected",
   "export",
   "async",
   "static",
@@ -45,7 +46,6 @@ pub enum Modifier {
   Readonly = 32,
   Abstract = 64,
   Override = 128,
-
 }
 
 #[derive(Clone, PartialEq, Hash)]
@@ -74,10 +74,10 @@ impl ModifierList {
   #[inline]
   pub fn has(&self, modifier: Modifier) -> bool {
     match modifier {
-      Modifier::Public => { self.flags & 0b11 == 1 }
-      Modifier::Private => { self.flags & 0b11 == 2 }
-      Modifier::Protected => { self.flags & 0b11 == 3 }
-      _ => self.flags & modifier as u8 != 0
+      Modifier::Public => self.flags & 0b11 == 1,
+      Modifier::Private => self.flags & 0b11 == 2,
+      Modifier::Protected => self.flags & 0b11 == 3,
+      _ => self.flags & modifier as u8 != 0,
     }
   }
 
@@ -93,16 +93,28 @@ impl ModifierList {
         1 => out += "public ",
         2 => out += "private ",
         3 => out += "protected ",
-        _ => ()
+        _ => (),
       }
     }
-    if self.flags & 0b0000_0100 != 0 { out += "export "; }
-    if self.flags & 0b0001_0000 != 0 { out += "static "; }
-    if self.flags & 0b0000_1000 != 0 { out += "async "; }
+    if self.flags & 0b0000_0100 != 0 {
+      out += "export ";
+    }
+    if self.flags & 0b0001_0000 != 0 {
+      out += "static ";
+    }
+    if self.flags & 0b0000_1000 != 0 {
+      out += "async ";
+    }
     if !js_only {
-      if self.flags & 0b0010_0000 != 0 { out += "readonly "; }
-      if self.flags & 0b0100_0000 != 0 { out += "abstract "; }
-      if self.flags & 0b1000_0000 != 0 { out += "override "; }
+      if self.flags & 0b0010_0000 != 0 {
+        out += "readonly ";
+      }
+      if self.flags & 0b0100_0000 != 0 {
+        out += "abstract ";
+      }
+      if self.flags & 0b1000_0000 != 0 {
+        out += "override ";
+      }
     }
     out
   }
@@ -117,15 +129,13 @@ impl From<Modifier> for ModifierList {
 impl Debug for ModifierList {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     f.debug_list()
-      .entries(
-        (0..6).filter_map(|idx| {
-          let flag = 1 << idx;
-          if self.flags & flag == 0 {
-            return None;
-          }
-          Some(MODIFIERS[idx])
-        })
-      )
+      .entries((0..6).filter_map(|idx| {
+        let flag = 1 << idx;
+        if self.flags & flag == 0 {
+          return None;
+        }
+        Some(MODIFIERS[idx])
+      }))
       .finish()
   }
 }

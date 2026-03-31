@@ -26,8 +26,8 @@ pub struct Symbol {
   pub name: String,
   pub origin: SymbolOrigin,
   pub typ: Type,
-  pub is_in_type: bool,  // Used inside type annotations
-  pub is_used: bool,     // Used outside type annotations
+  pub is_in_type: bool, // Used inside type annotations
+  pub is_used: bool,    // Used outside type annotations
 }
 
 impl Symbol {

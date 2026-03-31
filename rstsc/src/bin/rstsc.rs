@@ -4,7 +4,9 @@
 
 pub fn main() {
   let args: Vec<String> = std::env::args().collect();
-  if args.len() < 2 { print_help(); }
+  if args.len() < 2 {
+    print_help();
+  }
   dbg!(args);
 }
 
