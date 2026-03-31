@@ -703,6 +703,14 @@ fn handle_function_declaration<'a, 'b>(
 
   sp.tokens.skip_unchecked(); // Skip `function`
 
+  sp.tokens.ignore_whitespace();
+  let is_generator = if sp.tokens.peek_str() == "*" {
+    sp.tokens.skip_unchecked(); // consume `*`
+    true
+  } else {
+    false
+  };
+
   // Get name
   sp.tokens.ignore_whitespace();
   let name = if sp.tokens.peek().typ == TokenType::Identifier {
@@ -713,7 +721,7 @@ fn handle_function_declaration<'a, 'b>(
     None
   };
 
-  let func = get_function_after_name(name, sp)?;
+  let func = get_function_after_name(name, sp, is_generator)?;
   Ok(Some(sp.nodes.add(ASTNode::FunctionDefinition {
     inner: Box::new(func)
   })))
@@ -724,6 +732,7 @@ fn handle_function_declaration<'a, 'b>(
 fn get_function_after_name<'a, 'b>(
   name: Option<SrcMapping>,
   sp: &mut SourceProperties,
+  is_generator: bool,
 ) -> Result<FunctionDefinition, CompilerError> where 'a: 'b {
   sp.tokens.ignore_whitespace();
 
@@ -754,6 +763,7 @@ fn get_function_after_name<'a, 'b>(
   Ok(FunctionDefinition {
     modifiers: ModifierList::new(),
     name,
+    is_generator,
     generics,
     params: params.0,
     rest: params.1,
@@ -846,6 +856,7 @@ fn get_constructor_after_name<'a, 'b>(
   Ok(FunctionDefinition {
     modifiers: ModifierList::new(),
     name: Some(sp.add_custom_string("constructor")),
+    is_generator: false,
     generics: SmallVec::new(),
     params,
     rest,
@@ -1029,12 +1040,23 @@ fn get_class_expression<'a, 'b>(
       continue;
     }
 
+    let generator_token = if sp.tokens.peek_str() == "*" {
+      Some(sp.tokens.consume().value)
+    } else {
+      None
+    };
     let name = sp.tokens.consume_type(TokenType::Identifier)?;
     sp.tokens.ignore_whitespace();
 
     if sp.str_src(name.value) != "constructor" && [ ":", "?", "!", "=", ";" ].contains(&sp.tokens.peek_str()) {
       // Normal property
 
+      if let Some(generator_token) = generator_token {
+          return Err(CompilerError::new(
+            generator_token,
+            "Generators must be methods, not properties".to_owned(),
+          ));
+        }
       if is_getter || is_setter {
         return Err(CompilerError::new(
           sp.tokens.peek().value,
@@ -1051,6 +1073,12 @@ fn get_class_expression<'a, 'b>(
     } else {
       // Otherwise, it's a method
       let mut function = if sp.str_src(name.value) == "constructor" {
+        if let Some(generator_token) = generator_token {
+          return Err(CompilerError::new(
+            generator_token,
+            "Constructors cannot be generators!".to_owned(),
+          ));
+        }
         if is_getter || is_setter {
           return Err(CompilerError::new(
             name.value,
@@ -1064,7 +1092,8 @@ fn get_class_expression<'a, 'b>(
       } else {
         get_function_after_name(
           Some(name.value),
-          sp
+          sp,
+          generator_token.is_some()
         )?
       };
 
@@ -2123,7 +2152,25 @@ pub fn get_expression<'a, 'b>(
           get_class_expression(sp)?
         } else if next_str == "function" {
           sp.tokens.skip_unchecked(); // Skip "function"
-          let function = get_function_after_name(None, sp)?;
+
+          sp.tokens.ignore_whitespace();
+          let is_generator = if sp.tokens.peek_str() == "*" {
+            sp.tokens.skip_unchecked(); // consume `*`
+            true
+          } else {
+            false
+          };
+
+          // Get name
+          sp.tokens.ignore_whitespace();
+          let name = if sp.tokens.peek().typ == TokenType::Identifier {
+            // Named function
+            Some(sp.tokens.consume().value)
+          } else {
+            // Unnamed function
+            None
+          };
+          let function = get_function_after_name(name, sp, is_generator)?;
           sp.nodes.add(ASTNode::FunctionDefinition { inner: Box::new(function) })
         } else {
           let binding_power = get_operator_binding_power(
