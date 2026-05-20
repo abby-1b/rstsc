@@ -2,9 +2,10 @@ use crate::ast::{ASTIndex, ASTNode, ObjectProperty};
 use crate::declaration::DeclarationTyped;
 use crate::small_vec::SmallVec;
 use crate::source_properties::SourceProperties;
-use crate::types::{get_numeric_literal_type, CustomDouble, Type};
+use crate::type_arena::TypeIndex;
+use crate::types::{get_numeric_literal_type, Type};
 
-pub fn widen_type(typ: &Type) -> Type {
+pub fn widen_type(typ: &TypeIndex) -> TypeIndex {
   match typ {
     Type::NumberLiteral(..) => Type::Number,
     Type::StringLiteral(..) => Type::Number,
@@ -87,7 +88,7 @@ fn postfix_result(op: &str, t: Type) -> Type {
   }
 }
 
-fn index_result(arr: &Type, index: &Type) -> Type {
+fn index_result(arr: TypeIndex, index: TypeIndex) -> TypeIndex {
   match (arr, index) {
     (Type::Array(of_type), Type::Number | Type::NumberLiteral(..)) => (**of_type).clone(),
     (Type::Tuple { inner_types }, Type::Number) => {
@@ -123,7 +124,7 @@ fn index_result(arr: &Type, index: &Type) -> Type {
 
 // Main inference functions
 
-pub fn infer_types(node: ASTIndex, sp: &mut SourceProperties) -> Type {
+pub fn infer_types(node: ASTIndex, sp: &mut SourceProperties) -> TypeIndex {
   use ASTNode::*;
 
   match unsafe { &*(sp.nodes.get(node) as *const ASTNode) } {
@@ -139,7 +140,7 @@ pub fn infer_types(node: ASTIndex, sp: &mut SourceProperties) -> Type {
         Type::Unknown
       }
     }
-    ExprNumLiteral { number } => get_numeric_literal_type(sp.str_src(*number)),
+    ExprNumLiteral { number } => get_numeric_literal_type(sp.str_src(*number), sp),
     ExprStrLiteral { string } => Type::StringLiteral(sp.str_src(*string).to_owned()),
     ExprRegexLiteral { .. } => Type::RegExp,
     ExprTemplateLiteral { .. } => Type::String,

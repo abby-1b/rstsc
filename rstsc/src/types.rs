@@ -1,5 +1,3 @@
-use std::collections::hash_map::DefaultHasher;
-use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Display};
 use std::hash::{Hash, Hasher};
 
@@ -10,7 +8,8 @@ use crate::operations::{get_type_operator_binding_power, ExprType};
 use crate::parser;
 use crate::small_vec::SmallVec;
 use crate::source_properties::{SourceProperties, SrcMapping};
-use crate::tokenizer::{Token, TokenList, TokenType, EOF_TOKEN};
+use crate::tokenizer::{Token, TokenType};
+use crate::type_arena::TypeIndex;
 
 #[derive(Copy, Clone)]
 pub union CustomDouble {
@@ -59,15 +58,15 @@ impl Hash for CustomDouble {
 
 #[derive(Debug, Clone)]
 pub struct KeyValueMap {
-  key: Type,
-  value: Type,
+  key: TypeIndex,
+  value: TypeIndex,
 }
 
 #[derive(Debug)]
 pub enum ObjectSquareBracketReturn {
   KVMap(KeyValueMap),
   ComputedProp(ASTIndex),
-  MappedType(Type),
+  MappedType(TypeIndex),
 }
 
 #[derive(Debug, Clone)]
@@ -75,7 +74,7 @@ pub struct TypeFunctionArgument {
   spread: bool,
   name: String,
   conditional: bool,
-  typ: Option<Type>,
+  typ: Option<TypeIndex>,
 }
 
 #[derive(Debug, Clone)]
@@ -102,25 +101,25 @@ pub enum Type {
   Void,
 
   /// A union (eg. `string | number`)
-  Union(SmallVec<Type>),
+  Union(SmallVec<TypeIndex>),
 
   /// An intersection (eg. `{ a: string } & { b: number }` => `{ a: string, b: number }`)
-  Intersection(SmallVec<Type>),
+  Intersection(SmallVec<TypeIndex>),
 
   /// Custom types
   Custom(String),
 
   /// Arguments (eg. `Record<string, number>`)
-  WithArgs(Box<Type>, SmallVec<Type>),
+  WithArgs(TypeIndex, SmallVec<TypeIndex>),
 
   /// Tuples (eg. `[string, number]`)
   /// Stored as (type, has_spread)
   Tuple {
-    inner_types: SmallVec<(Type, bool)>,
+    inner_types: SmallVec<(TypeIndex, bool)>,
   },
 
   /// Array type (eg. `number[]`)
-  Array(Box<Type>),
+  Array(TypeIndex),
 
   /// A typed object (dict)
   Object {
@@ -132,18 +131,18 @@ pub enum Type {
   /// Different from `Object` because mapped objects can't have specific keys
   Mapped {
     key_name: String,
-    key_type: Box<Type>,
-    value_type: Box<Type>,
+    key_type: TypeIndex,
+    value_type: TypeIndex,
   },
 
   /// Used for type guards `x is string`
-  Guard(String, Box<Type>),
+  Guard(String, TypeIndex),
 
   /// A typed declaration (used for parsing inside arrow functions)
   ColonDeclaration {
     spread: bool,
     name: String,
-    typ: Box<Type>,
+    typ: TypeIndex,
     conditional: bool,
   },
 
@@ -154,72 +153,72 @@ pub enum Type {
 
   /// A function (eg. `let a: (x: number) => void;`)
   Function {
-    generics: SmallVec<Type>,
+    generics: SmallVec<TypeIndex>,
     params: SmallVec<TypeFunctionArgument>,
-    return_type: Box<Type>,
+    return_type: TypeIndex,
     is_constructor: bool,
   },
 
   /// An index into a type (eg. `type[prop]`)
   Index {
-    callee: Box<Type>,
-    property: Box<Type>,
+    callee: TypeIndex,
+    property: TypeIndex,
   },
 
   /// A direct access into a type (eg. `type.prop`)
   DirectAccess {
-    callee: Box<Type>,
-    property: Box<Type>,
+    callee: TypeIndex,
+    property: TypeIndex,
   },
 
   /// Specifies that this type points to the inferred type of a real value
-  TypeOf(Box<Type>),
+  TypeOf(TypeIndex),
 
   /// Specifies that this type is a key of the given type
-  KeyOf(Box<Type>),
+  KeyOf(TypeIndex),
 
   /// Conditionals are in the shape `left extends right ? if_true : if_false`
   Conditional {
-    cnd_left: Box<Type>,
-    cnd_right: Box<Type>,
-    if_true: Box<Type>,
-    if_false: Box<Type>,
+    cnd_left: TypeIndex,
+    cnd_right: TypeIndex,
+    if_true: TypeIndex,
+    if_false: TypeIndex,
   },
 
   /// A single `extends`, not inside a conditional!
-  Extends(Box<Type>, Box<Type>),
+  Extends(TypeIndex, TypeIndex),
 
   /// Infers the type at this position, naming it after this.
   Infer(String),
 
   /// A type marked as read-only
-  Readonly(Box<Type>),
+  Readonly(TypeIndex),
 }
 
 impl Type {
   /// Checks if a type matches another. Order matters!
   /// e.g. `123` matches `number`, but not the other way around.
-  pub fn matches(specific_type: &Type, broad_type: &Type) -> bool {
+  pub fn matches(specific_type: TypeIndex, broad_type: TypeIndex, sp: &SourceProperties) -> bool {
     use Type::*;
     if specific_type == broad_type {
       return true;
     }
-    match (specific_type, broad_type) {
+    match (sp.types.get(specific_type), sp.types.get(broad_type)) {
       (Any, _) | (_, Any) => true,
       (NumberLiteral(..), Number) => true,
       (StringLiteral(..), String) => true,
       (BooleanLiteral(..), Boolean) => true,
-      (Union(many_specific), broad_union @ Union(..)) => {
+      (Union(many_specific), _broad_union @ Union(..)) => {
         for s in many_specific {
-          if !Type::matches(s, broad_union) {
+          if !Self::matches(*s, broad_type, sp) {
             return false;
           }
         }
         true
       }
-      (one, Union(many)) => {
+      (_one, Union(many)) => {
         for m in many {
-          if Type::matches(one, m) {
+          if Type::matches(specific_type, *m, sp) {
             return true;
           }
         }
@@ -231,100 +230,155 @@ impl Type {
   }
 
   /// Joins this type with another in a union `|` (combining mutably)
-  pub fn union(&mut self, other: Type) {
-    if let Type::Union(types) = other {
-      // Split other type into its parts
-      for typ in types {
-        self.union(typ);
+  pub fn union(target_idx: TypeIndex, other_idx: TypeIndex, sp: &mut SourceProperties) {
+    let other = sp.types.get(other_idx);
+
+    // `other` is already a union (split it)
+    if matches!(sp.types.get(other_idx), Type::Union(..)) {
+      let other_indices = match sp.types.get(other_idx) {
+        Type::Union(indices) => indices.clone(),
+        _ => unreachable!(),
+      };
+      for &typ_idx in &other_indices {
+        Self::union(target_idx, typ_idx, sp);
       }
       return;
     }
 
-    match self {
-      Type::Union(types) => {
-        let mut found_type = false;
-        for t in types.iter() {
-          if *t == other {
-            found_type = true;
-            break;
-          }
-        }
+    // `target` is already a union (add to it)
+    if matches!(sp.types.get(target_idx), Type::Union(..)) {
+      let target_indices = match sp.types.get(target_idx) {
+        Type::Union(indices) => indices.clone(),
+        _ => unreachable!(),
+      };
 
-        // If the hash wasn't found anywhere, add it to the vector
-        if !found_type {
-          types.push(other);
+      let mut found_type = false;
+      for t in target_indices.iter() {
+        if sp.types.get(*t) == other {
+          found_type = true;
+          break;
         }
       }
-      _ => {
-        if other != *self {
-          let mut new_union = Type::Union(SmallVec::with_element(self.clone()));
-          new_union.union(other);
-          *self = new_union;
+
+      if !found_type {
+        match sp.types.get_mut(target_idx) {
+          Type::Union(indices) => indices.push(other_idx),
+          _ => unreachable!(),
         }
       }
+      return;
     }
-  }
 
-  pub fn union_from(types: &SmallVec<Type>) -> Type {
-    let mut types_iter = types.iter();
-    let mut union = types_iter.next().unwrap().clone();
-    while let Some(t) = types_iter.next() {
-      union.union(t.clone());
-    }
-    union
-  }
+    // Neither is a union, so make one!
+    if sp.types.get(target_idx) != sp.types.get(other_idx) {
+      let old_type = sp.types.get(target_idx).clone();
+      let old_type_idx = sp.types.add(old_type);
 
-  /// Removes a type from a union or intersection, if it exists
-  pub fn remove(&mut self, t: Type) {
-    match self {
-      Type::Union(types) | Type::Intersection(types) => {
-        let mut new_arr = SmallVec::with_capacity(types.len() - 1);
-        for e in types.iter() {
-          if *e != t {
-            new_arr.push(e.clone());
-          }
-        }
-        *types = new_arr;
-      }
-      _ => {}
+      let mut indices = SmallVec::with_element(old_type_idx);
+      indices.push(other_idx);
+
+      let new_union = Type::Union(indices);
+      *sp.types.get_mut(target_idx) = new_union;
     }
   }
 
   /// Joins this type with another in an intersection `&` (combining mutably)
-  pub fn intersection(&mut self, other: Type) {
-    if let Type::Intersection(types) = other {
-      // Split other type into its parts
-      for typ in types {
-        self.intersection(typ);
+  pub fn intersection(target_idx: TypeIndex, other_idx: TypeIndex, sp: &mut SourceProperties) {
+    let other = sp.types.get(other_idx);
+
+    // `other` is already an intersection (split it)
+    if matches!(sp.types.get(other_idx), Type::Intersection(..)) {
+      let other_indices = match sp.types.get(other_idx) {
+        Type::Intersection(indices) => indices.clone(),
+        _ => unreachable!(),
+      };
+      for &typ_idx in &other_indices {
+        Self::intersection(target_idx, typ_idx, sp);
       }
       return;
     }
 
-    match self {
-      Type::Intersection(ref mut types) => {
-        let mut found_type = false;
-        for t in types.iter() {
-          if *t == other {
-            found_type = true;
-            break;
-          }
-        }
+    // `target` is already a intersection (add to it)
+    if matches!(sp.types.get(target_idx), Type::Intersection(..)) {
+      let target_indices = match sp.types.get(target_idx) {
+        Type::Intersection(indices) => indices.clone(),
+        _ => unreachable!(),
+      };
 
-        // If the hash wasn't found anywhere, add it to the vector
-        if !found_type {
-          types.push(other);
+      let mut found_type = false;
+      for t in target_indices.iter() {
+        if sp.types.get(*t) == other {
+          found_type = true;
+          break;
         }
       }
-      _ => {
-        if other != *self {
-          *self = Type::Intersection(SmallVec::with_element(self.clone()));
-          self.intersection(other);
+
+      if !found_type {
+        match sp.types.get_mut(target_idx) {
+          Type::Intersection(indices) => indices.push(other_idx),
+          _ => unreachable!(),
         }
       }
+      return;
+    }
+
+    // Neither is a intersection, so make one!
+    if sp.types.get(target_idx) != sp.types.get(other_idx) {
+      let old_type = sp.types.get(target_idx).clone();
+      let old_type_idx = sp.types.add(old_type);
+
+      let mut indices = SmallVec::with_element(old_type_idx);
+      indices.push(other_idx);
+
+      let new_intersection = Type::Intersection(indices);
+      *sp.types.get_mut(target_idx) = new_intersection;
     }
   }
 
-  pub fn get_single_name(&self) -> String {
+  // Makes an intersection from a vector of types, removing duplicates before returning
+  pub fn new_checked_intersection(
+    types: SmallVec<TypeIndex>,
+    sp: &mut SourceProperties,
+  ) -> TypeIndex {
+    let mut out = SmallVec::new();
+    for t in types {
+      let mut found = false;
+      for existing in &out {
+        if sp.types.get(t) == sp.types.get(*existing) {
+          found = true;
+          break;
+        }
+      }
+      if !found {
+        out.push(t);
+      }
+    }
+    return sp.types.add(Type::Intersection(out));
+  }
+
+  /// Removes a type from a union or intersection, if it exists
+  pub fn remove(target: TypeIndex, typ: TypeIndex, sp: &mut SourceProperties) {
+    let types = if let Type::Union(types) | Type::Intersection(types) = sp.types.get(target) {
+      types
+    } else {
+      return;
+    };
+
+    let mut new_arr = SmallVec::with_capacity(types.len() - 1);
+    for e in types.iter() {
+      if *e != typ {
+        new_arr.push(e.clone());
+      }
+    }
+
+    if let Type::Union(types) | Type::Intersection(types) = sp.types.get_mut(target) {
+      *types = new_arr;
+    } else {
+      unreachable!();
+    }
+  }
+
+  pub fn get_single_name(&self, sp: &SourceProperties) -> String {
     match &self {
       Type::Any => "any".to_string(),
 
@@ -347,15 +401,16 @@ impl Type {
 
       Type::Custom(name) => name.to_string(),
 
-      Type::WithArgs(typ, _) => typ.get_single_name(),
+      Type::WithArgs(typ, _) => sp.types.get(*typ).get_single_name(sp),
 
-      Type::Array(typ) => typ.get_single_name() + "[]",
+      Type::Array(typ) => sp.types.get(*typ).get_single_name(sp) + "[]",
 
       _ => {
         panic!("`get_single_name()` not implemented for {:?}", self)
       }
     }
   }
+
   pub fn inner_count(&self) -> usize {
     match self {
       Type::Union(inner) => inner.len(),
@@ -364,6 +419,26 @@ impl Type {
       _ => todo!("type.inner_count not implemented for `{:?}`", self),
     }
   }
+
+  // pub fn index(&self, index_type: TypeIndex) -> TypeIndex {
+  //   Type::Unknown
+  // }
+
+  // // Indexes into an Array type using a usize index
+  // pub fn index_usize(&self, index: usize) -> TypeIndex {
+  //   match self {
+  //     Type::Array(typ) => (**typ).clone(),
+  //     _ => Type::Unknown,
+  //   }
+  // }
+
+  // // Indexes into an Array type, returning the type of elements in the range [index, ...]
+  // pub fn index_spread(&self, index: usize) -> TypeIndex {
+  //   match self {
+  //     Type::Array(typ) => self.clone(),
+  //     _ => Type::Unknown,
+  //   }
+  // }
 }
 
 impl PartialEq for Type {
@@ -476,7 +551,7 @@ impl Eq for Type {}
 
 /// Gets a type, regardless of whether it starts with `:` or not.
 /// If it *does* start with a `:`, that gets consumed and the type is returned.
-pub fn get_type(sp: &mut SourceProperties) -> Result<Type, CompilerError> {
+pub fn get_type(sp: &mut SourceProperties) -> Result<TypeIndex, CompilerError> {
   if sp.tokens.peek_str() == ":" {
     sp.tokens.skip_unchecked();
   }
@@ -485,7 +560,7 @@ pub fn get_type(sp: &mut SourceProperties) -> Result<Type, CompilerError> {
 
 /// Gets a type only if the next token is `:`.
 /// Otherwise, returns None
-pub fn try_get_type(sp: &mut SourceProperties) -> Result<Option<Type>, CompilerError> {
+pub fn try_get_type(sp: &mut SourceProperties) -> Result<Option<TypeIndex>, CompilerError> {
   if sp.tokens.peek_str() != ":" {
     Ok(None)
   } else {
@@ -495,45 +570,46 @@ pub fn try_get_type(sp: &mut SourceProperties) -> Result<Option<Type>, CompilerE
 }
 
 fn parse_infix(
-  mut left: Type,
+  left: TypeIndex,
   precedence: u8,
   sp: &mut SourceProperties,
-) -> Result<Type, CompilerError> {
+) -> Result<TypeIndex, CompilerError> {
   let conditional = sp.tokens.try_skip_and_ignore_whitespace("?");
   let infix_opr = sp.tokens.consume();
   match sp.str_src(infix_opr.value) {
     "|" => {
-      left.union(get_expression(precedence, sp)?);
+      Type::union(left, get_expression(precedence, sp)?, sp);
       Ok(left)
     }
     "&" => {
-      left.intersection(get_expression(precedence, sp)?);
+      Type::intersection(left, get_expression(precedence, sp)?, sp);
       Ok(left)
     }
     "is" => {
       // Type guard
       sp.tokens.skip_unchecked();
       sp.tokens.ignore_whitespace();
-      Ok(Type::Guard(
+      let right = get_expression(precedence, sp)?;
+      Ok(sp.types.add(Type::Guard(
         // The left side of a type guard is a variable from the scope!
-        left.get_single_name(),
-        Box::new(get_expression(precedence, sp)?),
-      ))
+        sp.types.get(left).get_single_name(sp),
+        right,
+      )))
     }
     ":" => {
       sp.tokens.skip_unchecked();
       sp.tokens.ignore_whitespace();
       let typ = get_expression(precedence, sp)?;
-      Ok(Type::ColonDeclaration {
+      Ok(sp.types.add(Type::ColonDeclaration {
         spread: false,
-        name: left.get_single_name(),
-        typ: Box::new(typ),
+        name: sp.types.get(left).get_single_name(sp),
+        typ,
         conditional,
-      })
+      }))
     }
     "[" => {
       // Type indexing
-      let mut arguments: SmallVec<Type> = SmallVec::new();
+      let mut arguments: SmallVec<TypeIndex> = SmallVec::new();
       sp.tokens.ignore_whitespace();
       if sp.tokens.peek_str() != "]" {
         loop {
@@ -549,12 +625,12 @@ fn parse_infix(
 
       if arguments.is_empty() {
         // Normal array notation
-        Ok(Type::Array(Box::new(left)))
+        Ok(sp.types.add(Type::Array(left)))
       } else if arguments.len() == 1 {
-        Ok(Type::Index {
-          callee: Box::new(left),
-          property: Box::new(arguments.pop().unwrap()),
-        })
+        Ok(sp.types.add(Type::Index {
+          callee: left,
+          property: arguments.pop().unwrap(),
+        }))
       } else {
         Err(CompilerError::new(
           infix_opr.value,
@@ -569,12 +645,16 @@ fn parse_infix(
       // Direct type access
       sp.tokens.ignore_whitespace();
       let token = sp.tokens.consume_type(TokenType::Identifier)?.value;
-      Ok(Type::DirectAccess {
-        callee: Box::new(left),
-        property: Box::new(Type::Custom(sp.str_src(token).to_owned())),
-      })
+      let property = sp.types.add(Type::Custom(sp.str_src(token).to_owned()));
+      Ok(sp.types.add(Type::DirectAccess {
+        callee: left,
+        property,
+      }))
     }
-    "<" => Ok(Type::WithArgs(Box::new(left), get_generics(sp)?)),
+    "<" => {
+      let generics = get_generics(sp)?;
+      Ok(sp.types.add(Type::WithArgs(left, generics)))
+    }
     "extends" => {
       // This could be a normal `extends` (like generics), or a conditional
       let extends_precedence: u8 = get_type_operator_binding_power(ExprType::Infx, "extends")
@@ -587,7 +667,7 @@ fn parse_infix(
       sp.tokens.ignore_whitespace();
       if sp.tokens.peek_str() != "?" {
         // Not a conditional! Just a normal `extends`
-        return Ok(Type::Extends(Box::new(left), Box::new(right_type)));
+        return Ok(sp.types.add(Type::Extends(left, right_type)));
       }
       sp.tokens.skip_unchecked(); // Skip "?"
 
@@ -599,12 +679,12 @@ fn parse_infix(
 
       let if_false = get_expression(extends_precedence, sp)?;
 
-      Ok(Type::Conditional {
-        cnd_left: Box::new(left),
-        cnd_right: Box::new(right_type),
-        if_true: Box::new(if_true),
-        if_false: Box::new(if_false),
-      })
+      Ok(sp.types.add(Type::Conditional {
+        cnd_left: left,
+        cnd_right: right_type,
+        if_true,
+        if_false,
+      }))
     }
     other => Err(CompilerError::new(
       infix_opr.value,
@@ -613,27 +693,27 @@ fn parse_infix(
   }
 }
 
-fn parse_name(sp: &mut SourceProperties) -> Type {
+fn parse_name(sp: &mut SourceProperties) -> TypeIndex {
   let token = sp.tokens.consume().value;
   match sp.str_src(token) {
-    "any" => Type::Any,
-    "number" => Type::Number,
-    "string" => Type::String,
-    "boolean" => Type::Boolean,
-    "true" => Type::BooleanLiteral(true),
-    "false" => Type::BooleanLiteral(false),
-    "void" | "undefined" => Type::Void,
-    other => Type::Custom(other.to_string()),
+    "any" => sp.types.add(Type::Any),
+    "number" => sp.types.add(Type::Number),
+    "string" => sp.types.add(Type::String),
+    "boolean" => sp.types.add(Type::Boolean),
+    "true" => sp.types.add(Type::BooleanLiteral(true)),
+    "false" => sp.types.add(Type::BooleanLiteral(false)),
+    "void" | "undefined" => sp.types.add(Type::Void),
+    other => sp.types.add(Type::Custom(other.to_string())),
   }
 }
 
 fn types_into_params(
-  types: SmallVec<Type>,
+  types: SmallVec<TypeIndex>,
   sp: &mut SourceProperties,
 ) -> Result<SmallVec<TypeFunctionArgument>, CompilerError> {
   let mut params = SmallVec::with_capacity(types.len());
   for p in types.iter() {
-    params.push(match p {
+    params.push(match sp.types.get(*p) {
       Type::ColonDeclaration {
         spread,
         name,
@@ -643,7 +723,7 @@ fn types_into_params(
         spread: *spread,
         name: name.clone(),
         conditional: *conditional,
-        typ: Some((**typ).clone()),
+        typ: Some(*typ),
       },
       Type::SpreadParameter { name } => TypeFunctionArgument {
         spread: true,
@@ -668,7 +748,7 @@ fn types_into_params(
   Ok(params)
 }
 
-fn parse_prefix(precedence: u8, sp: &mut SourceProperties) -> Result<Type, CompilerError> {
+fn parse_prefix(precedence: u8, sp: &mut SourceProperties) -> Result<TypeIndex, CompilerError> {
   let prefix_opr = sp.tokens.consume();
   match sp.str_src(prefix_opr.value) {
     "{" => {
@@ -693,7 +773,7 @@ fn parse_prefix(precedence: u8, sp: &mut SourceProperties) -> Result<Type, Compi
         sp.tokens.ignore_commas();
       }
       sp.tokens.skip("]")?;
-      Ok(Type::Tuple { inner_types })
+      Ok(sp.types.add(Type::Tuple { inner_types }))
     }
     "(" => {
       // Parenthesized type!
@@ -724,31 +804,33 @@ fn parse_prefix(precedence: u8, sp: &mut SourceProperties) -> Result<Type, Compi
           // Remove the type from inside!
           Ok(paren_contents.pop().unwrap())
         } else {
-          Ok(Type::Function {
+          let func = Type::Function {
             generics: SmallVec::new(),
             params: types_into_params(paren_contents, sp)?,
-            return_type: Box::new(Type::Unknown),
+            return_type: sp.types.add(Type::Unknown),
             is_constructor: false,
-          })
+          };
+          Ok(sp.types.add(func))
         }
       } else {
         // Function
         let params = types_into_params(paren_contents, sp)?;
         sp.tokens.skip_unchecked();
         let return_type = get_expression(precedence, sp)?;
-        Ok(Type::Function {
+        let func = Type::Function {
           generics: SmallVec::new(),
           params,
-          return_type: Box::new(return_type),
+          return_type,
           is_constructor: false,
-        })
+        };
+        Ok(sp.types.add(func))
       }
     }
     "-" => {
       let next_token = sp.tokens.peek().clone();
       let next_typ = get_expression(precedence, sp)?;
-      match next_typ {
-        Type::NumberLiteral(lit) => Ok(Type::NumberLiteral(-lit)),
+      match sp.types.get(next_typ) {
+        Type::NumberLiteral(lit) => Ok(sp.types.add(Type::NumberLiteral(-*lit))),
         other => {
           return Err(CompilerError::new(
             next_token.value,
@@ -760,8 +842,8 @@ fn parse_prefix(precedence: u8, sp: &mut SourceProperties) -> Result<Type, Compi
     "new" => {
       // Makes the proceeding function a constructor
       let next_token = sp.tokens.peek().clone();
-      let mut next_type = get_expression(precedence, sp)?;
-      match &mut next_type {
+      let next_type = get_expression(precedence, sp)?;
+      match sp.types.get_mut(next_type) {
         Type::Function { is_constructor, .. } => {
           *is_constructor = true;
         }
@@ -776,13 +858,15 @@ fn parse_prefix(precedence: u8, sp: &mut SourceProperties) -> Result<Type, Compi
     }
     "..." => {
       // Spread for arguments
-      let mut param = get_expression(0, sp)?;
-      match &mut param {
-        Type::ColonDeclaration { spread, .. } => {
-          *spread = true;
+      let param = get_expression(0, sp)?;
+      match sp.types.get(param) {
+        Type::ColonDeclaration { .. } => {
+          if let Type::ColonDeclaration { spread, .. } = sp.types.get_mut(param) {
+            *spread = true;
+          }
           Ok(param)
         }
-        Type::Custom(name) => Ok(Type::SpreadParameter { name: name.clone() }),
+        Type::Custom(name) => Ok(sp.types.add(Type::SpreadParameter { name: name.clone() })),
         _ => {
           Err(CompilerError::new(
             SrcMapping::empty(), // TODO: replace with real token
@@ -799,8 +883,8 @@ fn parse_prefix(precedence: u8, sp: &mut SourceProperties) -> Result<Type, Compi
       // Start of function with generics
       let mut generics = get_generics(sp)?;
       let next_token = sp.tokens.peek().clone();
-      let mut next_fn = get_expression(precedence, sp)?;
-      match &mut next_fn {
+      let next_fn = get_expression(precedence, sp)?;
+      match sp.types.get_mut(next_fn) {
         Type::Function {
           generics: inner_generics,
           ..
@@ -820,14 +904,23 @@ fn parse_prefix(precedence: u8, sp: &mut SourceProperties) -> Result<Type, Compi
       // These types are ignored
       get_expression(precedence, sp)
     }
-    "typeof" => Ok(Type::TypeOf(Box::new(get_expression(precedence, sp)?))),
-    "keyof" => Ok(Type::KeyOf(Box::new(get_expression(precedence, sp)?))),
+    "typeof" => {
+      let to = Type::TypeOf(get_expression(precedence, sp)?);
+      Ok(sp.types.add(to))
+    }
+    "keyof" => {
+      let to = Type::KeyOf(get_expression(precedence, sp)?);
+      Ok(sp.types.add(to))
+    }
     "infer" => {
       sp.tokens.ignore_whitespace();
       let token = sp.tokens.consume().value;
-      Ok(Type::Infer(sp.str_src(token).to_owned()))
+      Ok(sp.types.add(Type::Infer(sp.str_src(token).to_owned())))
     }
-    "readonly" => Ok(Type::Readonly(Box::new(get_expression(precedence, sp)?))),
+    "readonly" => {
+      let ro = Type::Readonly(get_expression(precedence, sp)?);
+      Ok(sp.types.add(ro))
+    }
     other => Err(CompilerError::new(
       prefix_opr.value,
       format!("Type prefix operator not found: {:?}", other),
@@ -835,10 +928,10 @@ fn parse_prefix(precedence: u8, sp: &mut SourceProperties) -> Result<Type, Compi
   }
 }
 
-fn parse_curly_braces(sp: &mut SourceProperties) -> Result<Type, CompilerError> {
+fn parse_curly_braces(sp: &mut SourceProperties) -> Result<TypeIndex, CompilerError> {
   let mut obj_parts = SmallVec::new();
   let mut kv_maps = SmallVec::new();
-  let mut mapped_type: Option<Type> = None;
+  let mut mapped_type: Option<TypeIndex> = None;
 
   sp.tokens.ignore_commas();
   loop {
@@ -873,13 +966,13 @@ fn parse_curly_braces(sp: &mut SourceProperties) -> Result<Type, CompilerError> 
       ComputableDeclarationName::Named(sp.tokens.consume().value)
     };
 
-    // Get property type (fallback to `any`)
+    // Get property type
     sp.tokens.ignore_whitespace();
     let property_type = if sp.tokens.peek_str() == ":" {
       sp.tokens.skip_unchecked(); // Skip ":"
       get_expression(*crate::operations::COMMA_PRECEDENCE, sp)?
     } else {
-      Type::Any
+      sp.types.add(Type::Unknown)
     };
 
     // Push
@@ -893,10 +986,10 @@ fn parse_curly_braces(sp: &mut SourceProperties) -> Result<Type, CompilerError> 
     return Ok(mapped_type.unwrap());
   }
 
-  Ok(Type::Object {
+  Ok(sp.types.add(Type::Object {
     key_value: kv_maps,
     parts: obj_parts,
-  })
+  }))
 }
 
 pub fn parse_object_square_bracket(
@@ -944,10 +1037,10 @@ pub fn parse_object_square_bracket(
   let is_optional = sp.tokens.try_skip_and_ignore_whitespace("?");
   sp.tokens.skip(":")?;
 
-  let mut value_type = get_expression(0, sp)?;
+  let value_type = get_expression(0, sp)?;
   if is_optional {
     // Make value type also include `undefined`
-    value_type.union(Type::Void);
+    Type::union(value_type, sp.types.add(Type::Void), sp);
   }
 
   Ok(ObjectSquareBracketReturn::KVMap(KeyValueMap {
@@ -969,19 +1062,23 @@ fn get_kvc_complex_key(
   sp.tokens.ignore_whitespace();
   let is_optional = sp.tokens.try_skip_and_ignore_whitespace("?");
   sp.tokens.skip(":")?;
-  let mut value_type = get_expression(0, sp)?;
+  let value_type = get_expression(0, sp)?;
   if is_optional {
     // Make value type also include `undefined`
-    value_type.union(Type::Void);
+    Type::union(value_type, sp.types.add(Type::Void), sp);
   }
-  return Ok(ObjectSquareBracketReturn::MappedType(Type::Mapped {
+
+  let mapped_type = Type::Mapped {
     key_name,
-    key_type: Box::new(key_type),
-    value_type: Box::new(value_type),
-  }));
+    key_type: key_type,
+    value_type: value_type,
+  };
+  return Ok(ObjectSquareBracketReturn::MappedType(
+    sp.types.add(mapped_type),
+  ));
 }
 
-fn get_expression(precedence: u8, sp: &mut SourceProperties) -> Result<Type, CompilerError> {
+fn get_expression(precedence: u8, sp: &mut SourceProperties) -> Result<TypeIndex, CompilerError> {
   sp.tokens.ignore_whitespace();
 
   let mut left = {
@@ -990,18 +1087,19 @@ fn get_expression(precedence: u8, sp: &mut SourceProperties) -> Result<Type, Com
 
     if [")", "]", "}", ",", ";"].contains(&sp.str_src(next.value)) {
       // End it here!
-      return Ok(Type::Unknown);
+      return Ok(sp.types.add(Type::Unknown));
     }
 
     // let next = sp.tokens.peek();
     match &next.typ {
       TokenType::Number => {
         let token = sp.tokens.consume().value;
-        get_numeric_literal_type(sp.str_src(token))
+        get_numeric_literal_type(sp.str_src(token), sp)
       }
       TokenType::String => {
         let token = sp.tokens.consume().value;
-        Type::StringLiteral(sp.str_src(token).to_owned())
+        sp.types
+          .add(Type::StringLiteral(sp.str_src(token).to_owned()))
       }
       TokenType::Identifier | TokenType::Symbol => {
         let binding_power =
@@ -1064,7 +1162,7 @@ fn get_expression(precedence: u8, sp: &mut SourceProperties) -> Result<Type, Com
 pub fn get_comma_separated_types_until(
   until_str: &[&str],
   sp: &mut SourceProperties,
-) -> Result<SmallVec<Type>, CompilerError> {
+) -> Result<SmallVec<TypeIndex>, CompilerError> {
   let mut types = SmallVec::new();
   sp.tokens.ignore_commas();
   loop {
@@ -1087,7 +1185,9 @@ pub fn get_comma_separated_types_until(
 }
 
 /// Gets generics if available, otherwise returns an empty vec
-pub fn get_optional_generics(sp: &mut SourceProperties) -> Result<SmallVec<Type>, CompilerError> {
+pub fn get_optional_generics(
+  sp: &mut SourceProperties,
+) -> Result<SmallVec<TypeIndex>, CompilerError> {
   // Get generics
   if sp.tokens.peek_str() != "<" {
     return Ok(SmallVec::new());
@@ -1098,7 +1198,7 @@ pub fn get_optional_generics(sp: &mut SourceProperties) -> Result<SmallVec<Type>
 
 /// Gets generics until it finds a ">", consuming it.
 /// Used after the first "<", as it will not consume it!
-pub fn get_generics(sp: &mut SourceProperties) -> Result<SmallVec<Type>, CompilerError> {
+pub fn get_generics(sp: &mut SourceProperties) -> Result<SmallVec<TypeIndex>, CompilerError> {
   let generics = get_comma_separated_types_until(&[">", ")", ";"], sp)?;
   if !sp.tokens.peek_str().starts_with(">") {
     return Err(CompilerError::expected(sp.tokens.consume().value, ">"));
@@ -1111,7 +1211,7 @@ pub fn get_generics(sp: &mut SourceProperties) -> Result<SmallVec<Type>, Compile
   Ok(generics)
 }
 
-pub fn get_numeric_literal_type(num_str: &str) -> Type {
+pub fn get_numeric_literal_type(num_str: &str, sp: &mut SourceProperties) -> TypeIndex {
   let mut is_bigint = false;
   let trimmed_string = if num_str.ends_with("n") {
     is_bigint = true;
@@ -1126,7 +1226,7 @@ pub fn get_numeric_literal_type(num_str: &str) -> Type {
     Type::Number
   };
 
-  if is_bigint {
+  sp.types.add(if is_bigint {
     match t {
       Type::Number => Type::BigInt,
       Type::NumberLiteral(n) => Type::BigIntLiteral(n),
@@ -1134,5 +1234,5 @@ pub fn get_numeric_literal_type(num_str: &str) -> Type {
     }
   } else {
     t
-  }
+  })
 }

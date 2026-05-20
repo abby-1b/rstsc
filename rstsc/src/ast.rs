@@ -4,6 +4,7 @@ use crate::error_type::CompilerError;
 use crate::rest::Rest;
 use crate::small_vec::SmallVec;
 use crate::source_properties::SrcMapping;
+use crate::type_arena::TypeIndex;
 use crate::types::{KeyValueMap, Type};
 
 #[derive(Debug, Clone)]
@@ -28,20 +29,20 @@ pub struct FunctionDefinition {
   pub is_generator: bool,
   pub name: Option<SrcMapping>,
 
-  pub generics: SmallVec<Type>,
+  pub generics: SmallVec<TypeIndex>,
   pub params: SmallVec<DestructurableDeclaration>,
   pub rest: Rest,
-  pub return_type: Option<Type>,
+  pub return_type: Option<TypeIndex>,
   pub body: Option<ASTIndex>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ArrowFunctionDefinition {
   pub is_async: bool,
-  pub generics: SmallVec<Type>,
+  pub generics: SmallVec<TypeIndex>,
   pub params: SmallVec<DestructurableDeclaration>,
   pub rest: Rest,
-  pub return_type: Type,
+  pub return_type: TypeIndex,
   pub body: ASTIndex,
 }
 
@@ -73,9 +74,9 @@ pub enum ClassMember {
 pub struct ClassDefinition {
   pub modifiers: ModifierList,
   pub name: Option<SrcMapping>,
-  pub generics: SmallVec<Type>,
-  pub extends: Option<Type>,
-  pub implements: SmallVec<Type>,
+  pub generics: SmallVec<TypeIndex>,
+  pub extends: Option<TypeIndex>,
+  pub implements: SmallVec<TypeIndex>,
   pub kv_maps: SmallVec<KeyValueMap>,
 
   pub members: SmallVec<ClassMember>,
@@ -85,7 +86,7 @@ pub struct ClassDefinition {
 pub struct TryCatchFinally {
   pub block_try: ASTIndex,
   pub capture_catch: Option<SrcMapping>,
-  pub capture_catch_type: Option<Type>,
+  pub capture_catch_type: Option<TypeIndex>,
   pub block_catch: Option<ASTIndex>,
   pub block_finally: Option<ASTIndex>,
 }
@@ -133,9 +134,9 @@ pub enum ImportDefinition {
 pub struct InterfaceDeclaration {
   pub modifiers: ModifierList,
   pub name: SrcMapping,
-  pub generics: SmallVec<Type>,
-  pub extends: SmallVec<Type>,
-  pub equals_type: Type,
+  pub generics: SmallVec<TypeIndex>,
+  pub extends: SmallVec<TypeIndex>,
+  pub equals_type: TypeIndex,
 }
 
 #[derive(Debug, Clone)]
@@ -169,7 +170,7 @@ pub struct ExprTemplateLiteral {
 #[derive(Debug, Clone)]
 pub struct ExprFunctionCall {
   pub callee: ASTIndex,
-  pub generics: SmallVec<Type>,
+  pub generics: SmallVec<TypeIndex>,
   pub arguments: SmallVec<ASTIndex>,
 }
 
@@ -333,12 +334,12 @@ pub enum ASTNode {
   /// Casting something with the `as` keyword (eg. `obj as any`)
   ExprAs {
     value: ASTIndex,
-    cast_type: Box<Type>,
+    cast_type: TypeIndex,
   },
 
   /// Casting something C-style (eg. `<any>obj`)
   ExprTypeAssertion {
-    cast_type: Box<Type>,
+    cast_type: TypeIndex,
     value: ASTIndex,
   },
 

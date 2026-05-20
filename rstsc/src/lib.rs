@@ -11,11 +11,12 @@ pub mod small_vec;
 pub mod source_properties;
 pub mod symbol_table;
 pub mod tokenizer;
+pub mod type_arena;
 pub mod types;
 // pub mod scope_tracking;
 // pub mod type_checking;
 // pub mod minify;
-pub mod type_infer;
+// pub mod type_infer;
 // pub mod obfuscate;
 pub mod emit;
 

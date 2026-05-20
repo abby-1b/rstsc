@@ -2,16 +2,17 @@ use crate::ast::{ASTArena, ASTIndex, ASTNode, ClassMember, ImportDefinition, Obj
 use crate::declaration::{DestructurableDeclaration, DestructurePattern};
 use crate::symbol_table::SymbolTable;
 use crate::tokenizer::TokenList;
+use crate::type_arena::{TypeArena, TypeIndex};
 
 #[derive(Debug, Clone, Copy)]
 pub enum SMSrc {
-  // Empty, so doesn't matter
+  /// Empty, so doesn't matter
   None,
 
-  // Points to SourceProperties.source
+  /// Points to SourceProperties.source
   Source,
 
-  // Points to SourceProperties.string_pool
+  /// Points to SourceProperties.string_pool
   Pool,
 }
 
@@ -40,6 +41,7 @@ pub struct SourceProperties<'a> {
   pub tokens: TokenList<'a>,
   pub st: SymbolTable,
   pub nodes: ASTArena,
+  pub types: TypeArena,
   pub string_pool: String,
 }
 
@@ -50,6 +52,7 @@ impl<'a> SourceProperties<'a> {
       tokens: TokenList::from(source),
       st: SymbolTable::new(),
       nodes: ASTArena::new(),
+      types: TypeArena::new(),
       string_pool: String::new(),
     }
   }
@@ -142,22 +145,22 @@ impl<'a> SourceProperties<'a> {
           &inner.modifiers.emit(true)
         };
         output.push_str(&format!(
-          "{}FunctionDefinition {}{}{}\n",
-          indent,
-          modifiers_str,
-          if modifiers_str.is_empty() { "" } else { " " },
-          name
+          "{}FunctionDefinition {}`{}`\n",
+          indent, modifiers_str, name
         ));
         output.push_str(&format!(
-          "{}  Generics: {} params\n",
+          "{}  Generics: ({} params)\n",
           indent,
           inner.generics.len()
         ));
         output.push_str(&format!(
-          "{}  Parameters: {} params\n",
+          "{}  Parameters: ({} params)\n",
           indent,
           inner.params.len()
         ));
+        for param in &inner.params {
+          self.print_destructurable_declaration_debug(param, indent_level + 2, output);
+        }
         if let Some(body) = &inner.body {
           output.push_str(&format!("{}  Body:\n", indent));
           self.print_ast_node_debug(*body, indent_level + 2, output);
@@ -189,17 +192,14 @@ impl<'a> SourceProperties<'a> {
           &inner.modifiers.emit(true)
         };
         output.push_str(&format!(
-          "{}ClassDefinition {}{}{}\n",
-          indent,
-          modifiers_str,
-          if modifiers_str.is_empty() { "" } else { " " },
-          name
+          "{}ClassDefinition {}{}\n",
+          indent, modifiers_str, name
         ));
         if let Some(extends) = &inner.extends {
           output.push_str(&format!(
             "{}  Extends: {}\n",
             indent,
-            extends.get_single_name()
+            self.types.get(*extends).get_single_name(self)
           ));
         }
         output.push_str(&format!(
@@ -213,14 +213,14 @@ impl<'a> SourceProperties<'a> {
       }
       ExprIdentifier { name } => {
         output.push_str(&format!(
-          "{}ExprIdentifier: {}\n",
+          "{}ExprIdentifier `{}`\n",
           indent,
           self.str_src(*name)
         ));
       }
       ExprNumLiteral { number } => {
         output.push_str(&format!(
-          "{}ExprNumLiteral: {}\n",
+          "{}ExprNumLiteral `{}`\n",
           indent,
           self.str_src(*number)
         ));
@@ -267,7 +267,7 @@ impl<'a> SourceProperties<'a> {
         self.print_ast_node_debug(*expr, indent_level + 2, output);
       }
       InfixOpr { left_right, opr } => {
-        output.push_str(&format!("{}InfixOpr: {}\n", indent, self.str_src(*opr)));
+        output.push_str(&format!("{}InfixOpr: `{}`\n", indent, self.str_src(*opr)));
         output.push_str(&format!("{}  Left:\n", indent));
         self.print_ast_node_debug(left_right.0, indent_level + 2, output);
         output.push_str(&format!("{}  Right:\n", indent));
@@ -316,10 +316,12 @@ impl<'a> SourceProperties<'a> {
         }
       }
       StatementReturn { value } => {
-        output.push_str(&format!("{}StatementReturn\n", indent));
+        output.push_str(&format!("{}StatementReturn", indent));
         if let Some(value) = value {
-          output.push_str(&format!("{}  Value:\n", indent));
-          self.print_ast_node_debug(*value, indent_level + 2, output);
+          output.push_str(":\n");
+          self.print_ast_node_debug(*value, indent_level + 1, output);
+        } else {
+          output.push('\n');
         }
       }
       StatementWhile { condition, body } => {
@@ -379,11 +381,8 @@ impl<'a> SourceProperties<'a> {
           &inner.modifiers.emit(true)
         };
         output.push_str(&format!(
-          "{}InterfaceDeclaration {}{}{}\n",
-          indent,
-          modifiers_str,
-          if modifiers_str.is_empty() { "" } else { " " },
-          name
+          "{}InterfaceDeclaration {}{}\n",
+          indent, modifiers_str, name
         ));
         output.push_str(&format!(
           "{}  Generics: {} params\n",
@@ -403,18 +402,10 @@ impl<'a> SourceProperties<'a> {
       }
       EnumDeclaration { inner } => {
         let name = self.str_src(inner.name);
-        let modifiers_str = if inner.modifiers.is_empty() {
-          ""
-        } else {
-          &inner.modifiers.emit(true)
-        };
+        let modifiers_str = inner.modifiers.emit(true);
         output.push_str(&format!(
-          "{}EnumDeclaration {}{}{} (const: {})\n",
-          indent,
-          modifiers_str,
-          if modifiers_str.is_empty() { "" } else { " " },
-          name,
-          inner.is_const
+          "{}EnumDeclaration {}{} (const: {})\n",
+          indent, modifiers_str, name, inner.is_const
         ));
         output.push_str(&format!(
           "{}  Members: {} members\n",
@@ -425,6 +416,16 @@ impl<'a> SourceProperties<'a> {
           output.push_str(&format!("{}    {}:\n", indent, self.str_src(*member_name)));
           self.print_ast_node_debug(*member_value, indent_level + 3, output);
         }
+      }
+      NamespaceDeclaration { inner } => {
+        let modifiers_str = inner.modifiers.emit(true);
+        output.push_str(&format!(
+          "{}NamespaceDeclaration {}{}\n",
+          indent,
+          modifiers_str,
+          self.str_src(inner.name),
+        ));
+        self.print_ast_node_debug(inner.body, indent_level + 1, output);
       }
       StatementImport { inner } => match &**inner {
         ImportDefinition::DefaultAliased { source, alias } => {
@@ -565,7 +566,10 @@ impl<'a> SourceProperties<'a> {
     output.push_str(&format!("{}Pattern:\n", pattern_indent));
     self.print_destructure_pattern_debug(&declaration.name, indent_level + 2, output);
 
-    output.push_str(&format!("{}Type: {:?}\n", pattern_indent, declaration.typ));
+    output.push_str(&format!("{}Type: ", pattern_indent,));
+    self.print_type_debug(declaration.typ, indent_level, output);
+
+    output.push('\n');
   }
 
   fn print_destructure_pattern_debug(
@@ -610,7 +614,7 @@ impl<'a> SourceProperties<'a> {
         }
       }
       DestructurePattern::Identifier { name } => {
-        output.push_str(&format!("{}Identifier: {}\n", indent, self.str_src(*name)));
+        output.push_str(&format!("{}Identifier `{}`\n", indent, self.str_src(*name)));
       }
       DestructurePattern::NumericProperty { value } => {
         output.push_str(&format!(
@@ -716,5 +720,9 @@ impl<'a> SourceProperties<'a> {
         ));
       }
     }
+  }
+
+  fn print_type_debug(&self, typ: TypeIndex, indent_level: usize, output: &mut String) {
+    // self.types.get(typ)
   }
 }

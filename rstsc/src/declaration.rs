@@ -1,6 +1,7 @@
 use crate::ast::ASTIndex;
 use crate::small_vec::SmallVec;
 use crate::source_properties::SrcMapping;
+use crate::type_arena::TypeIndex;
 use crate::types::Type;
 use core::fmt::Debug;
 
@@ -41,18 +42,18 @@ pub enum ComputableDeclarationName {
 #[derive(Debug, Clone)]
 pub struct Declaration {
   pub name: SrcMapping,
-  pub typ: Type,
+  pub typ: TypeIndex,
   pub value: Option<ASTIndex>,
 }
 impl Declaration {
-  pub fn new(name: SrcMapping, typ: Type, value: Option<ASTIndex>) -> Declaration {
+  pub fn new(name: SrcMapping, typ: TypeIndex, value: Option<ASTIndex>) -> Declaration {
     Declaration { name, typ, value }
   }
   pub fn clear_value(&mut self) {
     self.value = None;
   }
   // pub fn name(&self) -> &String { &self.name }
-  pub fn typ(&self) -> &Type {
+  pub fn typ(&self) -> &TypeIndex {
     &self.typ
   }
   pub fn value(&self) -> Option<ASTIndex> {
@@ -64,18 +65,22 @@ impl Declaration {
 #[derive(Debug, Clone)]
 pub struct DeclarationComputable {
   pub name: ComputableDeclarationName,
-  pub typ: Type,
+  pub typ: TypeIndex,
   pub value: Option<ASTIndex>,
 }
 impl DeclarationComputable {
-  pub fn computed(inner: ASTIndex, typ: Type, value: Option<ASTIndex>) -> DeclarationComputable {
+  pub fn computed(
+    inner: ASTIndex,
+    typ: TypeIndex,
+    value: Option<ASTIndex>,
+  ) -> DeclarationComputable {
     DeclarationComputable {
       name: ComputableDeclarationName::Computed(inner),
       typ,
       value,
     }
   }
-  pub fn named(name: SrcMapping, typ: Type, value: Option<ASTIndex>) -> DeclarationComputable {
+  pub fn named(name: SrcMapping, typ: TypeIndex, value: Option<ASTIndex>) -> DeclarationComputable {
     DeclarationComputable {
       name: ComputableDeclarationName::Named(name),
       typ,
@@ -96,34 +101,66 @@ impl DeclarationComputable {
 #[derive(Debug, Clone)]
 pub struct DeclarationTyped {
   name: ComputableDeclarationName,
-  typ: Box<Type>,
+  typ: TypeIndex,
 }
 impl DeclarationTyped {
-  pub fn computed(inner: ASTIndex, typ: Type) -> DeclarationTyped {
+  pub fn computed(inner: ASTIndex, typ: TypeIndex) -> DeclarationTyped {
     DeclarationTyped {
       name: ComputableDeclarationName::Computed(inner),
-      typ: Box::new(typ),
+      typ,
     }
   }
-  pub fn named(name: SrcMapping, typ: Type) -> DeclarationTyped {
+  pub fn named(name: SrcMapping, typ: TypeIndex) -> DeclarationTyped {
     DeclarationTyped {
       name: ComputableDeclarationName::Named(name),
-      typ: Box::new(typ),
+      typ,
     }
   }
-  pub fn from_parts(name: ComputableDeclarationName, typ: Type) -> DeclarationTyped {
-    DeclarationTyped {
-      name,
-      typ: Box::new(typ),
-    }
+  pub fn from_parts(name: ComputableDeclarationName, typ: TypeIndex) -> DeclarationTyped {
+    DeclarationTyped { name, typ }
   }
 }
 
 #[derive(Debug, Clone)]
 pub struct DestructurableDeclaration {
   pub name: DestructurePattern,
-  pub typ: Type,
+  pub typ: TypeIndex,
 }
+
+// pub fn get_typed_names_from_destructurable_declarations(
+//   dds: &SmallVec<DestructurableDeclaration>,
+// ) -> SmallVec<(SrcMapping, TypeIndex)> {
+//   let mut typed_names = SmallVec::new();
+//   for dd in dds {
+//     extract_tns_from_pair(&mut typed_names, &dd.name, &dd.typ);
+//   }
+//   dbg!(&typed_names);
+//   typed_names
+// }
+
+// // Extracts typed from destructurable declaration pairs
+// fn extract_tns_from_pair(
+//   tns: &mut SmallVec<(SrcMapping, TypeIndex)>,
+//   pattern: &DestructurePattern,
+//   typ: &TypeIndex,
+// ) {
+//   match pattern {
+//     DestructurePattern::Identifier { name } => tns.push((*name, typ.clone())),
+//     DestructurePattern::Array { elements, spread } => {
+//       for (i, e) in elements.iter().enumerate() {
+//         let inner_typ = if i == elements.len() - 1 && spread.is_some() {
+//           &typ.index_spread(i)
+//         } else {
+//           &typ.index_usize(i)
+//         };
+//         extract_tns_from_pair(tns, e, inner_typ);
+//       }
+//     }
+//     // TODO: finish extracting typed_names from DestructurableDeclaration
+//     _ => {}
+//   }
+// }
+
 impl From<Declaration> for DestructurableDeclaration {
   fn from(decl: Declaration) -> Self {
     let Declaration { name, value, typ } = decl;

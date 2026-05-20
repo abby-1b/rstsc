@@ -1,7 +1,5 @@
 use core::fmt::Debug;
 
-use crate::small_vec::SmallVec;
-
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub enum VariableDefType {
   Var,

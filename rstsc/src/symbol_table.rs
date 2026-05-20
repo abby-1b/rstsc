@@ -8,16 +8,26 @@ use crate::types::Type;
 /// Represents the origin of a symbol in the code
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub enum SymbolOrigin {
-  Import,        // Imported symbols
-  Variable,      // var/let/const declarations
-  Parameter,     // Function parameters
-  Function,      // Function declarations
-  Class,         // Class declarations
-  Interface,     // Interface declarations
-  Enum,          // Enum declarations
-  TypeAlias,     // Type alias declarations
-  CatchVariable, // Catch clause variables
-  ForLoop,       // For loop variables
+  /// Imported symbols
+  Import,
+  /// var/let/const declarations
+  Variable,
+  /// Function parameters
+  Parameter,
+  /// Function declarations
+  Function,
+  /// Class declarations
+  Class,
+  /// Interface declarations
+  Interface,
+  /// Enum declarations
+  Enum,
+  /// Type alias declarations
+  TypeAlias,
+  /// Catch clause variables
+  CatchVariable,
+  /// For loop variables
+  ForLoop,
 }
 
 /// Represents a symbol with metadata about its usage and origin
@@ -52,25 +62,46 @@ impl Symbol {
 }
 
 #[derive(Debug)]
+pub enum ScopeType {
+  // Main scope of a module. Also used as "global" when in non-module contexts.
+  Module,
+
+  Function,
+  Block,
+}
+
+#[derive(Debug)]
+struct Scope {
+  typ: ScopeType,
+  table: HashMap<String, Symbol>,
+}
+
+#[derive(Debug)]
 pub struct SymbolTable {
-  scopes: Vec<HashMap<String, Symbol>>,
+  scopes: Vec<Scope>,
 }
 
 impl SymbolTable {
   /// Creates a new SymbolTable with a top-level scope
   pub fn new() -> Self {
     SymbolTable {
-      scopes: vec![HashMap::new()],
+      scopes: vec![Scope {
+        typ: ScopeType::Module,
+        table: HashMap::new(),
+      }],
     }
   }
 
   /// Enters a new scope by pushing a new scope onto the stack
-  pub fn up_scope(&mut self) {
-    self.scopes.push(HashMap::new());
+  pub fn up_scope(&mut self, typ: ScopeType) {
+    self.scopes.push(Scope {
+      typ,
+      table: HashMap::new(),
+    });
   }
 
-  /// Exits the current scope by popping it from the stack
-  /// Returns true if a scope was popped, false if we're at the top-level scope
+  /// Exits the current scope by popping it from the stack.
+  /// Returns true if a scope was popped, false if we're at the top-level scope.
   pub fn down_scope(&mut self) -> bool {
     if self.scopes.len() > 1 {
       self.scopes.pop();
@@ -84,7 +115,7 @@ impl SymbolTable {
   /// Returns the previous symbol with the same name if it existed
   pub fn add_symbol(&mut self, symbol: Symbol) -> Result<(), CompilerError> {
     let name = symbol.name.clone();
-    self.scopes.last_mut().unwrap().insert(name, symbol);
+    self.scopes.last_mut().unwrap().table.insert(name, symbol);
     // TODO: add error here (when symbol is defined multiple times)
     Ok(())
   }
@@ -93,7 +124,7 @@ impl SymbolTable {
   /// Returns an immutable reference to the symbol if found
   pub fn lookup(&self, name: &str) -> Option<&Symbol> {
     for scope in self.scopes.iter().rev() {
-      if let Some(symbol) = scope.get(name) {
+      if let Some(symbol) = scope.table.get(name) {
         return Some(symbol);
       }
     }
@@ -104,7 +135,7 @@ impl SymbolTable {
   /// Returns a mutable reference to the symbol if found
   pub fn lookup_mut(&mut self, name: &str) -> Option<&mut Symbol> {
     for scope in self.scopes.iter_mut().rev() {
-      if let Some(symbol) = scope.get_mut(name) {
+      if let Some(symbol) = scope.table.get_mut(name) {
         return Some(symbol);
       }
     }
@@ -117,40 +148,22 @@ impl SymbolTable {
     }
   }
 
-  /// Marks a symbol as used. Returns an error if the symbol wasn't found.
-  pub fn mark_used(&mut self, token: &Token, source: &str) -> Result<(), CompilerError> {
+  /// Marks a symbol as used
+  pub fn mark_used(&mut self, token: &Token, source: &str) {
     let value = SourceProperties::map_source(source, token.value);
     if let Some(symbol) = self.lookup_mut(value) {
       symbol.is_used = true;
-      Ok(())
-    } else {
-      // TODO: put a warning here, that a token doesn't exist!
-      // Err(CompilerError::new(
-      //   format!("Symbol not found: {}", token.value),
-      //   token.clone(),
-      //   tokens,
-      // ))
-      Ok(())
     }
   }
 
-  pub fn mark_used_type(&mut self, token: Token, source: &str) -> Result<(), CompilerError> {
+  pub fn mark_used_type(&mut self, token: Token, source: &str) {
     let value = SourceProperties::map_source(source, token.value);
     if let Some(symbol) = self.lookup_mut(value) {
       symbol.is_in_type = true;
-      Ok(())
-    } else {
-      // TODO: put a warning here, that a token doesn't exist!
-      // Err(CompilerError::new(
-      //   format!("Symbol not found: {}", token.value),
-      //   token.clone(),
-      //   tokens,
-      // ))
-      Ok(())
     }
   }
 
-  /// Gets the current scope depth (1 = top-level only)
+  /// Gets the current scope depth, with 1 being the top-level depth.
   pub fn depth(&self) -> usize {
     self.scopes.len()
   }

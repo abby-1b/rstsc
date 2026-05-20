@@ -1,8 +1,4 @@
-use crate::{
-  error_type::CompilerError,
-  source_properties::SourceProperties,
-  tokenizer::{Token, TokenList},
-};
+use crate::{error_type::CompilerError, source_properties::SourceProperties, tokenizer::Token};
 
 /// A thin boolean wrapper that handles rest parameters (and associated errors)
 #[derive(Debug, Clone, PartialEq, Hash)]

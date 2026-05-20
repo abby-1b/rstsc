@@ -19,9 +19,8 @@ use crate::operations::{
 use crate::rest::Rest;
 use crate::small_vec::SmallVec;
 use crate::source_properties::{SourceProperties, SrcMapping};
-use crate::symbol_table::{Symbol, SymbolOrigin};
 use crate::tokenizer::TokenType;
-use crate::type_infer::infer_types;
+use crate::type_arena::TypeIndex;
 use crate::types::{
   get_comma_separated_types_until, get_generics, get_optional_generics, get_type,
   parse_object_square_bracket, try_get_type, ObjectSquareBracketReturn, Type,
@@ -136,7 +135,10 @@ fn handle_block(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, CompilerE
     return Ok(None);
   }
   sp.tokens.skip_unchecked(); // Skip "{"
-  Ok(Some(get_block(sp)?))
+
+  let block = get_block(sp)?;
+
+  Ok(Some(block))
 }
 
 /// Handles variable initialization
@@ -193,25 +195,12 @@ where
     .value
     .to_owned();
   let (typ, value) = get_declaration_after_name(sp)?;
-
-  // Create symbol for this declaration
-  let symbol = Symbol::new(
-    sp.str_src(name),
-    SymbolOrigin::Variable,
-    if let Some(value) = &value {
-      infer_types(*value, sp)
-    } else {
-      Type::Unknown
-    },
-  );
-  sp.st.add_symbol(symbol)?;
-
   Ok(Declaration::new(name, typ, value))
 }
 
 fn get_declaration_after_name<'a, 'b>(
   sp: &mut SourceProperties,
-) -> Result<(Type, Option<ASTIndex>), CompilerError>
+) -> Result<(TypeIndex, Option<ASTIndex>), CompilerError>
 where
   'a: 'b,
 {
@@ -222,8 +211,8 @@ where
         "Expected `:` after `?` in conditional declaration".to_owned(),
       ));
     }
-    let mut typ = get_type(sp)?;
-    typ.intersection(Type::Void);
+    let typ = get_type(sp)?;
+    Type::intersection(typ, sp.types.add(Type::Void), sp);
     Some(typ)
   } else if sp.tokens.try_skip_and_ignore_whitespace("!") {
     if sp.tokens.peek_str() != ":" {
@@ -236,7 +225,7 @@ where
   } else {
     try_get_type(sp)?
   }
-  .unwrap_or(Type::Unknown);
+  .unwrap_or_else(|| sp.types.add(Type::Unknown));
 
   sp.tokens.ignore_whitespace();
   let value = if sp.tokens.peek_str() == "=" {
@@ -257,23 +246,6 @@ where
 {
   let name = parse_destructure_pattern(false, sp)?;
   let (typ, initializer) = get_declaration_after_name(sp)?;
-
-  // Create symbol for identifier patterns
-  if let DestructurePattern::Identifier {
-    name: identifier_name,
-  } = &name
-  {
-    let symbol = Symbol::new(
-      sp.str_src(*identifier_name),
-      SymbolOrigin::Variable,
-      if let Some(init) = &initializer {
-        infer_types(*init, sp)
-      } else {
-        Type::Unknown
-      },
-    );
-    sp.st.add_symbol(symbol)?;
-  }
 
   Ok(DestructurableDeclaration {
     name: if let Some(initializer) = initializer {
@@ -413,13 +385,9 @@ fn parse_destructure_pattern(
             property.clone()
           };
           let alias = try_parse_destructure_pattern_initializer(alias, sp)?;
-          sp.tokens.ignore_whitespace();
           properties.push((property, alias));
         }
-        sp.tokens.ignore_whitespace();
-        if sp.tokens.peek_str() == "," {
-          sp.tokens.skip_unchecked();
-        }
+        sp.tokens.ignore_commas();
       }
       sp.tokens.skip_unchecked(); // Skip "}"
       sp.tokens.ignore_whitespace();
@@ -597,11 +565,12 @@ fn handle_for_loop(sp: &mut SourceProperties) -> Result<ASTIndex, CompilerError>
     get_expression(0, sp)?
   };
   sp.tokens.ignore_whitespace();
+
   Ok(if sp.tokens.try_skip_and_ignore_whitespace(";") {
     let condition = get_single_statement(sp)?;
     let update = get_single_statement(sp)?;
-
     sp.tokens.skip(")")?;
+
     let body = get_single_statement(sp)?;
 
     sp.nodes.add(ASTNode::StatementFor {
@@ -612,8 +581,8 @@ fn handle_for_loop(sp: &mut SourceProperties) -> Result<ASTIndex, CompilerError>
     })
   } else if sp.tokens.try_skip_and_ignore_whitespace("of") {
     let expression = get_expression(0, sp)?;
-
     sp.tokens.skip(")")?;
+
     let body = get_single_statement(sp)?;
 
     sp.nodes.add(ASTNode::StatementForOf {
@@ -623,8 +592,8 @@ fn handle_for_loop(sp: &mut SourceProperties) -> Result<ASTIndex, CompilerError>
     })
   } else if sp.tokens.try_skip_and_ignore_whitespace("in") {
     let expression = get_expression(0, sp)?;
-
     sp.tokens.skip(")")?;
+
     let body = get_single_statement(sp)?;
 
     sp.nodes.add(ASTNode::StatementForIn {
@@ -679,11 +648,6 @@ fn handle_import(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, Compiler
       .consume_type(TokenType::Identifier)?
       .value
       .to_owned();
-    sp.st.add_symbol(Symbol::new(
-      sp.str_src(name),
-      SymbolOrigin::Import,
-      Type::Unknown,
-    ))?;
     Some(name)
   } else {
     None
@@ -715,9 +679,6 @@ fn handle_import(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, Compiler
       };
       sp.tokens.ignore_whitespace();
       let _ = sp.tokens.try_skip_and_ignore_whitespace(",");
-      let final_name = sp.str_src(alias.clone().unwrap_or(name.clone()));
-      sp.st
-        .add_symbol(Symbol::new(final_name, SymbolOrigin::Import, Type::Unknown))?;
       individual.push(IndividualImport { name, alias });
     }
     sp.tokens.skip("}")?;
@@ -839,8 +800,6 @@ where
   sp.tokens.ignore_whitespace();
   sp.tokens.skip("(")?;
 
-  // Create a new symbol table for function parameters and body
-  sp.st.up_scope();
   let params = get_multiple_destructurable_declarations(true, sp)?;
   sp.tokens.skip(")")?;
   let return_type = try_get_type(sp)?;
@@ -854,8 +813,6 @@ where
     sp.tokens.skip("{")?;
     Some(get_block(sp)?)
   };
-
-  sp.st.down_scope();
 
   Ok(FunctionDefinition {
     modifiers: ModifierList::new(),
@@ -1076,11 +1033,6 @@ where
     _ => None,
   };
 
-  // Mark import
-  if let Some(Type::Custom(name)) = &extends {
-    sp.st.mark_used_string(name);
-  }
-
   // Classes change the way things are parsed!
   let mut kv_maps = SmallVec::new();
   let mut members: SmallVec<ClassMember> = SmallVec::new();
@@ -1253,9 +1205,9 @@ where
 
 struct TypedHeader {
   name: Option<SrcMapping>,
-  generics: SmallVec<Type>,
-  extends: SmallVec<Type>,
-  implements: SmallVec<Type>,
+  generics: SmallVec<TypeIndex>,
+  extends: SmallVec<TypeIndex>,
+  implements: SmallVec<TypeIndex>,
 }
 
 /// Gets a typed header for a class or interface.
@@ -1553,7 +1505,7 @@ fn handle_interface(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, Compi
 
   // Store the parts of the interface!
   // Stores the function types in a multi-function interface
-  let mut function_types = Type::Union(SmallVec::new());
+  let mut function_types = SmallVec::new();
   // Named key-value types
   let mut named_parts = SmallVec::new();
   // [key: type]
@@ -1570,15 +1522,18 @@ fn handle_interface(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, Compi
     if next_str == "(" {
       // Function
       let function = get_type(sp)?;
-      function_types.union(function);
+      function_types.push(function);
     } else if next_str == "[" {
       // This could be either a Key-value map,
       // or a computed property
       match parse_object_square_bracket(sp)? {
         ObjectSquareBracketReturn::KVMap(kv_map) => key_value.push(kv_map),
-        ObjectSquareBracketReturn::ComputedProp(value) => named_parts.push(
-          DeclarationTyped::computed(value, try_get_type(sp)?.unwrap_or(Type::Unknown)),
-        ),
+        ObjectSquareBracketReturn::ComputedProp(value) => {
+          named_parts.push(DeclarationTyped::computed(
+            value,
+            try_get_type(sp)?.unwrap_or_else(|| sp.types.add(Type::Unknown)),
+          ))
+        }
         ObjectSquareBracketReturn::MappedType(..) => {
           return Err(CompilerError::new(
             next.value,
@@ -1622,34 +1577,33 @@ fn handle_interface(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, Compi
     parts: named_parts,
   };
 
-  let mut equals_type = Type::Intersection(SmallVec::new());
-  if function_types.inner_count() != 0 {
-    equals_type.intersection(function_types);
+  let mut equals_type = SmallVec::new();
+  for f in function_types {
+    equals_type.push(f);
   }
   if named_dict.inner_count() != 0 {
-    equals_type.intersection(named_dict);
+    equals_type.push(sp.types.add(named_dict));
   }
-  Ok(Some(sp.nodes.add(ASTNode::InterfaceDeclaration {
+
+  let interface = ASTNode::InterfaceDeclaration {
     inner: Box::new(InterfaceDeclaration {
       modifiers: ModifierList::new(),
       name,
       generics,
       extends,
-      equals_type: if equals_type.inner_count() == 0 {
-        Type::Object {
+      equals_type: if equals_type.len() == 0 {
+        sp.types.add(Type::Object {
           key_value: SmallVec::new(),
           parts: SmallVec::new(),
-        }
-      } else if equals_type.inner_count() == 1 {
-        match equals_type {
-          Type::Intersection(inner) => inner[0].clone(),
-          _ => panic!(""),
-        }
+        })
+      } else if equals_type.len() == 1 {
+        equals_type[0]
       } else {
-        equals_type
+        Type::new_checked_intersection(equals_type, sp)
       },
     }),
-  })))
+  };
+  Ok(Some(sp.nodes.add(interface)))
 }
 
 fn handle_try_catch(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, CompilerError> {
@@ -1909,9 +1863,8 @@ fn parse_name(sp: &mut SourceProperties) -> Result<ASTIndex, CompilerError> {
   match sp.str_src(token.value) {
     "true" => Ok(sp.nodes.add(ASTNode::ExprBoolLiteral { value: true })),
     "false" => Ok(sp.nodes.add(ASTNode::ExprBoolLiteral { value: false })),
-    name => {
+    _ => {
       // Mark symbol as used (not in type context)
-      sp.st.mark_used(&token, sp.source)?;
       Ok(sp.nodes.add(ASTNode::ExprIdentifier { name: token.value }))
     }
   }
@@ -2102,7 +2055,7 @@ where
       let params = match sp.nodes.get(left) {
         ASTNode::ExprIdentifier { name } => SmallVec::with_element(DestructurableDeclaration {
           name: DestructurePattern::Identifier { name: name.clone() },
-          typ: Type::Unknown,
+          typ: sp.types.add(Type::Unknown),
         }),
         ASTNode::Parenthesis { nodes } => {
           let mut params = SmallVec::new();
@@ -2110,7 +2063,7 @@ where
             params.push(match sp.nodes.get(*n) {
               ASTNode::ExprIdentifier { name } => DestructurableDeclaration {
                 name: DestructurePattern::Identifier { name: name.clone() },
-                typ: Type::Unknown,
+                typ: sp.types.add(Type::Unknown),
               },
               ASTNode::InfixOpr {
                 left_right, opr, ..
@@ -2120,7 +2073,7 @@ where
                 match sp.nodes.get(left_right.0) {
                   ASTNode::ExprIdentifier { name } => DestructurableDeclaration {
                     name: DestructurePattern::Identifier { name: name.clone() },
-                    typ: Type::Unknown,
+                    typ: sp.types.add(Type::Unknown),
                   },
                   _ => unreachable!(),
                 }
@@ -2152,7 +2105,7 @@ where
       return Ok(parse_arrow_function_after_arrow(
         params,
         Rest::new(),
-        Type::Unknown,
+        sp.types.add(Type::Unknown),
         sp,
       )?);
     }
@@ -2245,7 +2198,7 @@ fn parse_arrow_function(sp: &mut SourceProperties) -> Result<ASTIndex, CompilerE
   Ok(parse_arrow_function_after_arrow(
     params,
     spread,
-    return_type.unwrap_or(Type::Unknown),
+    return_type.unwrap_or_else(|| sp.types.add(Type::Unknown)),
     sp,
   )?)
 }
@@ -2254,7 +2207,7 @@ fn parse_arrow_function(sp: &mut SourceProperties) -> Result<ASTIndex, CompilerE
 fn parse_arrow_function_after_arrow(
   params: SmallVec<DestructurableDeclaration>,
   rest: Rest,
-  return_type: Type,
+  return_type: TypeIndex,
   sp: &mut SourceProperties,
 ) -> Result<ASTIndex, CompilerError> {
   sp.tokens.ignore_whitespace();
@@ -2395,7 +2348,7 @@ where
                   ));
                 }
                 expr = sp.nodes.add(ASTNode::ExprTypeAssertion {
-                  cast_type: Box::new(generics[0].clone()),
+                  cast_type: generics[0].clone(),
                   value: expr,
                 });
               }
@@ -2408,7 +2361,7 @@ where
             let opr_str = sp.str_src(t);
             return Err(CompilerError::new(
               sp.tokens.consume().value,
-              "Prefix operator not found".to_owned(),
+              format!("Prefix operator `{}` not found", opr_str),
             ));
           }
         }
@@ -2438,7 +2391,7 @@ where
       let cast_type = get_type(sp)?;
       left = sp.nodes.add(ASTNode::ExprAs {
         value: left,
-        cast_type: Box::new(cast_type),
+        cast_type: cast_type,
       });
       continue;
     }

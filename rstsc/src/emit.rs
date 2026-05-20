@@ -185,12 +185,8 @@ fn emit_single(ast: ASTIndex, emitter: &mut Emitter) {
           emitter.emit_vec(
             parts.as_ref(),
             |i, emitter| {
-              if emitter
-                .sp
-                .st
-                .lookup(emitter.sp.str_src(i.name))
-                .is_some_and(|s| !s.is_used)
-              {
+              let sp = emitter.sp;
+              if sp.st.lookup(sp.str_src(i.name)).is_some_and(|s| !s.is_used) {
                 return false;
               }
               emitter.out(emitter.sp.str_src(i.name), false);
@@ -463,7 +459,10 @@ fn emit_single(ast: ASTIndex, emitter: &mut Emitter) {
       }
       if let Some(extends) = &inner.extends {
         emitter.out(" extends ", false);
-        emitter.out(&extends.get_single_name(), false);
+        emitter.out(
+          &emitter.sp.types.get(*extends).get_single_name(emitter.sp),
+          false,
+        );
       }
       emitter.out_diff(" {", "{", false);
       emitter.endline();
@@ -764,13 +763,8 @@ fn emit_single(ast: ASTIndex, emitter: &mut Emitter) {
       emitter.out(&inner.modifiers.emit(true), false);
       emitter.out("namespace ", false);
       emitter.out(emitter.sp.str_src(inner.name), false);
-      emitter.out_diff(" {", "{", false);
-      emitter.endline();
-      emitter.indent();
+      emitter.out_diff(" ", "", false);
       emit_single(inner.body, emitter);
-      emitter.endline();
-      emitter.unindent();
-      emitter.out("}", false);
     }
     ASTNode::DeclareNamespace { inner } => {
       emitter.out("declare ", false);
