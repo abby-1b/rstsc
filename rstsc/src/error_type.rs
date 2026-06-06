@@ -23,12 +23,23 @@ impl CompilerError {
 
     let error_line = self.get_line_info(sp);
     let context_lines = self.get_context_lines(sp, error_line.line_number);
-    let underline = self.underline_token(error_line.line_start, error_line.line_end);
+    let (start_index, underline) = self.underline_token(error_line.line_start, error_line.line_end);
 
     // Error message header
     out += "Error: ";
     out += &self.message;
     out += "\n";
+
+    out += &format!(
+      "     ╭─[{}:{}:{}]\n",
+      if let Some(path) = &sp.source_path {
+        path.as_str()
+      } else {
+        "<anonymous>"
+      },
+      error_line.line_number,
+      start_index
+    );
 
     // Context + error lines
     for (_, line_info) in context_lines.iter().enumerate() {
@@ -37,13 +48,15 @@ impl CompilerError {
 
       if line_num == error_line.line_number {
         // Error line
-        out += &format!("{:4} | {}\n", line_num, line_content);
-        out += &format!("     | {}\n", underline);
+        out += &format!("{:4} │ {}\n", line_num, line_content);
+        out += &format!("     ╎ {}\n", underline);
       } else {
         // Context line
-        out += &format!("{:4} | {}\n", line_num, line_content);
+        out += &format!("{:4} │ {}\n", line_num, line_content);
       }
     }
+
+    out += &format!("     ╰─\n");
 
     out
   }
@@ -72,6 +85,7 @@ impl CompilerError {
   }
 
   pub fn expected(token: SrcMapping, expect: &str) -> CompilerError {
+    // panic!();
     CompilerError::new(token, format!("Expected {:?}", expect))
   }
 
@@ -178,7 +192,7 @@ impl CompilerError {
   }
 
   /// Creates an underline string for the token
-  fn underline_token(&self, line_start: usize, line_end: usize) -> String {
+  fn underline_token(&self, line_start: usize, line_end: usize) -> (usize, String) {
     // Calculate the position of the token within the line
     let token_start_in_line = self.token.idx as usize - line_start;
     let token_end_in_line = (self.token.idx + self.token.len) as usize - line_start;
@@ -200,7 +214,7 @@ impl CompilerError {
       underline.push('^');
     }
 
-    underline
+    (token_start_in_line, underline)
   }
 }
 
