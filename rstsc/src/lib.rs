@@ -28,7 +28,7 @@ pub fn compile<'a>(
   Result<String, error_type::CompilerError>,
   SourceProperties<'a>,
 ) {
-  let mut source_properties = source_properties::SourceProperties::new(code);
+  let mut source_properties = source_properties::SourceProperties::new(None, code);
   let compile_result = parser::get_block(&mut source_properties)
     .map(|ast| emit::emit_code(ast, &mut source_properties, compact));
 

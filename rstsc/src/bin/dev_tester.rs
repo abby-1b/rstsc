@@ -9,6 +9,7 @@ use rstsc::parser::get_block;
 // use rstsc::minify::minify_ast;
 use rstsc::tokenizer::TokenList;
 
+const SOURCE_PATH: &str = "src/bin/test.ts";
 const SOURCE_TEST: &str = include_str!("./test.ts");
 
 fn main() {
@@ -22,7 +23,7 @@ fn main() {
   //   }
   // }
 
-  let mut source_properties = SourceProperties::new(SOURCE_TEST);
+  let mut source_properties = SourceProperties::new(Some(SOURCE_PATH.to_owned()), SOURCE_TEST);
   let ast = get_block(&mut source_properties);
   if let Err(err) = ast {
     err.print(&source_properties);

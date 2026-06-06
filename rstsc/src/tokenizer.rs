@@ -1,5 +1,7 @@
 use std::{collections::VecDeque, str::Chars};
 
+use phf::phf_map;
+
 use crate::{
   error_type::CompilerError,
   small_vec::SmallVec,
@@ -54,9 +56,35 @@ fn should_chain(left: char, right: char) -> bool {
   }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenType {
   Identifier,
+
+  KVar,
+  KLet,
+  KConst,
+  KIf,
+  KElse,
+  KWhile,
+  KFor,
+  KSwitch,
+  KFunction,
+  KClass,
+  KImport,
+  KExport,
+  KAsync,
+  KStatic,
+  KPublic,
+  KPrivate,
+  KProtected,
+  KReturn,
+  KBreak,
+  KContinue,
+  KThrow,
+  KEnum,
+  KInterface,
+  KTry,
+
   Number,
   Symbol,
   String,
@@ -72,7 +100,7 @@ pub enum TokenType {
   Unknown,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Token {
   pub value: SrcMapping,
   pub typ: TokenType,
@@ -328,13 +356,24 @@ impl<'a> TokenList<'a> {
   }
 
   /// Consumes tokens until a non-whitespace token is found
+  /// Consumes tokens until a non-whitespace token is found
   pub fn ignore_whitespace(&mut self) {
-    while !self.is_done() {
-      while self.on_token >= self.next_tokens.len() && !self.is_done() {
+    loop {
+      // Ensure there is a token at `on_token` to inspect
+      if self.on_token >= self.next_tokens.len() {
+        if self.is_done() {
+          return;
+        }
         self.queue_token();
+        continue;
       }
-      if !self.next_tokens[self.on_token].is_whitespace() {
-        break;
+
+      let tok = &self.next_tokens[self.on_token];
+      if tok.typ == TokenType::EndOfFile {
+        return;
+      }
+      if !tok.is_whitespace() {
+        return;
       }
       self.on_token += 1;
     }
@@ -436,12 +475,73 @@ impl<'a> TokenList<'a> {
         );
       } else if curr_char.is_ascii_alphabetic() || curr_char == '_' || curr_char == '$' {
         // Identifiers
-        break 'token_done (
-          self
-            .char_iter
-            .consume_all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$'),
-          TokenType::Identifier,
-        );
+        let token_len = self
+          .char_iter
+          .consume_all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$');
+
+        let typ = if token_len >= 2 && token_len <= 9 {
+          // FAST PATH: Slice bytes directly to avoid map_source bounds/utf8 overhead
+          let start = self.find_index as usize;
+          let end = start + token_len;
+          let bytes = &self.source.as_bytes()[start..end];
+
+          // Jump table on length, followed by native integer comparisons
+          match bytes.len() {
+            2 => match bytes {
+              b"if" => TokenType::KIf,
+              _ => TokenType::Identifier,
+            },
+            3 => match bytes {
+              b"var" => TokenType::KVar,
+              b"let" => TokenType::KLet,
+              b"for" => TokenType::KFor,
+              b"try" => TokenType::KTry,
+              _ => TokenType::Identifier,
+            },
+            4 => match bytes {
+              b"else" => TokenType::KElse,
+              b"enum" => TokenType::KEnum,
+              _ => TokenType::Identifier,
+            },
+            5 => match bytes {
+              b"const" => TokenType::KConst,
+              b"while" => TokenType::KWhile,
+              b"class" => TokenType::KClass,
+              b"async" => TokenType::KAsync,
+              b"break" => TokenType::KBreak,
+              b"throw" => TokenType::KThrow,
+              _ => TokenType::Identifier,
+            },
+            6 => match bytes {
+              b"switch" => TokenType::KSwitch,
+              b"import" => TokenType::KImport,
+              b"export" => TokenType::KExport,
+              b"static" => TokenType::KStatic,
+              b"public" => TokenType::KPublic,
+              b"return" => TokenType::KReturn,
+              _ => TokenType::Identifier,
+            },
+            7 => match bytes {
+              b"private" => TokenType::KPrivate,
+              _ => TokenType::Identifier,
+            },
+            8 => match bytes {
+              b"function" => TokenType::KFunction,
+              b"continue" => TokenType::KContinue,
+              _ => TokenType::Identifier,
+            },
+            9 => match bytes {
+              b"protected" => TokenType::KProtected,
+              b"interface" => TokenType::KInterface,
+              _ => TokenType::Identifier,
+            },
+            _ => TokenType::Identifier,
+          }
+        } else {
+          TokenType::Identifier
+        };
+
+        break 'token_done (token_len, typ);
       } else if curr_char.is_numeric()
         || (curr_char == '.' && self.char_iter.peek_far().is_some_and(|x| x.is_numeric()))
       {
@@ -459,8 +559,14 @@ impl<'a> TokenList<'a> {
 
         // Check for non-decimal integer prefixes (0b, 0o, 0x)
         let mut is_non_decimal = false;
-        let mut digit_predicate: Box<dyn Fn(char) -> bool> =
-          Box::new(|c| c.is_numeric() || c == '_');
+
+        enum Base {
+          Decimal,
+          Binary,
+          Octal,
+          Hex,
+        }
+        let mut base = Base::Decimal;
 
         if curr_char == '0' {
           if let Some(next_char) = self.char_iter.peek_far() {
@@ -468,7 +574,7 @@ impl<'a> TokenList<'a> {
               'b' => {
                 // Binary literal
                 is_non_decimal = true;
-                digit_predicate = Box::new(|c| c == '0' || c == '1' || c == '_');
+                base = Base::Binary;
                 // Consume the '0' and 'b'
                 token_len += curr_char.len_utf8();
                 self.char_iter.skip(); // skip '0'
@@ -478,7 +584,7 @@ impl<'a> TokenList<'a> {
               'o' => {
                 // Octal literal
                 is_non_decimal = true;
-                digit_predicate = Box::new(|c| (c >= '0' && c <= '7') || c == '_');
+                base = Base::Octal;
                 // Consume the '0' and 'o'
                 token_len += curr_char.len_utf8();
                 self.char_iter.skip(); // skip '0'
@@ -488,7 +594,7 @@ impl<'a> TokenList<'a> {
               'x' => {
                 // Hexadecimal literal
                 is_non_decimal = true;
-                digit_predicate = Box::new(|c| c.is_ascii_hexdigit() || c == '_');
+                base = Base::Hex;
                 // Consume the '0' and 'x'
                 token_len += curr_char.len_utf8();
                 self.char_iter.skip(); // skip '0'
@@ -519,7 +625,14 @@ impl<'a> TokenList<'a> {
               // - Decimal points
               // - Exponents
               // We can only have digits (according to the digit_predicate) and '_'
-              if digit_predicate(c) {
+              if c == '_'
+                || match base {
+                  Base::Binary => c == '0' || c == '1',
+                  Base::Octal => c >= '0' && c <= '7',
+                  Base::Hex => c.is_ascii_hexdigit(),
+                  _ => unreachable!(),
+                }
+              {
                 token_len += c.len_utf8();
                 self.char_iter.skip();
               } else if c == 'n' {
@@ -674,18 +787,30 @@ impl<'a> TokenList<'a> {
             );
           }
           '*' => {
-            // Multiline comment (Existing code)
+            // Multiline comment
             let mut has_newline = false;
+            // token_len starts at 2 for the opening '/' and '*'
             let mut token_len = 2;
-            self.char_iter.skip();
-            while self.char_iter.peek().is_some_and(|x| x != '/') || curr_char != '*' {
-              if curr_char == '\n' {
-                has_newline = true;
+            self.char_iter.skip(); // skip opening '/'
+            self.char_iter.skip(); // skip opening '*'
+
+            let mut prev_char = ' '; // can be anything except '*'
+            loop {
+              match self.char_iter.consume() {
+                None => break, // unterminated comment, let the parser handle it
+                Some(c) => {
+                  if c == '\n' {
+                    has_newline = true;
+                  }
+                  token_len += c.len_utf8();
+                  if prev_char == '*' && c == '/' {
+                    break; // found closing '*/'
+                  }
+                  prev_char = c;
+                }
               }
-              token_len += curr_char.len_utf8();
-              curr_char = self.char_iter.consume().unwrap();
             }
-            self.char_iter.skip();
+
             break 'token_done (
               token_len,
               if has_newline {

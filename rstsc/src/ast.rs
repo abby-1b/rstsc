@@ -462,14 +462,16 @@ impl ASTNode {
   }
 }
 
+const ARENA_BLOCK_SIZE: usize = 85; // TODO: test with 64/128/256 instead?
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ASTIndex(u32);
 pub struct ASTArena {
   // This is a normal `Vec` because it's only stored once per source!
   // `Vec` is way better optimized than our `SmallVec` implementation,
   // so it's WELL worth the 8 bytes.
-  pub nodes: Vec<ASTNode>,
-
+  nodes: Vec<ASTNode>,
+  // arena_blocks: Vec<Box<[ASTNode; ARENA_BLOCK_SIZE]>>,
   pub src_mappings: Vec<SrcMapping>,
   // pub gen_c_indices: Vec<SrcMapping>,
 }

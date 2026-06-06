@@ -827,7 +827,7 @@ fn parse_prefix(precedence: u8, sp: &mut SourceProperties) -> Result<TypeIndex, 
       }
     }
     "-" => {
-      let next_token = sp.tokens.peek().clone();
+      let next_token = sp.tokens.peek();
       let next_typ = get_expression(precedence, sp)?;
       match sp.types.get(next_typ) {
         Type::NumberLiteral(lit) => Ok(sp.types.add(Type::NumberLiteral(-*lit))),
@@ -841,7 +841,7 @@ fn parse_prefix(precedence: u8, sp: &mut SourceProperties) -> Result<TypeIndex, 
     }
     "new" => {
       // Makes the proceeding function a constructor
-      let next_token = sp.tokens.peek().clone();
+      let next_token = sp.tokens.peek();
       let next_type = get_expression(precedence, sp)?;
       match sp.types.get_mut(next_type) {
         Type::Function { is_constructor, .. } => {
@@ -882,7 +882,7 @@ fn parse_prefix(precedence: u8, sp: &mut SourceProperties) -> Result<TypeIndex, 
     "<" => {
       // Start of function with generics
       let mut generics = get_generics(sp)?;
-      let next_token = sp.tokens.peek().clone();
+      let next_token = sp.tokens.peek();
       let next_fn = get_expression(precedence, sp)?;
       match sp.types.get_mut(next_fn) {
         Type::Function {

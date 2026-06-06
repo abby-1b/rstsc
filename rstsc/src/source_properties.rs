@@ -3,6 +3,7 @@ use crate::declaration::{DestructurableDeclaration, DestructurePattern};
 use crate::symbol_table::SymbolTable;
 use crate::tokenizer::TokenList;
 use crate::type_arena::{TypeArena, TypeIndex};
+use crate::types::Type;
 
 #[derive(Debug, Clone, Copy)]
 pub enum SMSrc {
@@ -37,6 +38,7 @@ impl SrcMapping {
 }
 
 pub struct SourceProperties<'a> {
+  pub source_path: Option<String>,
   pub source: &'a str,
   pub tokens: TokenList<'a>,
   pub st: SymbolTable,
@@ -46,8 +48,9 @@ pub struct SourceProperties<'a> {
 }
 
 impl<'a> SourceProperties<'a> {
-  pub fn new(source: &'a str) -> Self {
+  pub fn new(source_path: Option<String>, source: &'a str) -> Self {
     SourceProperties {
+      source_path,
       source,
       tokens: TokenList::from(source),
       st: SymbolTable::new(),
@@ -90,12 +93,15 @@ impl<'a> SourceProperties<'a> {
     Self::map_source(unsafe { &*src }, mapping)
   }
 
+  /// Prints an AST for debugging. Only works in debug mode!
   pub fn print_ast_debug(&self, node_index: ASTIndex) {
-    let output = self.format_ast_debug(node_index);
-    println!("{}", output);
+    if cfg!(debug_assertions) {
+      let output = self.format_ast_debug(node_index);
+      println!("{}", output);
+    }
   }
 
-  pub fn format_ast_debug(&self, node_index: ASTIndex) -> String {
+  fn format_ast_debug(&self, node_index: ASTIndex) -> String {
     let mut output = String::new();
     self.print_ast_node_debug(node_index, 0, &mut output);
     output
@@ -723,6 +729,204 @@ impl<'a> SourceProperties<'a> {
   }
 
   fn print_type_debug(&self, typ: TypeIndex, indent_level: usize, output: &mut String) {
-    // self.types.get(typ)
+    let typ = self.types.get(typ);
+    match typ {
+      Type::Any => output.push_str("any"),
+      Type::Number => output.push_str("number"),
+      Type::NumberLiteral(n) => output.push_str(&n.to_string()),
+      Type::BigInt => output.push_str("bigint"),
+      Type::BigIntLiteral(n) => output.push_str(&format!("{}n", n)),
+      Type::String => output.push_str("string"),
+      Type::StringLiteral(s) => output.push_str(&format!("\"{}\"", s)),
+      Type::Boolean => output.push_str("boolean"),
+      Type::BooleanLiteral(b) => output.push_str(if *b { "true" } else { "false" }),
+      Type::RegExp => output.push_str("RegExp"),
+      Type::Unknown => output.push_str("unknown"),
+      Type::Void => output.push_str("void"),
+      Type::Custom(name) => output.push_str(name),
+      Type::WithArgs(base, args) => {
+        self.print_type_debug(*base, indent_level, output);
+        output.push('<');
+        for (i, arg) in args.iter().enumerate() {
+          if i > 0 {
+            output.push_str(", ");
+          }
+          self.print_type_debug(*arg, indent_level, output);
+        }
+        output.push('>');
+      }
+      Type::Union(types) => {
+        for (i, t) in types.iter().enumerate() {
+          if i > 0 {
+            output.push_str(" | ");
+          }
+          self.print_type_debug(*t, indent_level, output);
+        }
+      }
+      Type::Intersection(types) => {
+        for (i, t) in types.iter().enumerate() {
+          if i > 0 {
+            output.push_str(" & ");
+          }
+          self.print_type_debug(*t, indent_level, output);
+        }
+      }
+      Type::Tuple { inner_types } => {
+        output.push('[');
+        for (i, (t, spread)) in inner_types.iter().enumerate() {
+          if i > 0 {
+            output.push_str(", ");
+          }
+          if *spread {
+            output.push_str("...");
+          }
+          self.print_type_debug(*t, indent_level, output);
+        }
+        output.push(']');
+      }
+      Type::Array(inner) => {
+        output.push_str("Array<");
+        self.print_type_debug(*inner, indent_level, output);
+        output.push_str(">");
+      }
+      Type::Object { key_value, parts } => {
+        output.push_str("{");
+        if !key_value.is_empty() || !parts.is_empty() {
+          let inner_indent = indent_level + 1;
+          let inner_indent_str = "  ".repeat(inner_indent);
+          for kv in key_value.iter() {
+            output.push('\n');
+            output.push_str(&inner_indent_str);
+            // Use Debug formatting for internal types since fields are private
+            output.push_str(&format!("{:?}", kv));
+            output.push(';');
+          }
+          for part in parts.iter() {
+            output.push('\n');
+            output.push_str(&inner_indent_str);
+            // Use Debug formatting for internal types since fields are private
+            output.push_str(&format!("{:?}", part));
+            output.push(';');
+          }
+          output.push('\n');
+          output.push_str(&"  ".repeat(indent_level));
+        }
+        output.push('}');
+      }
+      Type::Mapped {
+        key_name,
+        key_type,
+        value_type,
+      } => {
+        output.push_str("{ [");
+        output.push_str(key_name);
+        output.push_str(" in ");
+        self.print_type_debug(*key_type, indent_level, output);
+        output.push_str("]: ");
+        self.print_type_debug(*value_type, indent_level, output);
+        output.push_str("; }");
+      }
+      Type::Guard(name, inner) => {
+        output.push_str(name);
+        output.push_str(" is ");
+        self.print_type_debug(*inner, indent_level, output);
+      }
+      Type::ColonDeclaration {
+        spread,
+        name,
+        typ,
+        conditional,
+      } => {
+        if *spread {
+          output.push_str("...");
+        }
+        output.push_str(name);
+        if *conditional {
+          output.push('?');
+        }
+        output.push_str(": ");
+        self.print_type_debug(*typ, indent_level, output);
+      }
+      Type::SpreadParameter { name } => {
+        output.push_str("...");
+        output.push_str(name);
+      }
+      Type::Function {
+        generics,
+        params,
+        return_type,
+        is_constructor,
+      } => {
+        if *is_constructor {
+          output.push_str("new ");
+        }
+        if !generics.is_empty() {
+          output.push('<');
+          for (i, g) in generics.iter().enumerate() {
+            if i > 0 {
+              output.push_str(", ");
+            }
+            self.print_type_debug(*g, indent_level, output);
+          }
+          output.push('>');
+        }
+        output.push('(');
+        for (i, param) in params.iter().enumerate() {
+          if i > 0 {
+            output.push_str(", ");
+          }
+          // Use Debug formatting as param fields are private
+          output.push_str(&format!("{:?}", param));
+        }
+        output.push_str(") => ");
+        self.print_type_debug(*return_type, indent_level, output);
+      }
+      Type::Index { callee, property } => {
+        self.print_type_debug(*callee, indent_level, output);
+        output.push('[');
+        self.print_type_debug(*property, indent_level, output);
+        output.push(']');
+      }
+      Type::DirectAccess { callee, property } => {
+        self.print_type_debug(*callee, indent_level, output);
+        output.push('.');
+        self.print_type_debug(*property, indent_level, output);
+      }
+      Type::TypeOf(inner) => {
+        output.push_str("typeof ");
+        self.print_type_debug(*inner, indent_level, output);
+      }
+      Type::KeyOf(inner) => {
+        output.push_str("keyof ");
+        self.print_type_debug(*inner, indent_level, output);
+      }
+      Type::Conditional {
+        cnd_left,
+        cnd_right,
+        if_true,
+        if_false,
+      } => {
+        self.print_type_debug(*cnd_left, indent_level, output);
+        output.push_str(" extends ");
+        self.print_type_debug(*cnd_right, indent_level, output);
+        output.push_str(" ? ");
+        self.print_type_debug(*if_true, indent_level, output);
+        output.push_str(" : ");
+        self.print_type_debug(*if_false, indent_level, output);
+      }
+      Type::Extends(left, right) => {
+        self.print_type_debug(*left, indent_level, output);
+        output.push_str(" extends ");
+        self.print_type_debug(*right, indent_level, output);
+      }
+      Type::Infer(name) => {
+        output.push_str("infer ");
+        output.push_str(name);
+      }
+      Type::Readonly(inner) => {
+        output.push_str("readonly ");
+        self.print_type_debug(*inner, indent_level, output);
+      }
+    }
   }
 }

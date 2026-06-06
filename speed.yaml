@@ -1,4 +1,3 @@
-
 node arena:
   memory total: 92.61 KiB
   speed average:
@@ -15,3 +14,10 @@ node + string arena:
     - 1,624,782 loc/s
     - 1,627,383 loc/s
     - 1,633,134 loc/s
+
+node + string + type arena:
+  memory total: 60.56 KiB
+  speed average:
+    - 1,991,837 loc/s
+    - 2,015,763 loc/s
+    - 2,008,528 loc/s

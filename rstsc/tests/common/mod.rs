@@ -262,8 +262,16 @@ pub fn test_code(source: &str, compiled: &str, whitespace: WhiteSpace) -> Result
   let mut expect: String = compiled.to_owned();
   let expect_untransformed: String = expect.clone();
 
+  // Remove trim newlines, tabs, semicolons, and spaces
   actual = actual.trim_matches(|c| "\n\t; ".contains(c)).to_string();
   expect = expect.trim_matches(|c| "\n\t; ".contains(c)).to_string();
+
+  // Ignore double/single quotation
+  {
+    let re = Regex::new(r"'").unwrap();
+    actual = re.replace_all(actual.as_str(), "\"").to_string();
+    expect = re.replace_all(expect.as_str(), "\"").to_string();
+  }
 
   match whitespace {
     WhiteSpace::IgnoreAll => {

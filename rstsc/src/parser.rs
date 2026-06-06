@@ -4,9 +4,7 @@ use crate::ast::{
   ImportDefinition, IndividualImport, InterfaceDeclaration, ObjectProperty, Switch,
   TryCatchFinally,
 };
-use crate::ast_common::{
-  Modifier, ModifierList, VariableDefType, ACCESSIBILITY_MODIFIERS, MODIFIERS,
-};
+use crate::ast_common::{Modifier, ModifierList, VariableDefType};
 use crate::declaration::{
   ComputableDeclarationName, Declaration, DeclarationComputable, DeclarationTyped,
   DestructurableDeclaration, DestructurePattern,
@@ -39,7 +37,7 @@ pub static INVERSE_GROUPINGS: phf::Map<&'static str, &'static str> = phf_map! {
   ">" => "<",
 };
 
-const VARIABLE_DECLARATIONS: &[&str] = &["var", "let", "const"];
+const VARIABLE_DECLARATIONS: &[TokenType] = &[TokenType::KVar, TokenType::KLet, TokenType::KConst];
 const IGNORE_MODIFIER_IF_SYMBOL: &[&str] = &["(", "<", ":", "="];
 
 pub static ANONYMOUS_CLASS_NAME: &str = "\0";
@@ -102,23 +100,35 @@ where
   if sp.tokens.is_done() {
     return Ok(sp.nodes.add(ASTNode::Empty));
   }
-  let ret = match sp.tokens.peek_str() {
-    "{" => handle_block(sp)?.unwrap(),
-    "var" | "let" | "const" => handle_var(sp)?.unwrap(),
-    "if" | "while" | "for" | "switch" => handle_control_flow(sp)?.unwrap(),
-    "function" => handle_function_declaration(sp)?.unwrap(),
-    "class" => handle_class_declaration(sp)?.unwrap(),
-    "import" => handle_import(sp)?.unwrap(),
-    "export" | "async" | "static" | "public" | "private" | "protected" | "readonly"
-    | "abstract" | "override" => handle_modifiers(sp)?.unwrap(),
-    "return" | "break" | "continue" | "throw" => handle_other_statements(sp)?.unwrap(),
-    "type" => handle_type_declaration(sp)?.unwrap(),
-    "enum" => handle_enum(false, sp)?.unwrap(),
-    "interface" => handle_interface(sp)?.unwrap(),
-    "try" => handle_try_catch(sp)?.unwrap(),
-    "declare" => handle_declare(sp)?.unwrap(),
-    "namespace" => handle_namespace(sp)?.unwrap(),
-    _ => handle_expression(sp)?,
+
+  let ret = match sp.tokens.peek().typ {
+    TokenType::KVar | TokenType::KLet | TokenType::KConst => handle_var(sp)?.unwrap(),
+    TokenType::KIf | TokenType::KWhile | TokenType::KFor | TokenType::KSwitch => {
+      handle_control_flow(sp)?.unwrap()
+    }
+    TokenType::KFunction => handle_function_declaration(sp)?.unwrap(),
+    TokenType::KClass => handle_class_declaration(sp)?.unwrap(),
+    TokenType::KImport => handle_import(sp)?.unwrap(),
+    TokenType::KExport
+    | TokenType::KAsync
+    | TokenType::KStatic
+    | TokenType::KPublic
+    | TokenType::KPrivate
+    | TokenType::KProtected => handle_modifiers(sp)?.unwrap(),
+    TokenType::KReturn | TokenType::KBreak | TokenType::KContinue | TokenType::KThrow => {
+      handle_other_statements(sp)?.unwrap()
+    }
+    TokenType::KEnum => handle_enum(false, sp)?.unwrap(),
+    TokenType::KInterface => handle_interface(sp)?.unwrap(),
+    TokenType::KTry => handle_try_catch(sp)?.unwrap(),
+    _ => match sp.tokens.peek_str() {
+      "{" => handle_block(sp)?.unwrap(),
+      "readonly" | "abstract" | "override" => handle_modifiers(sp)?.unwrap(),
+      "type" => handle_type_declaration(sp)?.unwrap(),
+      "declare" => handle_declare(sp)?.unwrap(),
+      "namespace" => handle_namespace(sp)?.unwrap(),
+      _ => handle_expression(sp)?,
+    },
   };
 
   sp.tokens.ignore_whitespace();
@@ -146,13 +156,9 @@ fn handle_var<'a, 'b>(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, Com
 where
   'a: 'b,
 {
-  if !VARIABLE_DECLARATIONS.contains(&sp.tokens.peek_str()) {
-    return Ok(None);
-  }
-
   let def_type = get_variable_def_type(sp)?;
 
-  if matches!(def_type, VariableDefType::Const) && sp.tokens.peek_str() == "enum" {
+  if matches!(def_type, VariableDefType::Const) && sp.tokens.peek().typ == TokenType::KEnum {
     // Const enums
     return handle_enum(true, sp);
   }
@@ -171,13 +177,16 @@ fn get_variable_def_type<'b>(sp: &mut SourceProperties) -> Result<VariableDefTyp
   // Get the header
   let header_token = sp.tokens.consume();
   sp.tokens.ignore_whitespace();
-  match sp.str_src(header_token.value) {
-    "var" => Ok(VariableDefType::Var),
-    "let" => Ok(VariableDefType::Let),
-    "const" => Ok(VariableDefType::Const),
-    other => Err(CompilerError::new(
+  match header_token.typ {
+    TokenType::KVar => Ok(VariableDefType::Var),
+    TokenType::KLet => Ok(VariableDefType::Let),
+    TokenType::KConst => Ok(VariableDefType::Const),
+    _ => Err(CompilerError::new(
       header_token.value,
-      format!("Unexpected variable declaration: {}", other),
+      format!(
+        "Unexpected variable declaration: {}",
+        sp.str_src(header_token.value)
+      ),
     )),
   }
 }
@@ -189,11 +198,7 @@ where
   'a: 'b,
 {
   sp.tokens.ignore_whitespace();
-  let name = sp
-    .tokens
-    .consume_type(TokenType::Identifier)?
-    .value
-    .to_owned();
+  let name = sp.tokens.consume_type(TokenType::Identifier)?.value;
   let (typ, value) = get_declaration_after_name(sp)?;
   Ok(Declaration::new(name, typ, value))
 }
@@ -400,15 +405,9 @@ fn parse_destructure_pattern(
       // Identifier, numeric property, or string property
       let token = sp.tokens.consume();
       let out = match token.typ {
-        TokenType::Identifier => DestructurePattern::Identifier {
-          name: token.value.to_owned(),
-        },
-        TokenType::Number => DestructurePattern::NumericProperty {
-          value: token.value.to_owned(),
-        },
-        TokenType::String => DestructurePattern::StringProperty {
-          value: token.value.to_owned(),
-        },
+        TokenType::Identifier => DestructurePattern::Identifier { name: token.value },
+        TokenType::Number => DestructurePattern::NumericProperty { value: token.value },
+        TokenType::String => DestructurePattern::StringProperty { value: token.value },
         _ => {
           return Err(CompilerError::new(
             token.value,
@@ -446,17 +445,11 @@ fn try_parse_destructure_pattern_initializer(
 
 /// Handles control flow, like `if`, `while`, and `for`
 fn handle_control_flow(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, CompilerError> {
-  const CONTROL_FLOW: &[&str] = &["if", "while", "for", "switch"];
-  if !CONTROL_FLOW.contains(&sp.tokens.peek_str()) {
-    return Ok(None);
-  }
-
-  let control_flow_type = sp.tokens.consume().value;
-  let control_flow_type = sp.str_src(control_flow_type);
+  let start_token = sp.tokens.consume();
   sp.tokens.ignore_whitespace();
 
-  Ok(Some(match control_flow_type {
-    "if" | "while" => {
+  Ok(Some(match start_token.typ {
+    TokenType::KIf | TokenType::KWhile => {
       // Get condition
       sp.tokens.skip("(")?;
       let condition = get_expression(0, sp)?;
@@ -466,11 +459,11 @@ fn handle_control_flow(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, Co
       let body = get_single_statement(sp)?;
 
       // Add to parent
-      if control_flow_type == "if" {
+      if start_token.typ == TokenType::KIf {
         // Check for `else` block...
         sp.tokens.ignore_whitespace();
 
-        let alternate = if sp.tokens.peek_str() == "else" {
+        let alternate = if sp.tokens.peek().typ == TokenType::KElse {
           sp.tokens.skip_unchecked();
           Some(get_single_statement(sp)?)
         } else {
@@ -485,8 +478,8 @@ fn handle_control_flow(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, Co
         sp.nodes.add(ASTNode::StatementWhile { condition, body })
       }
     }
-    "for" => handle_for_loop(sp)?,
-    "switch" => {
+    TokenType::KFor => handle_for_loop(sp)?,
+    TokenType::KSwitch => {
       // Get condition
       sp.tokens.skip("(")?;
       let condition = get_expression(0, sp)?;
@@ -542,9 +535,7 @@ fn handle_control_flow(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, Co
         }),
       })
     }
-    other => {
-      panic!("Control flow not implemented: {}", other);
-    }
+    _ => unreachable!(),
   }))
 }
 
@@ -553,7 +544,7 @@ fn handle_for_loop(sp: &mut SourceProperties) -> Result<ASTIndex, CompilerError>
   sp.tokens.ignore_whitespace();
   let init = if sp.tokens.peek_str() == ";" {
     sp.nodes.add(ASTNode::Empty)
-  } else if VARIABLE_DECLARATIONS.contains(&sp.tokens.peek_str()) {
+  } else if VARIABLE_DECLARATIONS.contains(&sp.tokens.peek().typ) {
     let def_typ = get_variable_def_type(sp)?;
     let defs = get_multiple_destructurable_declarations(false, sp)?.0;
     sp.nodes.add(ASTNode::VariableDeclaration {
@@ -611,9 +602,6 @@ fn handle_for_loop(sp: &mut SourceProperties) -> Result<ASTIndex, CompilerError>
 
 /// Handles import statements
 fn handle_import(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, CompilerError> {
-  if sp.tokens.peek_str() != "import" {
-    return Ok(None);
-  }
   let checkpoint = sp.tokens.get_checkpoint();
   sp.tokens.skip_unchecked();
   sp.tokens.ignore_whitespace();
@@ -629,7 +617,7 @@ fn handle_import(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, Compiler
 
   // Default imports `import Defaults from '...'`
   let default_alias = if sp.tokens.peek().typ == TokenType::Identifier {
-    let alias = Some(sp.tokens.consume().value.to_owned());
+    let alias = Some(sp.tokens.consume().value);
     sp.tokens.ignore_whitespace();
     let _ = sp.tokens.try_skip_and_ignore_whitespace(",");
     has_distinction += 1;
@@ -643,11 +631,7 @@ fn handle_import(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, Compiler
     sp.tokens.skip_unchecked();
     sp.tokens.skip_with_whitespace("as")?;
     has_distinction += 1;
-    let name = sp
-      .tokens
-      .consume_type(TokenType::Identifier)?
-      .value
-      .to_owned();
+    let name = sp.tokens.consume_type(TokenType::Identifier)?.value;
     Some(name)
   } else {
     None
@@ -660,20 +644,11 @@ fn handle_import(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, Compiler
     sp.tokens.skip_unchecked();
     sp.tokens.ignore_whitespace();
     while !sp.tokens.is_done() && sp.tokens.peek_str() != "}" {
-      let name = sp
-        .tokens
-        .consume_type(TokenType::Identifier)?
-        .value
-        .to_owned();
+      let name = sp.tokens.consume_type(TokenType::Identifier)?.value;
       let alias = if sp.tokens.peek_str() == "as" {
         sp.tokens.skip_unchecked();
         sp.tokens.ignore_whitespace();
-        Some(
-          sp.tokens
-            .consume_type(TokenType::Identifier)?
-            .value
-            .to_owned(),
-        )
+        Some(sp.tokens.consume_type(TokenType::Identifier)?.value)
       } else {
         None
       };
@@ -695,7 +670,7 @@ fn handle_import(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, Compiler
     sp.tokens.skip("from")?;
     sp.tokens.ignore_whitespace();
   }
-  let source = sp.tokens.consume_type(TokenType::String)?.value.to_owned();
+  let source = sp.tokens.consume_type(TokenType::String)?.value;
 
   Ok(Some(sp.nodes.add(ASTNode::StatementImport {
     inner: Box::new(if let Some(default_alias) = default_alias {
@@ -721,12 +696,7 @@ fn handle_import(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, Compiler
 
 /// Handles `return`, `break`, `continue`, and `throw`
 fn handle_other_statements(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, CompilerError> {
-  const STATEMENT_NAMES: &[&str] = &["return", "break", "continue", "throw"];
-  if !STATEMENT_NAMES.contains(&sp.tokens.peek_str()) {
-    return Ok(None);
-  }
-
-  let statement_type = sp.tokens.consume().value;
+  let statement = sp.tokens.consume();
   sp.tokens.ignore_whitespace();
 
   let value = if sp.tokens.peek_str() != ";" {
@@ -735,14 +705,12 @@ fn handle_other_statements(sp: &mut SourceProperties) -> Result<Option<ASTIndex>
     None
   };
 
-  Ok(Some(match sp.str_src(statement_type) {
-    "return" => sp.nodes.add(ASTNode::StatementReturn { value }),
-    "break" => sp.nodes.add(ASTNode::StatementBreak { value }),
-    "continue" => sp.nodes.add(ASTNode::StatementContinue { value }),
-    "throw" => sp.nodes.add(ASTNode::StatementThrow { value }),
-    other => {
-      panic!("Statement not implemented: {}", other);
-    }
+  Ok(Some(match statement.typ {
+    TokenType::KReturn => sp.nodes.add(ASTNode::StatementReturn { value }),
+    TokenType::KBreak => sp.nodes.add(ASTNode::StatementBreak { value }),
+    TokenType::KContinue => sp.nodes.add(ASTNode::StatementContinue { value }),
+    TokenType::KThrow => sp.nodes.add(ASTNode::StatementThrow { value }),
+    _ => unreachable!(),
   }))
 }
 
@@ -752,10 +720,6 @@ fn handle_function_declaration<'a, 'b>(
 where
   'a: 'b,
 {
-  if sp.tokens.peek_str() != "function" {
-    return Ok(None);
-  }
-
   sp.tokens.skip_unchecked(); // Skip `function`
 
   sp.tokens.ignore_whitespace();
@@ -852,7 +816,10 @@ where
   while sp.tokens.peek_str() != ")" {
     sp.tokens.ignore_whitespace();
     rest.try_set(sp, true)?;
-    if ACCESSIBILITY_MODIFIERS.contains(&sp.tokens.peek_str()) {
+    if matches!(
+      sp.tokens.peek().typ,
+      TokenType::KPublic | TokenType::KPrivate | TokenType::KProtected
+    ) {
       let modifiers = fetch_modifier_list(sp);
       let mut declaration = get_declaration(sp)?;
       params.push(declaration.clone().into());
@@ -1003,9 +970,6 @@ fn handle_class_declaration<'a, 'b>(
 where
   'a: 'b,
 {
-  if sp.tokens.peek_str() != "class" {
-    return Ok(None);
-  }
   Ok(Some(get_class_expression(sp)?))
 }
 
@@ -1052,7 +1016,7 @@ where
     // Get the name (might be a property or a method, we don't know yet)
 
     if sp.tokens.peek_str() == "[" {
-      let init_token = sp.tokens.peek().clone();
+      let init_token = sp.tokens.peek();
       match parse_object_square_bracket(sp)? {
         ObjectSquareBracketReturn::KVMap(kv_map) => {
           kv_maps.push(kv_map);
@@ -1140,7 +1104,7 @@ where
       // Get the declaration
       let (typ, value) = get_declaration_after_name(sp)?;
       members.push(ClassMember::Property(
-        DeclarationComputable::named(name.value.to_owned(), typ, value),
+        DeclarationComputable::named(name.value, typ, value),
         modifiers,
       ));
     } else {
@@ -1257,10 +1221,6 @@ fn get_typed_header(
 }
 
 fn handle_modifiers(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, CompilerError> {
-  if !MODIFIERS.contains(&sp.tokens.peek_str()) {
-    return Ok(None);
-  }
-
   // Get the modifiers
   let modifiers = fetch_modifier_list(sp);
   if modifiers.is_empty() {
@@ -1271,7 +1231,7 @@ fn handle_modifiers(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, Compi
   }
 
   if modifiers.flags == (Modifier::Export as u8) && sp.tokens.peek_str() == "{" {
-    // block export: export { ... }
+    // block export: `export { ... }`
     sp.tokens.skip_unchecked(); // Skip "{"
     sp.tokens.ignore_whitespace();
 
@@ -1286,23 +1246,14 @@ fn handle_modifiers(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, Compi
       }
 
       // Get the export name
-      let name = sp
-        .tokens
-        .consume_type(TokenType::Identifier)?
-        .value
-        .to_owned();
+      let name = sp.tokens.consume_type(TokenType::Identifier)?.value;
       sp.tokens.ignore_whitespace();
 
       // Check for alias (as)
       let alias = if sp.tokens.peek_str() == "as" {
         sp.tokens.skip_unchecked();
         sp.tokens.ignore_whitespace();
-        Some(
-          sp.tokens
-            .consume_type(TokenType::Identifier)?
-            .value
-            .to_owned(),
-        )
+        Some(sp.tokens.consume_type(TokenType::Identifier)?.value)
       } else {
         None
       };
@@ -1338,37 +1289,43 @@ fn handle_modifiers(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, Compi
 }
 
 fn fetch_modifier_list(sp: &mut SourceProperties) -> ModifierList {
-  let mut modifiers: ModifierList = ModifierList::new();
-  while MODIFIERS.contains(&sp.tokens.peek_str()) {
+  let mut modifiers = ModifierList::new();
+  loop {
     let checkpoint = sp.tokens.get_checkpoint();
-    let token = sp.tokens.consume();
-    sp.tokens.ignore_whitespace();
-    if IGNORE_MODIFIER_IF_SYMBOL.contains(&sp.tokens.peek_str()) {
-      sp.tokens.restore_checkpoint(checkpoint);
-      break;
+    let token = sp.tokens.peek(); // don't consume yet
+    let modifier = match token.typ {
+      TokenType::KExport => Some(Modifier::Export),
+      TokenType::KAsync => Some(Modifier::Async),
+      TokenType::KStatic => Some(Modifier::Static),
+      TokenType::KPublic => Some(Modifier::Public),
+      TokenType::KPrivate => Some(Modifier::Private),
+      TokenType::KProtected => Some(Modifier::Protected),
+      _ => match sp.str_src(token.value) {
+        "readonly" => Some(Modifier::Readonly),
+        "abstract" => Some(Modifier::Abstract),
+        "override" => Some(Modifier::Override),
+        _ => None,
+      },
+    };
+
+    if let Some(m) = modifier {
+      sp.tokens.skip_unchecked(); // consume the token we peeked
+      sp.tokens.ignore_whitespace();
+      if IGNORE_MODIFIER_IF_SYMBOL.contains(&sp.tokens.peek_str()) {
+        sp.tokens.restore_checkpoint(checkpoint);
+        break;
+      }
+      sp.tokens.ignore_checkpoint(checkpoint);
+      modifiers.set(m);
     } else {
       sp.tokens.ignore_checkpoint(checkpoint);
+      break;
     }
-    modifiers.set(match sp.str_src(token.value) {
-      "export" => Modifier::Export,
-      "async" => Modifier::Async,
-      "static" => Modifier::Static,
-      "public" => Modifier::Public,
-      "private" => Modifier::Private,
-      "protected" => Modifier::Protected,
-      "readonly" => Modifier::Readonly,
-      "abstract" => Modifier::Abstract,
-      "override" => Modifier::Override,
-      other => panic!("Modifier not implemented: {:?}", other),
-    });
   }
   modifiers
 }
 
 fn handle_type_declaration(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, CompilerError> {
-  if sp.tokens.peek_str() != "type" {
-    return Ok(None);
-  }
   let type_start = sp.tokens.consume();
 
   let TypedHeader {
@@ -1413,10 +1370,7 @@ fn handle_enum(
   is_const: bool,
   sp: &mut SourceProperties,
 ) -> Result<Option<ASTIndex>, CompilerError> {
-  if sp.tokens.peek_str() != "enum" {
-    return Ok(None);
-  }
-  sp.tokens.skip_unchecked();
+  sp.tokens.skip_unchecked(); // skip "enum"
   sp.tokens.ignore_whitespace();
 
   let name = match sp.tokens.consume() {
@@ -1426,7 +1380,7 @@ fn handle_enum(
         "Expected enum name".to_owned(),
       ))
     }
-    token => token.value.to_owned(),
+    token => token.value,
   };
 
   sp.tokens.ignore_whitespace();
@@ -1444,7 +1398,7 @@ fn handle_enum(
 
     let token = sp.tokens.consume();
     let name = match token.typ {
-      TokenType::String => token.value.to_owned(),
+      TokenType::String => token.value,
       TokenType::Identifier => sp.add_custom_string(&format!("\"{}\"", sp.str_src(token.value))),
       _ => {
         return Err(CompilerError::new(
@@ -1482,9 +1436,6 @@ fn handle_enum(
 }
 
 fn handle_interface(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, CompilerError> {
-  if sp.tokens.peek_str() != "interface" {
-    return Ok(None);
-  }
   let interface_start = sp.tokens.consume();
 
   let TypedHeader {
@@ -1551,10 +1502,7 @@ fn handle_interface(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, Compi
         // It's a function! (which is a member)
         sp.tokens.ignore_checkpoint(checkpoint);
         let function = get_type(sp)?;
-        named_parts.push(DeclarationTyped::named(
-          function_name.value.to_owned(),
-          function,
-        ));
+        named_parts.push(DeclarationTyped::named(function_name.value, function));
       } else {
         // It isn't a function, treat it as a named declaration
         sp.tokens.restore_checkpoint(checkpoint);
@@ -1607,10 +1555,6 @@ fn handle_interface(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, Compi
 }
 
 fn handle_try_catch(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, CompilerError> {
-  if sp.tokens.peek_str() != "try" {
-    return Ok(None);
-  }
-
   let try_token = sp.tokens.consume();
   sp.tokens.ignore_whitespace();
   let block_try = match handle_block(sp) {
@@ -1630,11 +1574,7 @@ fn handle_try_catch(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, Compi
     let (capture_catch, capture_catch_type) = if sp.tokens.peek_str() == "(" {
       sp.tokens.skip_unchecked();
       sp.tokens.ignore_whitespace();
-      let capture_catch = sp
-        .tokens
-        .consume_type(TokenType::Identifier)?
-        .value
-        .to_owned();
+      let capture_catch = sp.tokens.consume_type(TokenType::Identifier)?.value;
       sp.tokens.ignore_whitespace();
       let capture_catch_type = try_get_type(sp)?;
       sp.tokens.skip_with_whitespace(")")?;
@@ -1692,9 +1632,6 @@ fn handle_try_catch(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, Compi
 }
 
 fn handle_declare(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, CompilerError> {
-  if sp.tokens.peek_str() != "declare" {
-    return Ok(None);
-  }
   sp.tokens.skip_unchecked();
   sp.tokens.ignore_whitespace();
 
@@ -1709,18 +1646,11 @@ fn handle_declare(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, Compile
 }
 
 fn handle_namespace(sp: &mut SourceProperties) -> Result<Option<ASTIndex>, CompilerError> {
-  if sp.tokens.peek_str() != "namespace" {
-    return Ok(None);
-  }
   sp.tokens.skip_unchecked(); // Skip "namespace"
   sp.tokens.ignore_whitespace();
 
   // Get namespace name
-  let name = sp
-    .tokens
-    .consume_type(TokenType::Identifier)?
-    .value
-    .to_owned();
+  let name = sp.tokens.consume_type(TokenType::Identifier)?.value;
   sp.tokens.ignore_whitespace();
 
   // Skip "{"
@@ -1744,7 +1674,7 @@ fn handle_expression(sp: &mut SourceProperties) -> Result<ASTIndex, CompilerErro
 }
 
 fn parse_number(sp: &mut SourceProperties) -> Result<ASTIndex, CompilerError> {
-  let mut number = sp.tokens.consume().value.to_owned();
+  let mut number = sp.tokens.consume().value;
   let p = sp.tokens.peek();
   if p.typ == TokenType::Identifier {
     match sp.str_src(p.value).chars().next().unwrap() {
@@ -1832,15 +1762,20 @@ fn parse_string_template(sp: &mut SourceProperties) -> Result<ASTIndex, Compiler
   }))
 }
 
-fn parse_regex(sp: &mut SourceProperties) -> ASTIndex {
+fn parse_regex(sp: &mut SourceProperties) -> Result<ASTIndex, CompilerError> {
   let val_map = sp.tokens.consume().value;
   let val = sp.str_src(val_map);
 
-  let second_slash_idx = val
-    .chars()
-    .enumerate()
-    .position(|(i, c)| i > 0 && c == '/')
-    .unwrap();
+  let second_slash_idx = val.chars().enumerate().position(|(i, c)| i > 0 && c == '/');
+
+  let second_slash_idx = if let Some(second_slash_idx) = second_slash_idx {
+    second_slash_idx
+  } else {
+    return Err(CompilerError::new(
+      val_map,
+      "Regex not terminated".to_owned(),
+    ));
+  };
 
   let pattern = SrcMapping {
     idx: val_map.idx + 1,
@@ -1853,9 +1788,9 @@ fn parse_regex(sp: &mut SourceProperties) -> ASTIndex {
     from: val_map.from,
   };
 
-  sp.nodes.add(ASTNode::ExprRegexLiteral {
+  Ok(sp.nodes.add(ASTNode::ExprRegexLiteral {
     inner: Box::new(ExprRegexLiteral { pattern, flags }),
-  })
+  }))
 }
 
 fn parse_name(sp: &mut SourceProperties) -> Result<ASTIndex, CompilerError> {
@@ -1887,6 +1822,7 @@ fn parse_prefix(precedence: u8, sp: &mut SourceProperties) -> Result<ASTIndex, C
     };
     let group_end = INVERSE_GROUPINGS[prefix_start_str];
     sp.tokens.skip(group_end)?; // Skip grouping close ")" or "]"
+
     Ok(sp.nodes.add(ret))
   } else if prefix_start_str == "{" {
     // Dicts get even more special treatment!
@@ -1991,19 +1927,6 @@ fn parse_infix<'a, 'b>(
 where
   'a: 'b,
 {
-  if let ASTNode::ExprIdentifier { name } = sp.nodes.get(left) {
-    if sp.str_src(*name) == "async" && sp.tokens.peek_str() == "(" {
-      let arrow_fn = parse_arrow_function(sp)?;
-      match sp.nodes.get_mut(arrow_fn) {
-        ASTNode::ArrowFunctionDefinition { inner } => {
-          inner.is_async = true;
-        }
-        _ => unreachable!(),
-      }
-      return Ok(arrow_fn);
-    }
-  }
-
   let opr_token = sp.tokens.consume();
   let opr = opr_token.value;
   let opr_str = sp.str_src(opr);
@@ -2255,121 +2178,139 @@ where
     match next.typ {
       TokenType::Number => parse_number(sp)?,
       TokenType::String => parse_string(sp),
-      TokenType::Regex => parse_regex(sp),
+      TokenType::Regex => parse_regex(sp)?,
       TokenType::StringTemplateStart => parse_string_template(sp)?,
-      TokenType::Symbol | TokenType::Identifier => {
-        let next_str = sp.str_src(next.value);
-        if next_str == "class" {
-          // `class` can be used inside an expression, but calling it a
-          // prefix feels strange... I'm going to handle it here
-          get_class_expression(sp)?
-        } else if next_str == "function" {
-          sp.tokens.skip_unchecked(); // Skip "function"
+      TokenType::KClass => {
+        // `class` can be used inside an expression, but calling it a
+        // prefix feels strange... I'm going to handle it here
+        get_class_expression(sp)?
+      }
+      TokenType::KFunction => {
+        sp.tokens.skip_unchecked(); // Skip "function"
 
-          sp.tokens.ignore_whitespace();
-          let is_generator = if sp.tokens.peek_str() == "*" {
-            sp.tokens.skip_unchecked(); // consume `*`
-            true
-          } else {
-            false
-          };
-
-          // Get name
-          sp.tokens.ignore_whitespace();
-          let name = if sp.tokens.peek().typ == TokenType::Identifier {
-            // Named function
-            Some(sp.tokens.consume().value)
-          } else {
-            // Unnamed function
-            None
-          };
-          let function = get_function_after_name(name, sp, is_generator)?;
-          sp.nodes.add(ASTNode::FunctionDefinition {
-            inner: Box::new(function),
-          })
+        sp.tokens.ignore_whitespace();
+        let is_generator = if sp.tokens.peek_str() == "*" {
+          sp.tokens.skip_unchecked(); // consume `*`
+          true
         } else {
-          let binding_power = get_operator_binding_power(ExprType::Prefx, next_str);
-          if let Some(binding_power) = binding_power {
-            // These prefix operators include what you might expect (+, -, ~),
-            // along with arrays, dicts, and parenthesis!
-            if next_str == "(" {
-              // A parenthesis could be either a normal expression, or an arrow
-              // function. Since normal expressions are more common,
-              // we try parsing those first.
+          false
+        };
 
-              // Check if it ends with a type!
-              let checkpoint = sp.tokens.get_checkpoint();
-              let mut paren_nesting = 1;
-              sp.tokens.skip_unchecked(); // Skip `(`
-              while paren_nesting != 0 {
-                let token = sp.tokens.consume();
-                match sp.str_src(token.value) {
-                  "(" => paren_nesting += 1,
-                  ")" => paren_nesting -= 1,
-                  _ => {}
-                }
-              }
-              sp.tokens.ignore_whitespace();
-              let is_arrow_function =
-                ["=>", ":"].contains(&sp.tokens.peek_str()) && precedence <= *ARROW_FN_PRECEDENCE;
-              sp.tokens.restore_checkpoint(checkpoint);
+        // Get name
+        sp.tokens.ignore_whitespace();
+        let name = if sp.tokens.peek().typ == TokenType::Identifier {
+          // Named function
+          Some(sp.tokens.consume().value)
+        } else {
+          // Unnamed function
+          None
+        };
+        let function = get_function_after_name(name, sp, is_generator)?;
+        sp.nodes.add(ASTNode::FunctionDefinition {
+          inner: Box::new(function),
+        })
+      }
+      TokenType::KAsync => {
+        sp.tokens.skip_unchecked(); // Skip "async"
+        sp.tokens.ignore_whitespace();
+        if sp.tokens.peek_str() != "(" && !matches!(sp.tokens.peek().typ, TokenType::Identifier) {
+          return Err(CompilerError::new(
+            sp.tokens.peek().value,
+            "Expected arrow function after async keyword".to_owned(),
+          ));
+        }
+        let arrow_fn = parse_arrow_function(sp)?;
+        match sp.nodes.get_mut(arrow_fn) {
+          ASTNode::ArrowFunctionDefinition { inner } => {
+            inner.is_async = true;
+          }
+          _ => unreachable!(),
+        }
+        arrow_fn
+      }
+      TokenType::Symbol | TokenType::Identifier | TokenType::KImport => {
+        let next_str = sp.str_src(next.value);
+        let binding_power = get_operator_binding_power(ExprType::Prefx, next_str);
+        if let Some(binding_power) = binding_power {
+          // These prefix operators include what you might expect (+, -, ~),
+          // along with arrays, dicts, and parenthesis!
+          if next_str == "(" {
+            // A parenthesis could be either a normal expression, or an arrow
+            // function. Since normal expressions are more common,
+            // we try parsing those first.
 
-              if is_arrow_function {
-                parse_arrow_function(sp)?
-              } else {
-                parse_prefix(binding_power.1, sp)?
+            // Check if it ends with a type!
+            let checkpoint = sp.tokens.get_checkpoint();
+            let mut paren_nesting = 1;
+            sp.tokens.skip_unchecked(); // Skip `(`
+            while paren_nesting != 0 {
+              let token = sp.tokens.consume();
+              match sp.str_src(token.value) {
+                "(" => paren_nesting += 1,
+                ")" => paren_nesting -= 1,
+                _ => {}
               }
+            }
+            sp.tokens.ignore_whitespace();
+            let is_arrow_function =
+              ["=>", ":"].contains(&sp.tokens.peek_str()) && precedence <= *ARROW_FN_PRECEDENCE;
+            sp.tokens.restore_checkpoint(checkpoint);
+
+            if is_arrow_function {
+              parse_arrow_function(sp)?
             } else {
               parse_prefix(binding_power.1, sp)?
             }
-          } else if next.typ == TokenType::Identifier {
-            // Could be a name...
-            parse_name(sp)?
-          } else if next_str == "<" {
-            // Arrow function generic, or C-style type cast (eg. `<number>a`)
-            let generics_token = sp.tokens.peek().clone();
-            sp.tokens.skip_unchecked();
-            let generics = get_generics(sp)?;
-
-            // Get next expression...
-            let mut expr = get_expression(
-              get_operator_binding_power(ExprType::Prefx, "<>").unwrap().0,
-              sp,
-            )?;
-            match sp.nodes.get_mut(expr) {
-              ASTNode::ArrowFunctionDefinition { inner } => {
-                inner.generics = generics;
-              }
-              _ => {
-                if generics.len() > 1 {
-                  return Err(CompilerError::new(
-                    generics_token.value,
-                    format!("Expected one type in cast, found {}", generics.len()),
-                  ));
-                }
-                expr = sp.nodes.add(ASTNode::ExprTypeAssertion {
-                  cast_type: generics[0].clone(),
-                  value: expr,
-                });
-              }
-            }
-
-            expr
           } else {
-            // Not a name & no matching operators.
-            let t = sp.tokens.peek().value;
-            let opr_str = sp.str_src(t);
-            return Err(CompilerError::new(
-              sp.tokens.consume().value,
-              format!("Prefix operator `{}` not found", opr_str),
-            ));
+            parse_prefix(binding_power.1, sp)?
           }
+        } else if matches!(next.typ, TokenType::Identifier | TokenType::KImport) {
+          // Could be a name...
+          parse_name(sp)?
+        } else if next_str == "<" {
+          // Arrow function generic, or C-style type cast (eg. `<number>a`)
+          let generics_token = sp.tokens.peek();
+          sp.tokens.skip_unchecked();
+          let generics = get_generics(sp)?;
+
+          // Get next expression...
+          let mut expr = get_expression(
+            get_operator_binding_power(ExprType::Prefx, "<>").unwrap().0,
+            sp,
+          )?;
+          match sp.nodes.get_mut(expr) {
+            ASTNode::ArrowFunctionDefinition { inner } => {
+              inner.generics = generics;
+            }
+            _ => {
+              if generics.len() > 1 {
+                return Err(CompilerError::new(
+                  generics_token.value,
+                  format!("Expected one type in cast, found {}", generics.len()),
+                ));
+              }
+              expr = sp.nodes.add(ASTNode::ExprTypeAssertion {
+                cast_type: generics[0].clone(),
+                value: expr,
+              });
+            }
+          }
+
+          expr
+        } else {
+          // Not a name & no matching operators.
+          let t = sp.tokens.peek().value;
+          let opr_str = sp.str_src(t);
+          return Err(CompilerError::new(
+            sp.tokens.consume().value,
+            format!("Prefix operator `{}` not found", opr_str),
+          ));
         }
       }
       _ => {
         return Err(CompilerError::new(
           sp.tokens.consume().value,
-          format!("Unexpected token when parsing expression: {:?}", next),
+          "Unexpected token when parsing expression".to_owned(),
         ));
       }
     }

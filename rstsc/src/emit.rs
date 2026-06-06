@@ -738,16 +738,28 @@ fn emit_single(ast: ASTIndex, emitter: &mut Emitter) {
       emitter.indent();
 
       for (name, value) in &inner.members {
-        emitter.out(emitter.sp.str_src(inner.name), false);
-        emitter.out("[", false);
-        emitter.out(emitter.sp.str_src(inner.name), false);
-        emitter.out("[", false);
-        emitter.out(emitter.sp.str_src(*name), false);
-        emitter.out("]=", false);
-        emit_single(*value, emitter);
-        emitter.out("]=", false);
-        emitter.out(emitter.sp.str_src(*name), true);
-        emitter.endline();
+        match emitter.sp.nodes.get(*value) {
+          ASTNode::ExprStrLiteral { string } => {
+            emitter.out(emitter.sp.str_src(inner.name), false);
+            emitter.out("[", false);
+            emitter.out(emitter.sp.str_src(*name), false);
+            emitter.out("]=", false);
+            emit_single(*value, emitter);
+            emitter.endline();
+          }
+          _ => {
+            emitter.out(emitter.sp.str_src(inner.name), false);
+            emitter.out("[", false);
+            emitter.out(emitter.sp.str_src(inner.name), false);
+            emitter.out("[", false);
+            emitter.out(emitter.sp.str_src(*name), false);
+            emitter.out("]=", false);
+            emit_single(*value, emitter);
+            emitter.out("]=", false);
+            emitter.out(emitter.sp.str_src(*name), true);
+            emitter.endline();
+          }
+        }
       }
 
       emitter.endline();

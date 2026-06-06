@@ -9,6 +9,7 @@ use rstsc::tokenizer::TokenList;
 #[global_allocator]
 static ALLOCATOR: Cap<alloc::System> = Cap::new(alloc::System, usize::MAX);
 
+const SOURCE_PATH: &str = "./speed.ts";
 const SOURCE_TEST: &str = include_str!("./speed.ts");
 
 fn main() {
@@ -41,7 +42,7 @@ fn main() {
 
 fn do_ast<'a>() -> Result<(SourceProperties<'a>, ASTIndex), ()> {
   // Generate the AST
-  let mut source_properties = SourceProperties::new(SOURCE_TEST);
+  let mut source_properties = SourceProperties::new(Some(SOURCE_PATH.to_owned()), SOURCE_TEST);
   let ast = get_block(&mut source_properties);
 
   if ast.is_err() {
