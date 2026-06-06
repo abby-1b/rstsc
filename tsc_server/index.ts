@@ -1,4 +1,4 @@
-import * as ts from "typescript";
+import * as ts from 'typescript';
 
 const PORT = 8033;
 
@@ -24,7 +24,7 @@ function compileTypeScript(typescriptCode: string): string {
   });
 
   // The compiled JavaScript code is in the outputText property.
-  return result.outputText;
+  return result.outputText.replace(/(\n|)export {};/g, '');
 }
 
 // --- Server Setup ---
@@ -36,17 +36,21 @@ const server = Bun.serve({
     if (url.pathname === '/reset_counter') {
       startTime = performance.now();
       resettableCompiledSnippets = 0;
-      return new Response("", { status: 200 });
+      return new Response('', { status: 200 });
     } else if (url.pathname === '/print_counter') {
       const tookSeconds = ((performance.now() - startTime) / 1000).toFixed(3);
-      console.log(`Compiled ${resettableCompiledSnippets} TypeScript snippets in ${tookSeconds}s`);
-      console.log(`  (NOTE: this time is NOT an accurate depiction of TSC's compilation times)`)
-      return new Response("" + resettableCompiledSnippets, { status: 200 });
+      console.log(
+        `Compiled ${resettableCompiledSnippets} TypeScript snippets in ${tookSeconds}s`,
+      );
+      console.log(
+        `  (NOTE: this time is NOT an accurate depiction of TSC's compilation times)`,
+      );
+      return new Response('' + resettableCompiledSnippets, { status: 200 });
     }
 
     // Only respond to POST requests to the /compile endpoint
-    if (url.pathname !== "/compile" || req.method !== "POST") {
-      return new Response("Not Found", { status: 404 });
+    if (url.pathname !== '/compile' || req.method !== 'POST') {
+      return new Response('Not Found', { status: 404 });
     }
 
     resettableCompiledSnippets++;
@@ -56,29 +60,35 @@ const server = Bun.serve({
       const typescriptCode = await req.text();
 
       if (!typescriptCode) {
-        return new Response("Request body is empty. Please provide TypeScript code.", {
-          status: 400,
-        });
+        return new Response(
+          'Request body is empty. Please provide TypeScript code.',
+          {
+            status: 400,
+          },
+        );
       }
 
-      console.log("Received TypeScript code. Compiling...");
+      console.log('Received TypeScript code. Compiling...');
       const javascriptCode = compileTypeScript(typescriptCode);
-      console.log("Compilation successful. Sending response.");
+      console.log('Compilation successful. Sending response.');
 
       // Send the compiled JavaScript back to the client
       return new Response(javascriptCode, {
-        headers: { "Content-Type": "application/javascript" },
+        headers: { 'Content-Type': 'application/javascript' },
       });
     } catch (error) {
-      console.error("An error occurred during compilation:", error);
+      console.error('An error occurred during compilation:', error);
       // If something goes wrong, send a server error response
-      return new Response(`Compilation failed: ${error instanceof Error ? error.message : "Unknown error"}`, {
-        status: 500,
-      });
+      return new Response(
+        `Compilation failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        {
+          status: 500,
+        },
+      );
     }
   },
   error() {
-    return new Response("An unexpected error occurred.", { status: 500 });
+    return new Response('An unexpected error occurred.', { status: 500 });
   },
 });
 
